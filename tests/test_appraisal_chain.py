@@ -21,6 +21,7 @@ import pytest
 from daemon.pad_engine import PADEngine, PADDelta, Valence
 from daemon.graph_manager import (
     MemoryGraph,
+    EdgeType,
     PoignancyCategory,
     Perspective,
     UncertaintyType,
@@ -240,6 +241,108 @@ def test_conflict_arc_closure_writes_resolved_edge():
                        entity_refs=["proj"], now=T0)
     assert r.social_signals.conflict_arc_closed_this_turn is True
     assert g.resolved_edge_exists("proj", window) is True
+
+
+def test_conflict_arc_closes_after_enough_absent_turns():
+    # Addendum §1 SECOND close condition: the arc also closes when "enough turns
+    # pass without that entity recurring". Categorical — the turns have passed or
+    # they have not.
+    threshold = 3
+    chain, pad, g, emb = make_chain(config=AppraisalConfig(
+        arc_open_consecutive_negative=2, arc_close_absent_turns=threshold))
+    window = _big_window()
+    # (a) open a conflict arc on "proj"
+    chain.appraise(user_text="I hate this, it is awful", session_id="s",
+                   entity_refs=["proj"], now=T0)
+    chain.appraise(user_text="this is terrible and broken", session_id="s",
+                   entity_refs=["proj"], now=T0)
+    assert chain._arc_open["proj"] is True
+    assert g.resolved_edge_exists("proj", window) is False
+    # (b) N turns with NO EventNode on "proj" — and no Q2 flip on it either
+    for i in range(threshold):
+        assert chain._arc_open["proj"] is True, f"closed early at turn {i}"
+        chain.appraise(user_text="the weather is fine", session_id="s",
+                       entity_refs=[f"other{i}"], now=T0)
+    # (c) the arc is closed
+    assert chain._arc_open["proj"] is False
+    # (d) a "resolved" edge was written, same as the Q2-flip close
+    assert g.resolved_edge_exists("proj", window) is True
+
+
+def test_conflict_arc_absence_counter_resets_when_entity_recurs():
+    # The counter measures turns WITHOUT the entity; a recurrence puts it back
+    # to zero, so an arc that keeps being revisited never closes by absence.
+    chain, pad, g, emb = make_chain(config=AppraisalConfig(
+        arc_open_consecutive_negative=2, arc_close_absent_turns=3))
+    window = _big_window()
+    chain.appraise(user_text="I hate this, it is awful", session_id="s",
+                   entity_refs=["proj"], now=T0)
+    chain.appraise(user_text="this is terrible and broken", session_id="s",
+                   entity_refs=["proj"], now=T0)
+    for _ in range(4):
+        chain.appraise(user_text="the weather is fine", session_id="s",
+                       entity_refs=["other"], now=T0)      # 2 absent turns
+        chain.appraise(user_text="this is awful too", session_id="s",
+                       entity_refs=["proj"], now=T0)        # recurs → reset
+        chain.appraise(user_text="the weather is fine", session_id="s",
+                       entity_refs=["other"], now=T0)
+    assert chain._arc_open["proj"] is True
+    assert g.resolved_edge_exists("proj", window) is False
+
+
+def test_conflict_arc_absent_turn_threshold_is_a_turn_count():
+    # The knob is one turn count under two spec-sanctioned names, and it is an
+    # int number of turns — never a percentage or a weight.
+    assert ac._ARC_CLOSE_ABSENT_TURNS == ac._CONFLICT_ARC_ABSENT_TURN_THRESHOLD
+    assert isinstance(ac._CONFLICT_ARC_ABSENT_TURN_THRESHOLD, int)
+    assert AppraisalConfig().arc_close_absent_turns == \
+        ac._CONFLICT_ARC_ABSENT_TURN_THRESHOLD
+
+
+def test_resolved_edge_base_salience_equals_opening_node():
+    """When a conflict arc closes (by Q2 flip OR by absence timeout), the
+    'resolved' edge's base_salience equals the opening EventNode's
+    base_salience, and its salience equals exactly 3× that
+    (Resolution Log item 5; v4 'Argument Buffer Mode')."""
+
+    def the_resolved_edge(g, opening_id):
+        # The closure edge is directed closing→opening, so it is incident to the
+        # opening node. Exactly one is written per arc closure.
+        edges = [e for e in g._edges_incident_to(opening_id)
+                 if e.edge_type is EdgeType.RESOLVED]
+        assert len(edges) == 1, f"expected one resolved edge, got {len(edges)}"
+        return edges[0]
+
+    threshold = 3
+    for close_by in ("flip", "absence"):
+        chain, pad, g, emb = make_chain(config=AppraisalConfig(
+            arc_open_consecutive_negative=2, arc_close_absent_turns=threshold))
+        # (1) open the arc — two consecutive negative-Q2 turns on "proj"
+        opener = chain.appraise(user_text="I hate this, it is awful",
+                                session_id="s", entity_refs=["proj"], now=T0)
+        chain.appraise(user_text="this is terrible and broken", session_id="s",
+                       entity_refs=["proj"], now=T0)
+        assert chain._arc_open["proj"] is True, close_by
+        # (2) close it — both spec'd close conditions must produce the same edge
+        if close_by == "flip":
+            chain.appraise(user_text="thanks, it is working great now",
+                           session_id="s", entity_refs=["proj"], now=T0)
+        else:
+            for i in range(threshold):
+                chain.appraise(user_text="the weather is fine", session_id="s",
+                               entity_refs=[f"other{i}"], now=T0)
+        assert chain._arc_open["proj"] is False, close_by
+        # (3) the RESOLVED edge, and the conflict it closes
+        edge = the_resolved_edge(g, opener.event_node_id)
+        opening_node = g.get_event_node(opener.event_node_id)
+        # (4) the edge's base IS the conflict's own base — no invented magnitude
+        assert edge.base_salience == pytest.approx(opening_node.base_salience), close_by
+        # (5) v4: the resolution is "weighted 3× higher than the conflict itself"
+        assert edge.salience == pytest.approx(3.0 * opening_node.base_salience), close_by
+        # (6) an arc only ever opens on a Q2=negative EventNode, so the v4
+        # Baumeister +0.15 guarantees the 3× multiplier a non-zero multiplicand
+        # even at medium/low poignancy (which has no floor, ResLog item 9).
+        assert opening_node.base_salience > 0.0, close_by
 
 
 def _big_window():

@@ -165,7 +165,14 @@ _COPING_ADEQUATE = 0.50  # coping available → no emergency
 
 # Conflict-arc turn-counts (F-4d build-time placeholders).
 _ARC_OPEN_CONSECUTIVE_NEGATIVE = 2  # TODO(build-time, F-4d)
-_ARC_CLOSE_ABSENT_TURNS = 3         # TODO(build-time, F-4d)
+# Addendum §1 second close condition — "enough turns pass without that entity
+# recurring". A count of turns (categorical: the turns have passed or they have
+# not), never a score or a proportion.
+_CONFLICT_ARC_ABSENT_TURN_THRESHOLD = 5  # TODO(build-time): value to be tuned.
+# design.md / tasks.md (F-4d) name this same knob _ARC_CLOSE_ABSENT_TURNS and
+# AppraisalConfig exposes it as arc_close_absent_turns. Aliased, not duplicated,
+# so the threshold and its config override can never drift apart.
+_ARC_CLOSE_ABSENT_TURNS = _CONFLICT_ARC_ABSENT_TURN_THRESHOLD
 
 # Social-signal thresholds / lexicons (F-4e build-time placeholders).
 _VULNERABILITY_SIM_CUTOFF = 0.6  # TODO(build-time, F-4e) — embedding cutoff
@@ -463,6 +470,10 @@ class AppraisalChain:
         arc_open, arc_closed, arc_first_negative = self._conflict_arc_update(
             entity_ref, appraisal.q2, now
         )
+        # Addendum §1 second close condition — arcs on entities that did NOT
+        # recur this turn. Disjoint from the flip close above (that one is for
+        # entity_ref; this one skips entity_ref by construction).
+        arc_absence_closed = self._conflict_arc_absence_close(entity_ref)
         signals = SocialSignals(
             distress_marker=distress,
             vulnerability_disclosure=vulnerability,
@@ -524,16 +535,46 @@ class AppraisalChain:
         # are mutually exclusive (negative vs positive/neutral turn).
         if entity_ref and arc_first_negative:
             self._arc_open_event[entity_ref] = event_id
+        # The edge's base_salience IS the conflict's own base_salience: v4
+        # "Argument Buffer Mode" says the resolution is "weighted 3× higher than
+        # the conflict itself", so the multiplicand is the OPENING EventNode,
+        # not an invented magnitude. Memory_Graph applies the 3× itself
+        # (Resolution Log item 5). An arc only ever opens on a Q2=negative
+        # EventNode, so that node carries the v4 Baumeister +0.15 and its base
+        # is never zero — the multiplier always has something real to act on,
+        # with no number introduced here.
         if arc_closed and entity_ref and self._arc_open_event.get(entity_ref):
+            opening_id = self._arc_open_event[entity_ref]
             self._graph.write_edge(
                 from_node=event_id,
-                to_node=self._arc_open_event[entity_ref],
+                to_node=opening_id,
                 edge_type=EdgeType.RESOLVED,
-                base_salience=poignancy_base_hint(poignancy),
+                # Invariant: this id came from write_event_node on this same graph;
+                # nodes are never deleted (Req 4.5), so this lookup cannot return None.
+                base_salience=self._graph.get_event_node(opening_id).base_salience,
                 perspective=perspective,
                 now=now,
             )
             self._arc_open_event[entity_ref] = None
+        # Absence closures get the SAME single "resolved" edge, on the SAME
+        # base: that arc's own opening EventNode. This matters more here than on
+        # the flip path — the closing EventNode belongs to a DIFFERENT entity, so
+        # nothing about this turn characterises the arc being closed.
+        for absent_ref in arc_absence_closed:
+            opening_event = self._arc_open_event.get(absent_ref)
+            if not opening_event:
+                continue
+            self._graph.write_edge(
+                from_node=event_id,
+                to_node=opening_event,
+                edge_type=EdgeType.RESOLVED,
+                # Invariant: this id came from write_event_node on this same graph;
+                # nodes are never deleted (Req 4.5), so this lookup cannot return None.
+                base_salience=self._graph.get_event_node(opening_event).base_salience,
+                perspective=perspective,
+                now=now,
+            )
+            self._arc_open_event[absent_ref] = None
 
         # Resolution Log item 10: increment interaction_count on each active
         # uncertainty node every turn — this module's responsibility. Runs
@@ -734,8 +775,10 @@ class AppraisalChain:
         return self._graph.reality_contradiction_check(entity_ref, text, now=now)
 
     def _conflict_arc_update(self, entity_ref, q2: Valence, now) -> Tuple[bool, bool, bool]:
-        """Conflict-arc state machine (Addendum §1). Opens on consecutive
-        negative EventNodes for an entity; closes on a flip to positive/neutral.
+        """Conflict-arc state machine (Addendum §1), first close condition.
+        Opens on consecutive negative EventNodes for an entity; closes on a flip
+        to positive/neutral. The second close condition (enough turns without
+        the entity recurring) lives in _conflict_arc_absence_close.
         Turn-counts are F-4d placeholders. Returns
         (open, closed_this_turn, first_negative_this_turn); the opening
         EventNode id is recorded by the caller after the write, since the id is
@@ -760,6 +803,35 @@ class AppraisalChain:
                 self._arc_open[entity_ref] = False
                 closed = True
         return (self._arc_open.get(entity_ref, False), closed, first_negative)
+
+    def _conflict_arc_absence_close(self, current_entity_ref) -> List[str]:
+        """Conflict-arc state machine (Addendum §1), SECOND close condition: an
+        open arc also closes when "enough turns pass without that entity
+        recurring". Runs once per turn, including turns with no entity_ref at
+        all (a turn with no entity is still a turn the entity did not recur in).
+
+        Categorical: the arc has either gone _CONFLICT_ARC_ABSENT_TURN_THRESHOLD
+        turns unmentioned or it has not. There is no partial closure, no decay
+        curve, and no weight — the counter is turn plumbing, and the CLOSE is a
+        yes/no. Closure behaves exactly as a Q2 flip does: the arc is marked
+        closed and the caller writes the one sanctioned "resolved" edge.
+
+        Returns the entity_refs whose arcs closed this turn by absence.
+        """
+        closed: List[str] = []
+        for ref, is_open in list(self._arc_open.items()):
+            if not is_open:
+                continue
+            if ref == current_entity_ref:
+                continue  # the entity recurred this turn — absence resets below
+            absent = self._arc_absent_turns.get(ref, 0) + 1
+            self._arc_absent_turns[ref] = absent
+            if absent >= self._cfg.arc_close_absent_turns:
+                self._arc_open[ref] = False
+                self._arc_consecutive_negative[ref] = 0
+                self._arc_absent_turns[ref] = 0
+                closed.append(ref)
+        return closed
 
     # -- Stage 2: categorical Q1..Q4 ---------------------------------------
 
@@ -1153,27 +1225,6 @@ class AppraisalChain:
         if a.q2 is Valence.NEGATIVE:
             return "something obstructive landed — acknowledge it plainly"
         return "a routine exchange — stay present"
-
-
-# ---------------------------------------------------------------------------
-# Small module-level helper (arc-closure edge salience hint). Uses the
-# poignancy tier categorically; the concrete floor lives in Memory_Graph.
-# ---------------------------------------------------------------------------
-
-
-def poignancy_base_hint(poignancy: PoignancyCategory) -> float:
-    """A base_salience hint for the arc-closure 'resolved' edge. Memory_Graph
-    applies the 3× resolution multiplier itself (Resolution Log item 5); this
-    only supplies a modest non-zero base so the multiplier has something to act
-    on. Categorical tier → a small substrate base (salience, NOT a feeling).
-    0.85 / 0.55 mirror the in-spec Critical/High base_salience floors; the
-    medium/low base has no in-spec floor and is a flagged substrate
-    placeholder."""
-    if poignancy is PoignancyCategory.CRITICAL:
-        return 0.85
-    if poignancy is PoignancyCategory.HIGH:
-        return 0.55
-    return 0.35  # TODO(build-time) — medium/low resolved-edge base_salience placeholder (substrate)
 
 
 @dataclass(frozen=True)
