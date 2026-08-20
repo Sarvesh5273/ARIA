@@ -13,15 +13,14 @@ ground plus the paths it skipped entirely: Energy bounds, PAD bounds, corrupt
 and non-numeric entries, atomic-write behaviour on a failed write, and load
 independence.
 
-WHAT THIS MODULE DELIBERATELY DOES NOT DO (asserted here as current behaviour,
-not endorsed as final): it does NOT range-check. The module docstring says it
-"owns no meaning — pure read/write plumbing", and restore does exactly three
-things: type-coerce, fall back to a spec default when a value is missing or
-non-numeric, and clamp the LENGTH of quality_record to 20. A persisted
-pleasure=5.0 or energy=-50.0 round-trips verbatim. The tests below pin that
-as-is; see the flag in the session report — whether clamping belongs here or in
-PAD_Engine / Needs_System is an architect call, not something to settle in a
-test file.
+RESTORE IS DEFENSIVE (architect ruling): PAD axes clamp to the locked [0.0, 1.0]
+(v4 Layer 1) and Energy clamps to [0.0, 100.0], so a hand-edited or corrupted
+file cannot seed an out-of-range value into a live session. Unusable entries —
+non-numeric, NaN, ±inf — still fall back to the spec default rather than being
+clamped, since a value with no position on the scale is not a value to bound.
+SAVE is unchanged: it records what the owning module hands it (Module 1 clamps
+live PAD itself); the clamp is a read-boundary check, so an out-of-range save
+followed by a load is deliberately asymmetric.
 """
 
 import json
@@ -32,7 +31,11 @@ import pytest
 from daemon.state_manager import (
     CONSISTENCY_FLAG_NAMES,
     DEFAULT_ENERGY,
+    ENERGY_MAX,
+    ENERGY_MIN,
     PAD_BASELINE,
+    PAD_MAX,
+    PAD_MIN,
     QUALITY_RECORD_MAX,
     PADState,
     SelfModel,
@@ -316,57 +319,118 @@ def test_saved_object_is_decoupled_from_the_file(tmp_path):
 # 5) PAD values outside [0, 1] — CURRENT behaviour is neither clamp nor reject
 # ===========================================================================
 
-def test_out_of_range_pad_is_not_clamped_on_restore(tmp_path):
-    """Pins CURRENT behaviour, which is to pass out-of-range PAD through
-    verbatim. StateManager "owns no meaning" and performs no range validation;
-    PAD_Engine.apply_appraisal_delta is where the [0,1] clamp lives. Flagged for
-    architect review — see the session report. If a ruling adds clamping (here
-    or at the PAD_Engine restore boundary), this test should change WITH it
-    rather than be worked around."""
+def test_out_of_range_pad_is_clamped_on_restore(tmp_path):
+    # The headline case: pleasure=5.0 clamps to 1.0. PAD is bounded to [0,1]
+    # (v4 Layer 1); a corrupted file cannot exceed it.
     sm = make_manager(tmp_path)
     write_state_file(sm, {
         "pad": {"pleasure": 5.0, "arousal": -3.0, "dominance": 1.5},
     })
     pad = sm.load_pad()
-    assert pad.pleasure == pytest.approx(5.0)
-    assert pad.arousal == pytest.approx(-3.0)
-    assert pad.dominance == pytest.approx(1.5)
+    assert pad.pleasure == pytest.approx(1.0)     # 5.0  -> PAD_MAX
+    assert pad.arousal == pytest.approx(0.0)      # -3.0 -> PAD_MIN
+    assert pad.dominance == pytest.approx(1.0)    # 1.5  -> PAD_MAX
 
 
-def test_pad_bounds_are_round_tripped_not_rejected(tmp_path):
+def test_in_range_pad_passes_through_unchanged(tmp_path):
+    # Valid values are untouched — clamping must not perturb good data.
     sm = make_manager(tmp_path)
-    for pleasure, arousal, dominance in [
-        (0.0, 0.0, 0.0),        # lower bound
-        (1.0, 1.0, 1.0),        # upper bound
-        (-0.5, 2.0, 42.0),      # well outside
-    ]:
+    write_state_file(sm, {
+        "pad": {"pleasure": 0.5, "arousal": 0.45, "dominance": 0.58},
+    })
+    assert sm.load_pad() == PADState(0.5, 0.45, 0.58)
+
+
+def test_pad_bounds_are_inclusive(tmp_path):
+    sm = make_manager(tmp_path)
+    for pleasure, arousal, dominance in [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)]:
         sm.save_pad(PADState(pleasure, arousal, dominance))
         assert sm.load_pad() == PADState(pleasure, arousal, dominance)
+
+
+def test_pad_clamp_is_a_read_boundary_not_a_write_one(tmp_path):
+    # save records what the owning module hands over (Module 1 clamps live PAD
+    # itself); the defence is on the way back IN. The asymmetry is deliberate.
+    sm = make_manager(tmp_path)
+    sm.save_pad(PADState(5.0, -3.0, 0.5))
+    on_disk = json.loads(sm.state_file.read_text())["pad"]
+    assert on_disk["pleasure"] == pytest.approx(5.0)      # stored verbatim
+    assert sm.load_pad() == PADState(1.0, 0.0, 0.5)       # clamped on restore
+
+
+def test_non_finite_pad_is_treated_as_corrupt_not_clamped(tmp_path):
+    # json.loads accepts a literal NaN/Infinity, and NaN survives a naive
+    # max(low, min(high, v)) as `high` — which would silently restore as
+    # "maximum pleasure". A value with no position on the scale is corrupt.
+    sm = make_manager(tmp_path)
+    sm.state_dir.mkdir(parents=True, exist_ok=True)
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        sm.state_file.write_text(
+            '{"pad": {"pleasure": %s, "arousal": 0.4, "dominance": 0.7}}' % literal)
+        assert sm.load_pad() == PADState.baseline(), literal
 
 
 # ===========================================================================
 # 6) Energy outside [0, 100] — same: not clamped, not rejected
 # ===========================================================================
 
-def test_out_of_range_energy_is_not_clamped_on_restore(tmp_path):
-    """Same flag as PAD above. The 30 / 20 gates are in-spec OPERATIONAL
-    thresholds read by Soul_Filter and DMN; the 0-100 scale itself is an
-    explicitly-unlocked tuning flag (DEFAULT_ENERGY's comment: "Energy baseline
-    is NOT locked anywhere in the spec"), and Module 2 owns live Energy
-    dynamics. So this module stores what it is given."""
+def test_out_of_range_energy_is_clamped_on_restore(tmp_path):
+    # The two headline cases: -50.0 -> 0.0 and 150.0 -> 100.0.
     sm = make_manager(tmp_path)
-    write_state_file(sm, {"energy": 999.0})
-    assert sm.load_energy() == pytest.approx(999.0)
 
     write_state_file(sm, {"energy": -50.0})
-    assert sm.load_energy() == pytest.approx(-50.0)
+    assert sm.load_energy() == pytest.approx(ENERGY_MIN)     # 0.0
+
+    write_state_file(sm, {"energy": 150.0})
+    assert sm.load_energy() == pytest.approx(ENERGY_MAX)     # 100.0
+
+    write_state_file(sm, {"energy": 999.0})
+    assert sm.load_energy() == pytest.approx(ENERGY_MAX)
 
 
-def test_energy_bounds_are_round_tripped_not_rejected(tmp_path):
+def test_in_range_energy_passes_through_unchanged(tmp_path):
     sm = make_manager(tmp_path)
-    for energy in (0.0, 100.0, 150.0, -1.0):
+    write_state_file(sm, {"energy": 75.0})
+    assert sm.load_energy() == pytest.approx(75.0)
+
+
+def test_energy_bounds_are_inclusive(tmp_path):
+    sm = make_manager(tmp_path)
+    for energy in (ENERGY_MIN, 25.0, ENERGY_MAX):
         sm.save_energy(energy)
         assert sm.load_energy() == pytest.approx(energy)
+
+
+def test_clamped_energy_preserves_the_direction_the_file_recorded(tmp_path):
+    """A clamp is more informative than a reject. Module 2's own restore guard
+    (EnergyTracker._is_valid_energy) discards an out-of-range value and boots at
+    ENERGY_BASELINE — so a file saying -50 would have come back as "fully
+    rested". Clamping keeps "empty" meaning empty."""
+    sm = make_manager(tmp_path)
+    write_state_file(sm, {"energy": -50.0})
+    restored = sm.load_energy()
+    assert restored == pytest.approx(0.0)
+    assert restored != pytest.approx(DEFAULT_ENERGY)
+
+
+def test_non_finite_energy_is_treated_as_corrupt_not_clamped(tmp_path):
+    sm = make_manager(tmp_path)
+    sm.state_dir.mkdir(parents=True, exist_ok=True)
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        sm.state_file.write_text('{"energy": %s}' % literal)
+        assert sm.load_energy() == pytest.approx(DEFAULT_ENERGY), literal
+
+
+def test_load_all_applies_the_same_clamps(tmp_path):
+    # load_all() must not be a second, unguarded path onto the same data.
+    sm = make_manager(tmp_path)
+    write_state_file(sm, {
+        "pad": {"pleasure": 5.0, "arousal": -3.0, "dominance": 0.5},
+        "energy": 150.0,
+    })
+    pad, energy, _model, _valence = sm.load_all()
+    assert pad == PADState(1.0, 0.0, 0.5)
+    assert energy == pytest.approx(ENERGY_MAX)
 
 
 def test_integer_energy_is_coerced_to_float(tmp_path):

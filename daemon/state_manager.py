@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -58,6 +59,25 @@ PAD_BASELINE = (0.55, 0.45, 0.58)  # pleasure, arousal, dominance
 # existing Phase-1 code and consistent with those gates. 100 = fully rested.
 # Treat as a tuning flag; Module 2 (Needs) owns live Energy dynamics.
 DEFAULT_ENERGY = 100.0
+
+# ---------------------------------------------------------------------------
+# Restore bounds. These make RESTORE defensive: a hand-edited, truncated or
+# corrupted state file must not be able to seed an out-of-range value into a
+# live session. This is a boundary check on data read from disk, not meaning —
+# the module still computes nothing and still does not interpret the values.
+# ---------------------------------------------------------------------------
+
+# PAD is bounded to [0.0, 1.0] (v4 Layer 1). Module 1 already clamps LIVE PAD in
+# apply_appraisal_delta; restore now enforces the same locked bound.
+PAD_MIN = 0.0
+PAD_MAX = 1.0
+
+# Energy bounds mirror Module 2's ENERGY_MIN / ENERGY_BASELINE (0.0 / 100.0) by
+# VALUE, deliberately not by import — Module 11 depends on no other module. The
+# 0-100 scale is a tuning flag (see DEFAULT_ENERGY above), so this clamp inherits
+# that status rather than asserting a spec-locked range.
+ENERGY_MIN = 0.0
+ENERGY_MAX = DEFAULT_ENERGY
 
 # Save cadence — build-time tuning flag (ResLog §4). Not an architectural
 # decision. The Daemon reads this to schedule periodic save_all() calls.
@@ -149,6 +169,30 @@ class StateManager:
             logger.warning("State file %s unreadable (%s); starting fresh", path, exc)
             return {}
 
+    @staticmethod
+    def _bounded(raw, low: float, high: float) -> float:
+        """Coerce a restored value to float and clamp it into [low, high].
+
+        Raises ValueError/TypeError for anything unusable so the caller's
+        existing `except (TypeError, ValueError)` path logs and falls back to the
+        spec default — the same handling a non-numeric entry already got.
+
+        Non-finite input is unusable ON PURPOSE. `json.loads` accepts a literal
+        `NaN`/`Infinity`, and NaN silently survives a naive
+        `max(low, min(high, v))` as `high` — i.e. a corrupt Energy entry would
+        quietly restore as "fully rested". Treating it as corrupt (Module 2's
+        _is_valid_energy does the same) is the honest reading: a value with no
+        position on the scale is not a value to clamp.
+        """
+        value = float(raw)                      # TypeError/ValueError -> caller
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite value {raw!r}")
+        if value < low:
+            return low
+        if value > high:
+            return high
+        return value
+
     def _write_json_atomic(self, path: Path, data: Dict) -> None:
         """Atomic write: temp file in same dir, then os.replace (POSIX-atomic).
 
@@ -172,12 +216,21 @@ class StateManager:
     # -- aria_state.json: PAD + Energy ----------------------------------------
 
     def load_pad(self) -> PADState:
+        """Restore PAD, clamped to the locked [0.0, 1.0] bound (v4 Layer 1).
+
+        A corrupt or hand-edited file cannot seed an out-of-range axis into a
+        live session. Unusable entries (non-numeric, NaN, ±inf) fall back to the
+        baseline, as before.
+        """
         data = self._read_json(self.state_file).get(_KEY_PAD, {})
         try:
             return PADState(
-                pleasure=float(data.get("pleasure", PAD_BASELINE[0])),
-                arousal=float(data.get("arousal", PAD_BASELINE[1])),
-                dominance=float(data.get("dominance", PAD_BASELINE[2])),
+                pleasure=self._bounded(
+                    data.get("pleasure", PAD_BASELINE[0]), PAD_MIN, PAD_MAX),
+                arousal=self._bounded(
+                    data.get("arousal", PAD_BASELINE[1]), PAD_MIN, PAD_MAX),
+                dominance=self._bounded(
+                    data.get("dominance", PAD_BASELINE[2]), PAD_MIN, PAD_MAX),
             )
         except (TypeError, ValueError):
             logger.warning("pad entry corrupt in %s; using baseline", self.state_file)
@@ -197,8 +250,17 @@ class StateManager:
         self._write_json_atomic(self.state_file, data)
 
     def load_energy(self) -> float:
+        """Restore Energy, clamped to [ENERGY_MIN, ENERGY_MAX] (0.0-100.0).
+
+        Note the clamp is more informative than a reject: a file saying -50
+        restores as 0.0 ("empty"), preserving the direction the file recorded,
+        where Module 2's own restore guard would have discarded it and booted at
+        full. Unusable entries (non-numeric, NaN, ±inf) still fall back to the
+        default.
+        """
+        raw = self._read_json(self.state_file).get(_KEY_ENERGY, DEFAULT_ENERGY)
         try:
-            return float(self._read_json(self.state_file).get(_KEY_ENERGY, DEFAULT_ENERGY))
+            return self._bounded(raw, ENERGY_MIN, ENERGY_MAX)
         except (TypeError, ValueError):
             logger.warning("energy entry corrupt in %s; using default", self.state_file)
             return DEFAULT_ENERGY
