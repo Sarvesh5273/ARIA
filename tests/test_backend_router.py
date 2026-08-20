@@ -10,7 +10,9 @@ These prove:
   * set_override() is session-scoped, validated against VALID_TIERS, and
     (per select()) WINS UNCONDITIONALLY over both the classifier and health.
   * check_health() is CACHED for HEALTH_CACHE_TTL_SECONDS and returns a copy
-    each time (mutating the returned dict cannot corrupt the cache).
+    each time (mutating the returned dict cannot corrupt the cache), and it
+    reports the HEALTHY SET: _probe_one's UNKNOWN (a non-local transport with
+    no HealthProbe) is NOT healthy, so nothing routes optimistically (FLAG B).
   * select() implements the exact fallback chain: override -> propose (if
     tier-2-shaped AND azure healthy) -> gemma (only if loaded; the DEFAULT
     VOICE for conversation) -> groq (fallback only) -> None.
@@ -84,6 +86,44 @@ class FakeLocalTransport:
 
     def is_healthy(self):
         return self.healthy
+
+
+class ProbelessCloudTransport:
+    """Satisfies ModelTransport but NOT HealthProbe — no is_healthy() at all.
+    This is what a real Groq/Azure adapter looks like before anyone writes a
+    cheap reachability probe for it, and it is the FLAG B case: the router
+    cannot know whether it is up, so it must not assume it is."""
+
+    def __init__(self, name):
+        self.name = name
+        self.prompts = []
+
+    def generate(self, prompt):
+        self.prompts.append(prompt)
+        return f"{self.name} reply"
+
+
+class ProbelessLocalTransport:
+    """LocalModelTransport with no HealthProbe: residency IS a real answer, so
+    the local tier is never UNKNOWN."""
+
+    def __init__(self, loaded=True):
+        self._loaded = loaded
+        self.prompts = []
+
+    @property
+    def is_loaded(self):
+        return self._loaded
+
+    def load(self):
+        self._loaded = True
+
+    def unload(self):
+        self._loaded = False
+
+    def generate(self, prompt):
+        self.prompts.append(prompt)
+        return "gemma reply"
 
 
 class FakeClock:
@@ -386,6 +426,101 @@ def test_health_check_caches():
     fourth["azure"] = False
     fifth = router.check_health()
     assert fifth["azure"] is True
+
+
+# ===========================================================================
+# 4b) FLAG B — UNKNOWN health is not optimistic health.
+# ===========================================================================
+
+def test_probe_one_returns_unknown_without_health_probe():
+    # The three-state contract: True / False / None(UNKNOWN). A non-local
+    # transport with no is_healthy() cannot answer, so the answer is UNKNOWN —
+    # never an optimistic True (FLAG B).
+    probe_yes = FakeCloudTransport("groq", healthy=True)
+    probe_no = FakeCloudTransport("groq", healthy=False)
+    probeless = ProbelessCloudTransport("groq")
+
+    assert BackendRouter._probe_one(probe_yes, is_local=False) is True
+    assert BackendRouter._probe_one(probe_no, is_local=False) is False
+    assert BackendRouter._probe_one(probeless, is_local=False) is None
+    assert BackendRouter._probe_one(None, is_local=False) is False
+
+    # The local tier is never UNKNOWN: residency is a real answer.
+    assert BackendRouter._probe_one(ProbelessLocalTransport(loaded=True),
+                                    is_local=True) is True
+    assert BackendRouter._probe_one(ProbelessLocalTransport(loaded=False),
+                                    is_local=True) is False
+
+
+def test_transport_without_health_probe_is_not_reported_healthy():
+    # check_health() reports the HEALTHY SET. UNKNOWN is not in it.
+    router, gemma, groq, azure, clock = make_router(
+        groq=ProbelessCloudTransport("groq"),
+        azure=ProbelessCloudTransport("azure"),
+    )
+    health = router.check_health()
+    assert health["groq"] is False
+    assert health["azure"] is False
+    assert health["gemma"] is True  # this one CAN answer
+    # And an explicit probe still reports honestly, both ways.
+    up, _g2, _q2, _a2, _c2 = make_router(groq=FakeCloudTransport("groq", healthy=True))
+    assert up.check_health()["groq"] is True
+    down, _g3, _q3, _a3, _c3 = make_router(groq=FakeCloudTransport("groq", healthy=False))
+    assert down.check_health()["groq"] is False
+
+
+def test_unknown_azure_does_not_propose_escalation():
+    # The tier-2 propose branch is gated on EXPLICIT azure health. With an
+    # unprobeable azure, a keyword match must NOT propose escalation; the turn
+    # falls through to the default voice instead.
+    router, gemma, groq, azure, clock = make_router(
+        azure=ProbelessCloudTransport("azure"))
+    transport, propose = router.select("there is an error here")
+    assert propose is False
+    assert transport is gemma
+
+
+def test_select_falls_back_to_gemma_when_cloud_transports_are_unknown():
+    router, gemma, groq, azure, clock = make_router(
+        groq=ProbelessCloudTransport("groq"),
+        azure=ProbelessCloudTransport("azure"),
+    )
+    transport, propose = router.select("how are you")
+    assert transport is gemma
+    assert propose is False
+
+
+def test_unknown_groq_is_not_selected_when_gemma_unavailable():
+    # Groq is the fallback ONLY when explicitly healthy. Unprobeable groq plus
+    # unavailable gemma must degrade, not silently route to a dead backend.
+    router, gemma, groq, azure, clock = make_router(
+        groq=ProbelessCloudTransport("groq"),
+        azure=ProbelessCloudTransport("azure"),
+    )
+    gemma.unload()
+    transport, propose = router.select("how are you")
+    assert transport is None
+    assert propose is False
+
+
+def test_degradation_path_reachable_when_everything_is_unknown_or_down():
+    # The all-down return (None, False) used to be unreachable because every
+    # probeless cloud transport reported healthy. It is now reachable.
+    router, gemma, groq, azure, clock = make_router(
+        gemma=ProbelessLocalTransport(loaded=False),
+        groq=ProbelessCloudTransport("groq"),
+        azure=ProbelessCloudTransport("azure"),
+    )
+    assert router.check_health() == {"gemma": False, "groq": False, "azure": False}
+    assert router.select("how are you") == (None, False)
+    assert router.select("there is an error here") == (None, False)
+
+    # Same outcome via explicit unhealthy probes, for parity.
+    router2, gemma2, groq2, azure2, clock2 = make_router()
+    gemma2.healthy = False
+    groq2.healthy = False
+    azure2.healthy = False
+    assert router2.select("how are you") == (None, False)
 
 
 # ===========================================================================

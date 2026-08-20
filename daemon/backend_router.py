@@ -72,12 +72,18 @@ nothing in this codebase unloads it afterward (architect decision: Gemma
 loads at startup and stays resident). See `HANDOFF_NOTES.md` "Track A" for
 the full record.
 
-FLAG B — health probing is optimistic for any transport that exposes no
-`HealthProbe` and is not the local tier: such a transport is simply assumed
-reachable (see `check_health()` / `HealthProbe` below). This is NOT a real
-reachability check; it is a placeholder default. A genuinely down transport
-will surface as an `LLMTransportError` at `generate()` time (handled by
-whichever module calls `LLMInterface`), not pre-empted here.
+FLAG B — FIXED. Health probing is no longer optimistic. A non-local transport
+that exposes no `HealthProbe` can no longer answer the question, so `_probe_one`
+returns `None` (UNKNOWN) rather than `True`, and `check_health()` does NOT put
+UNKNOWN in the healthy set — only an explicit `is_healthy() -> True` counts as
+healthy. Consequences, all intended: a tier-2 keyword match no longer proposes
+escalation unless Azure explicitly reports healthy; Groq is only selected when
+it explicitly reports healthy; and the all-down degradation return `(None,
+False)` is reachable instead of dead. A transport that IS up but simply cannot
+say so is treated as unavailable for ROUTING purposes only — nothing prevents a
+caller from handing it to `generate()` directly, and a genuinely down transport
+still surfaces as an `LLMTransportError` there. No timeout, retry count, or
+backoff is invented here.
 
 Precedence when documents conflict: `ARIA_Resolution_Log.md` >
 `ARIA_Soul_Spec_v4_Addendum.md` > `ARIA_Soul_Spec_v4.md`. Rule 1: mechanisms
@@ -285,7 +291,9 @@ class BackendRouter:
     # -- health probing (Part 5 resolution; FLAG B) -------------------------
 
     def check_health(self) -> dict[str, bool]:
-        """Returns `{"gemma": bool, "groq": bool, "azure": bool}`.
+        """Returns `{"gemma": bool, "groq": bool, "azure": bool}` — the HEALTHY
+        SET. A key is True only when its transport EXPLICITLY reported healthy;
+        an UNKNOWN probe (see `_probe_one`) is NOT in the healthy set.
 
         CACHED: if a previous result exists and
         `(clock() - cached_at) < HEALTH_CACHE_TTL_SECONDS`, the cached dict is
@@ -297,12 +305,14 @@ class BackendRouter:
           1. transport is None                    -> False
           2. isinstance(transport, HealthProbe)    -> bool(transport.is_healthy())
           3. the local tier (gemma) with no probe  -> bool(transport.is_loaded)
-          4. anything else with no probe           -> True (FLAG B: optimistic
-             default, NOT a real reachability check — see module docstring).
-             A transport that is actually unreachable will surface as an
-             `LLMTransportError` at `generate()` time instead, handled by
-             whichever module calls `LLMInterface` — not pre-empted here. No
-             timeout, retry count, or backoff is invented for this probe."""
+          4. anything else with no probe           -> UNKNOWN, folded to False
+             (FLAG B FIXED: no probe means no answer, and "no answer" is not
+             "yes" — see module docstring). Routing therefore never assumes an
+             unprobeable cloud transport is reachable. A transport that IS up
+             but cannot say so is unavailable for ROUTING only; it still works
+             if handed to `generate()` directly, and a genuinely down one
+             surfaces as an `LLMTransportError` there. No timeout, retry
+             count, or backoff is invented for this probe."""
         now = self._clock()
         if (
             self._health_cache is not None
@@ -311,18 +321,24 @@ class BackendRouter:
         ):
             return dict(self._health_cache)
 
-        fresh = {
+        probes = {
             "gemma": self._probe_one(self._gemma, is_local=True),
             "groq": self._probe_one(self._groq, is_local=False),
             "azure": self._probe_one(self._azure, is_local=False),
         }
+        # UNKNOWN (None) is not healthy. Only an explicit True joins the
+        # healthy set — a transport that could not answer is left out of it.
+        fresh = {key: (probe is True) for key, probe in probes.items()}
         self._health_cache = fresh
         self._health_cached_at = now
         return dict(fresh)
 
     @staticmethod
-    def _probe_one(transport, *, is_local: bool) -> bool:
-        """One backend's probe, per the Part 5 resolution order above."""
+    def _probe_one(transport, *, is_local: bool) -> Optional[bool]:
+        """One backend's probe, per the resolution order in `check_health`.
+        True = explicitly healthy, False = explicitly unhealthy, None =
+        UNKNOWN (the transport cannot answer). UNKNOWN is deliberately NOT
+        collapsed to True here — that was FLAG B."""
         if transport is None:
             return False
         if isinstance(transport, HealthProbe):
@@ -330,10 +346,12 @@ class BackendRouter:
         if is_local:
             # The local tier (gemma) with no HealthProbe: fall back to its
             # own load-state property (LocalModelTransport.is_loaded is a
-            # PROPERTY, never called with parens).
+            # PROPERTY, never called with parens). Residency IS a real answer,
+            # so the local tier is never UNKNOWN.
             return bool(transport.is_loaded)
-        # FLAG B: optimistic default for a non-local transport with no probe.
-        return True
+        # FLAG B FIXED: a non-local transport with no probe cannot report, so
+        # the honest answer is UNKNOWN — never an optimistic True.
+        return None
 
     # -- local model lifecycle (startup) -------------------------------------
 
@@ -368,16 +386,20 @@ class BackendRouter:
             # exactly this.
             return self._transport_for_tier(override), False
 
+        # health is the HEALTHY SET: True means EXPLICITLY healthy. An UNKNOWN
+        # probe is already folded out by check_health(), so every gate below
+        # reads "explicitly healthy", never "not known to be down" (FLAG B).
         health = self.check_health()
 
         if self.classify(user_text) == "propose_tier_2" and health["azure"]:
             return None, True  # Daemon owns the pause-and-ask UX
 
         # CONSEQUENCE (documented, not a bug): when the classifier matches
-        # but azure is unhealthy, the propose branch above is skipped and the
-        # turn falls through to the normal gemma -> groq chain below. That is
-        # intended — a tier-2-shaped request with no reasoning tier available
-        # still gets an answer from whatever IS up, rather than blocking.
+        # but azure is not explicitly healthy (down OR unprobeable), the
+        # propose branch above is skipped and the turn falls through to the
+        # normal gemma -> groq chain below. That is intended — a tier-2-shaped
+        # request with no reasoning tier available still gets an answer from
+        # whatever IS up, rather than blocking.
         #
         # FALLBACK ORDER (architect decision): Gemma is the DEFAULT VOICE for
         # all conversation (emotional / personal talk) — it is tried FIRST,
@@ -387,9 +409,11 @@ class BackendRouter:
         if health["gemma"] and self._gemma.is_loaded:  # PROPERTY, no parens
             return self._gemma, False
 
-        if health["groq"]:
+        if health["groq"]:  # explicitly healthy only — UNKNOWN does not qualify
             return self._groq, False
 
+        # Degradation path. REACHABLE since FLAG B was fixed: gemma unavailable
+        # plus non-local transports that are down OR unprobeable lands here.
         return None, False  # everything down; Daemon raises/degrades
 
     # -- private helpers ------------------------------------------------------
