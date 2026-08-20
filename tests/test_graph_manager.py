@@ -12,9 +12,10 @@ resolved_edge_exists / reality_contradiction_check, and boundary API-surface
 guarantees.
 
 Flagged Open Questions are deliberately NOT pinned to a value by these tests
-(medium/low base_salience OQ2, retrieval precedence OQ4, habituation rate OQ1,
-decay-threshold semantics OQ5 beyond total-elapsed) — per design.md, tests
-must not silently encode an un-approved resolution.
+(retrieval precedence OQ4, habituation rate OQ1, decay-threshold semantics OQ5
+beyond total-elapsed) — per design.md, tests must not silently encode an
+un-approved resolution. Medium/low base_salience is no longer among them: ResLog
+item 9 says "no floor" outright, and the tests now assert exactly that.
 
 No hypothesis dependency: "property" checks use representative hand-picked
 inputs, matching Module 1's plain-pytest style.
@@ -206,21 +207,61 @@ def test_negative_bonus_stacks_on_floor():
     assert neg.base_salience == pytest.approx(0.55 + 0.15)
 
 
-def test_medium_low_placeholder_ordering_and_stacking():
-    # OQ2 (DEFERRED placeholder — architect: medium 0.35, low 0.15). Tests the
-    # architect's stated PROPERTIES (ordered, both below the 0.55 high floor,
-    # +0.15 stacks per tier), not the exact magnitudes (still runtime-tuned).
+def test_medium_low_have_no_base_salience_floor():
+    # Resolution Log item 9: "Medium/Low → no floor, decays/discards as already
+    # locked." No floor means no floor — not a placeholder magnitude. Both tiers
+    # start at 0.0 for a non-negative event.
     mg = make_graph()
     med = mg.get_event_node(add_event(mg, poignancy_category=PoignancyCategory.MEDIUM,
                                       appraisal_q2="neutral"))
     low = mg.get_event_node(add_event(mg, poignancy_category=PoignancyCategory.LOW,
                                       appraisal_q2="neutral"))
+    assert med.base_salience == pytest.approx(0.0)
+    assert low.base_salience == pytest.approx(0.0)
+    assert med.salience == pytest.approx(0.0)  # initial salience == base
+    # No floor constant survives for medium/low.
+    assert not hasattr(gm, "_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER")
+    assert PoignancyCategory.MEDIUM not in gm.POIGNANCY_SALIENCE_FLOOR
+    assert PoignancyCategory.LOW not in gm.POIGNANCY_SALIENCE_FLOOR
+
+
+def test_negative_bonus_stacks_on_absent_medium_low_floor():
+    # Item 9: the +0.15 bonus stacks "on top of whichever floor applies" — for
+    # medium/low the floor is nothing, so the bonus is the whole base.
+    mg = make_graph()
     med_neg = mg.get_event_node(add_event(mg, poignancy_category=PoignancyCategory.MEDIUM,
-                                          appraisal_q2="negative"))
-    assert med.base_salience > low.base_salience          # ordered
-    assert med.base_salience < 0.55 and low.base_salience < 0.55  # below high floor
-    # +0.15 negative bonus stacks on the same-tier placeholder
-    assert med_neg.base_salience == pytest.approx(med.base_salience + NEGATIVE_SALIENCE_BONUS)
+                                         appraisal_q2="negative"))
+    low_neg = mg.get_event_node(add_event(mg, poignancy_category=PoignancyCategory.LOW,
+                                         appraisal_q2="negative"))
+    assert med_neg.base_salience == pytest.approx(NEGATIVE_SALIENCE_BONUS)
+    assert low_neg.base_salience == pytest.approx(NEGATIVE_SALIENCE_BONUS)
+
+
+def test_medium_low_decay_naturally_while_critical_high_resist():
+    # The behavioural consequence of "no floor": medium/low nodes walk the full
+    # forgetting path on the same elapsed time that critical/high resist.
+    mg = make_graph()
+    med = add_event(mg, poignancy_category=PoignancyCategory.MEDIUM)
+    low = add_event(mg, poignancy_category=PoignancyCategory.LOW)
+    crit = add_event(mg, poignancy_category=PoignancyCategory.CRITICAL)
+    high = add_event(mg, poignancy_category=PoignancyCategory.HIGH)
+    later = T0 + timedelta(days=65)
+    for nid in (med, low, crit, high):
+        mg._touch_event_node(mg.get_event_node(nid), later)
+    # no floor → decays/discards: all the way to faded
+    assert mg.get_event_node(med).precision == Precision.FADED
+    assert mg.get_event_node(low).precision == Precision.FADED
+    # floors hold: critical stays word-for-word, high settles at the gist
+    assert mg.get_event_node(crit).precision == Precision.VIVID
+    assert mg.get_event_node(high).precision == Precision.PRESENT
+    # a medium node decays sooner than the high node's resisted stopping point
+    med2 = add_event(mg, poignancy_category=PoignancyCategory.MEDIUM)
+    high2 = add_event(mg, poignancy_category=PoignancyCategory.HIGH)
+    mid = T0 + timedelta(days=20)
+    mg._touch_event_node(mg.get_event_node(med2), mid)
+    mg._touch_event_node(mg.get_event_node(high2), mid)
+    assert mg.get_event_node(med2).precision == Precision.SOFTENED
+    assert mg.get_event_node(high2).precision == Precision.PRESENT
 
 
 # ===========================================================================

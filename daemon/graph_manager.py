@@ -39,9 +39,10 @@ Open Questions — architect resolutions applied (2026-07-05):
     OQ1 (trigger shape) → a firing is "without variation" if its
         retrieval-context embedding is similar to recent firings of the same
         edge; habituation adjusts edge salience ONLY (see register_edge_firing).
+    OQ2 → Medium/Low poignancy: no base_salience floor per ResLog item 9.
+        Decays/discards as already locked.
   DEFERRED (explicit placeholder + TODO — do NOT treat as final):
     OQ1-rate → habituation decrement/cutoff/window magnitudes (runtime-tuned).
-    OQ2 → medium/low base_salience placeholders (medium 0.35, low 0.15).
   NOT THIS MODULE'S DECISION:
     OQ6 → Purpose evidence definition defers to Needs System (Module 2).
     max-5 no-evictable-GRAPH_CONFLICT → keep raise (cognitive-ceiling
@@ -141,26 +142,13 @@ _PROTECTED_UNCERTAINTY_TYPES = frozenset(
 POIGNANCY_SALIENCE_FLOOR = {
     PoignancyCategory.CRITICAL: 0.85,
     PoignancyCategory.HIGH: 0.55,
-    # Medium/Low: NO floor (see _MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER / OQ2).
+    # Medium/Low: NO floor — Resolution Log item 9 states literally
+    # "Medium/Low → no floor, decays/discards as already locked". That is a
+    # positive instruction, not silence, so nothing is substituted for it.
 }
 # Baumeister negative-event encoding bonus — v4 Layer 3 / Key Technical
 # Constants ("+0.15 base_salience for Q2 = negative EventNodes at creation").
 NEGATIVE_SALIENCE_BONUS = 0.15
-
-# TODO(OQ2): DEFERRED — architect-set PLACEHOLDER magnitudes, tuned at runtime.
-# v4 / Resolution Log item 9 define base_salience floors for critical (0.85)
-# and high (0.55) ONLY; poignancy is "not a weighted formula" (v4), so no
-# source yields a starting base_salience for medium/low. The architect set
-# DEFERRED PLACEHOLDER values — medium 0.35, low 0.15 — chosen only to be
-# ORDERED and BOTH BELOW the 0.55 high floor; the real values are tuned at
-# runtime by watching her behave. Poignancy itself stays categorical
-# (critical/high/medium/low) — only its SUBSTRATE salience gets these
-# placeholder numbers, and salience never directly computes a feeling. The
-# +0.15 negative bonus stacks on them. Keep TODO(OQ2); do NOT treat as final.
-_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER = {
-    PoignancyCategory.MEDIUM: 0.35,  # TODO(OQ2) placeholder — runtime-tuned
-    PoignancyCategory.LOW: 0.15,     # TODO(OQ2) placeholder — runtime-tuned
-}
 
 # Precision decay time thresholds — v4 Precision Decay Rates table.
 DECAY_VIVID_TO_PRESENT = timedelta(hours=72)
@@ -590,16 +578,16 @@ class MemoryGraph:
         """base_salience = poignancy_floor + (0.15 if Q2 negative).
 
         Resolution Log item 9 (floors: critical 0.85 / high 0.55) + v4
-        Baumeister (+0.15 negative bonus). For medium/low there is no
-        source-defined floor; the architect set DEFERRED PLACEHOLDER magnitudes
-        (medium 0.35, low 0.15 — TODO(OQ2), runtime-tuned), on which the +0.15
-        negative bonus stacks exactly as it stacks on the critical/high floor.
+        Baumeister (+0.15 negative bonus). Medium/Low get NO floor — item 9
+        says so literally ("Medium/Low → no floor, decays/discards as already
+        locked"), so their floor contribution is nothing at all and they decay
+        naturally against the resistance thresholds. The +0.15 negative bonus
+        still stacks "on top of whichever floor applies" (item 9), which for
+        medium/low means it stacks on nothing.
         Poignancy itself stays categorical; this only sets the substrate
         salience, which never directly computes a feeling.
         """
-        floor = POIGNANCY_SALIENCE_FLOOR.get(poignancy)
-        if floor is None:  # medium / low — architect-set placeholder (TODO(OQ2))
-            floor = _MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER.get(poignancy, 0.0)
+        floor = POIGNANCY_SALIENCE_FLOOR.get(poignancy, 0.0)  # medium/low: no floor
         bonus = NEGATIVE_SALIENCE_BONUS if appraisal_q2 == "negative" else 0.0
         return floor + bonus
 
