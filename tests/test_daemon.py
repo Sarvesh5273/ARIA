@@ -54,6 +54,7 @@ from daemon.aria_daemon import (
 from daemon.pad_engine import PADEngine, PADSnapshot, PADDelta, Valence, PAD_BASELINE
 from daemon.state_manager import StateManager, PADState, SelfModel, CONSISTENCY_FLAG_NAMES
 from daemon.needs_system import NeedsSystem, ENERGY_CRITICAL
+from daemon.types import ENERGY_LOW
 from daemon.graph_manager import MemoryGraph, PoignancyCategory, RelationalStage, EdgeType
 from daemon.appraisal_chain import AppraisalChain
 from daemon.soul_filter import SoulFilter, NeedState, NeedStates
@@ -1227,3 +1228,127 @@ def test_f4_during_proposal_does_not_answer_it(tmp_path):
     assert d.state is DaemonState.PROPOSING_CLOUD
     assert d.pending_query == "debug this traceback"
     assert ctx.backend_router.get_override() is None
+
+
+# ===========================================================================
+# Energy < 30 -> cognitive-load modifier (Addendum §3 operational threshold
+# gate; v4 mechanism table "Cognitive load effect | Appraisal modifier |
+# Stage 2 appraisal + DMN depth check").
+# ===========================================================================
+
+def _record_appraisal_calls(appraisal):
+    """Wrap the REAL AppraisalChain's two entry points on the instance the
+    Daemon holds, recording call ORDER. Instance attributes shadow the class
+    methods, so the Daemon sees the wrappers while the real behaviour still
+    runs underneath — nothing is stubbed out."""
+    calls = []
+    real_submit = appraisal.submit_cognitive_load
+    real_appraise = appraisal.appraise
+
+    def recording_submit(load_state):
+        calls.append(f"submit_cognitive_load:{load_state}")
+        return real_submit(load_state)
+
+    def recording_appraise(**kwargs):
+        calls.append("appraise")
+        return real_appraise(**kwargs)
+
+    appraisal.submit_cognitive_load = recording_submit
+    appraisal.appraise = recording_appraise
+    return calls
+
+
+def _daemon_with_energy(tmp_path, energy):
+    """A Daemon whose live Energy is `energy`, set through the REAL restore
+    path: StateManager persists it, startup() hands it to NeedsSystem."""
+    state = StateManager(state_dir=tmp_path)
+    state.save_energy(energy)
+    ctx = make_daemon(tmp_path, state=state)
+    ctx.daemon.startup()
+    assert ctx.needs.get_energy() == pytest.approx(energy)
+    return ctx
+
+
+def test_low_energy_submits_heavy_cognitive_load_before_appraise(tmp_path):
+    # Energy below the in-spec 30 gate routes through the EXISTING
+    # submit_cognitive_load entry point, BEFORE the appraisal runs.
+    ctx = _daemon_with_energy(tmp_path, 25.0)
+    assert ctx.needs.get_energy() < ENERGY_LOW
+    calls = _record_appraisal_calls(ctx.appraisal)
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    assert calls == ["submit_cognitive_load:heavy", "appraise"]
+
+
+def test_normal_energy_submits_no_cognitive_load(tmp_path):
+    ctx = _daemon_with_energy(tmp_path, 80.0)
+    calls = _record_appraisal_calls(ctx.appraisal)
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    assert calls == ["appraise"]
+
+
+def test_energy_gate_is_categorical_at_the_in_spec_boundary(tmp_path):
+    # "Below 30" — 30.0 itself is NOT below. The gate either holds or it does
+    # not; there is no partial load state.
+    at_gate = _daemon_with_energy(tmp_path / "at", ENERGY_LOW)
+    calls_at = _record_appraisal_calls(at_gate.appraisal)
+    at_gate.daemon.route_inbound_turn(user_text="how are you", now=T0)
+    assert calls_at == ["appraise"]
+
+    below = _daemon_with_energy(tmp_path / "below", ENERGY_LOW - 0.001)
+    calls_below = _record_appraisal_calls(below.appraisal)
+    below.daemon.route_inbound_turn(user_text="how are you", now=T0)
+    assert calls_below == ["submit_cognitive_load:heavy", "appraise"]
+
+
+def test_low_energy_skips_no_appraisal_stage(tmp_path):
+    """The load modifier is additive — it must not shorten the chain. At low
+    Energy a turn still runs Stage 0-6: an EventNode is written, PAD moves as
+    the appraisal's byproduct, and the response still clears the Output Gate."""
+    ctx = _daemon_with_energy(tmp_path, 25.0)
+    events_before = _count_events(ctx.graph)
+    pad_before = ctx.pad.get_current_pad()
+
+    response = ctx.daemon.route_inbound_turn(
+        user_text="I shipped the thing and it works", now=T0)
+
+    assert _count_events(ctx.graph) > events_before      # Stage 6 ran
+    assert ctx.pad.get_current_pad() != pad_before        # Stage 4 ran
+    assert response.text                                  # gate passed
+
+
+def test_low_energy_still_detects_an_emergency(tmp_path):
+    """The load modifier must NOT touch the emergency gate or the Stage-1
+    vulnerability pre-pass. A tired ARIA still detects a crisis."""
+    ctx = _daemon_with_energy(tmp_path, 25.0)
+
+    ctx.daemon.route_inbound_turn(
+        user_text="I can't go on, I want to die", now=T0)
+
+    assert ctx.daemon._last_turn_was_emergency is True
+
+
+def test_energy_number_never_reaches_the_appraisal_chain(tmp_path):
+    """Only the CATEGORICAL load state crosses. The Appraisal Chain holds no
+    Energy handle and appraise() is passed no Energy value."""
+    ctx = _daemon_with_energy(tmp_path, 25.0)
+    seen = {}
+    real_appraise = ctx.appraisal.appraise
+
+    def capturing_appraise(**kwargs):
+        seen.update(kwargs)
+        return real_appraise(**kwargs)
+
+    ctx.appraisal.appraise = capturing_appraise
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    assert "energy" not in seen
+    assert not any("energy" in str(k).lower() for k in seen)
+    # need_states crosses as categorical strings only, never a number.
+    assert all(isinstance(v, str) for v in seen["need_states"].values())
+    # And the chain itself holds no needs/state handle to read Energy from.
+    held = set(vars(ctx.appraisal))
+    assert not any("energy" in n.lower() or "needs" in n.lower() for n in held), held

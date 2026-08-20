@@ -105,6 +105,9 @@ from daemon.state_manager import (
     SAVE_CADENCE_SECONDS,
 )
 from daemon.needs_system import NeedsSystem, ENERGY_CRITICAL
+# ENERGY_LOW (30.0) from its canonical home — the same in-spec operational gate
+# soul_filter reads for "do not overextend" (v4 "Energy low (below 30)").
+from daemon.types import ENERGY_LOW
 from daemon.graph_manager import MemoryGraph, PoignancyCategory, RelationalStage
 from daemon.appraisal_chain import (
     AppraisalChain,
@@ -819,10 +822,32 @@ class AriaDaemon:
             if tier is not _NO_BACKEND_META_COMMAND:
                 return self._handle_backend_meta_command(tier, now)
 
-        # --- STEP 4: cognitive load check (existing, unchanged) ------------
+        # --- STEP 4: cognitive load checks --------------------------------
+        # (a) Working-memory pressure (existing, unchanged).
         fullness = self._session_buffer.fullness_state()
         if fullness in ("heavy", "critical"):
             self._appraisal.submit_cognitive_load(fullness)
+
+        # (b) Energy below the in-spec 30 gate. Addendum §3: "The existing
+        # 'reasoning degrades below 30' rule stays as an operational threshold
+        # gate, same category as Q4 ≤ 0.15 for Emergency." v4's mechanism table
+        # files the "Cognitive load effect" as an "Appraisal modifier" reaching
+        # "Stage 2 appraisal + DMN depth check", so it routes through the
+        # EXISTING submit_cognitive_load entry point — no new mechanism, and no
+        # new number (ENERGY_LOW is the spec's own gate).
+        #
+        # The mapping is categorical: Energy is below the gate or it is not.
+        # Energy itself NEVER crosses into the Appraisal Chain — that module
+        # holds no Energy handle and needs none; only the categorical load state
+        # crosses, exactly as buffer fullness does above.
+        #
+        # This SKIPS NOTHING. Every appraisal stage still runs, the Stage-1
+        # social-signal pre-pass (including the vulnerability check) is
+        # untouched, and the emergency gate is untouched — a tired ARIA still
+        # detects a crisis. The only effect is the second-order PAD byproduct
+        # submit_cognitive_load already emits.
+        if self._needs.get_energy() < ENERGY_LOW:
+            self._appraisal.submit_cognitive_load("heavy")
 
         # --- STEP 5 (NEW): routing decision. If a router is wired, ask it
         # which transport should serve this turn. A "propose" result defers
