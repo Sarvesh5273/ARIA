@@ -659,11 +659,13 @@ def test_integration_gemma_gets_identical_prompt_to_cloud_in_respond():
 
 def test_integration_energy_gate_number_does_not_cross_via_interface():
     # Soul Filter translates Energy<30 into "do not overextend"; Module 9 must
-    # carry that NL prohibition with no digit.
+    # carry that NL prohibition with no digit. 25.0 sits in the band this test is
+    # about — it was 10.0, which is in the <20 CRITICAL band and now selects that
+    # tier's instruction instead (v4 line 949).
     filt, interface, cloud, local, pad, graph = make_soul_filter()
     instr = filt.assemble_instruction(
         appraisal_result=make_appraisal(), user_message="m",
-        need_states=NeedStates(energy=10.0))
+        need_states=NeedStates(energy=25.0))
     prompt = assemble_prompt(instr, "m")
     assert "do not overextend" in prompt.instruction_text
     assert not any(ch.isdigit() for ch in prompt.instruction_text)

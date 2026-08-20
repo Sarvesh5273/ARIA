@@ -72,7 +72,7 @@ from daemon.appraisal_chain import AppraisalResult, EmergencyType, GoalRelevance
 from daemon.pad_engine import Valence
 from daemon import moral_schema
 from daemon.moral_schema import MoralValue, AntiPattern
-from daemon.types import NeedState, NeedStates, ENERGY_LOW
+from daemon.types import NeedState, NeedStates, ENERGY_LOW, ENERGY_CRITICAL
 
 
 # ---------------------------------------------------------------------------
@@ -451,16 +451,35 @@ class SoulFilter:
     def _derive_constraints(
         self, appraisal: AppraisalResult, need_states: Optional[NeedStates]
     ) -> Tuple[str, ...]:
-        """Field 5 — a closed list of specific prohibitions for THIS turn only,
-        MAX 3, derived from the moral schema + the Output-Gate pre-check
-        (Addendum §9). Always specific actions, never open-ended. The selection
-        is driven by what the appraisal flagged (its social signals /
-        uncertainty), so the prohibitions pre-empt the very moral-schema
-        violations the gate would otherwise catch. Wording is grounded in
-        Addendum §9's own example and v4's soul_filter table.
+        """Field 5 — a closed list of specific BEHAVIOURAL INSTRUCTIONS for THIS
+        turn only, MAX 3 (Addendum §9). Always specific actions, never
+        open-ended. Mostly prohibitions, derived from the moral schema + the
+        Output-Gate pre-check: the selection is driven by what the appraisal
+        flagged (its social signals / uncertainty), so they pre-empt the very
+        moral-schema violations the gate would otherwise catch. Wording is
+        grounded in Addendum §9's own example and v4's soul_filter table.
 
-        These prohibitions carry NO state and NO numbers — they are actions the
-        LLM must not take."""
+        ARCHITECT RULING — Field 5 carries behavioural instructions, not
+        prohibitions only. This formalises existing practice rather than adding a
+        mechanism: the Energy<30 row ("do not overextend") already lived here,
+        and v4's soul_filter instruction table (line 949) supplies a second,
+        NON-prohibition Energy row for the <20 gate — "You are running low.
+        Acknowledge it if it comes up naturally." — carried here in constraint
+        form. The MAX-3 cap and the "always specific actions" rule are unchanged.
+
+        Everything in this list carries NO state and NO numbers — only the
+        action. v4's "You are running low" clause is deliberately NOT passed
+        through: that half is Energy state rendered as a claim, and state never
+        crosses (Addendum §9). Only the instruction half crosses.
+
+        Both Energy gates are independent and either may fire, but they are
+        checked MOST-SEVERE-FIRST. In practice the base branches leave at most
+        one free slot (every branch yields 2 or 3), and the scarcer the slot the
+        more it belongs to the more specific condition — the same
+        most-specific-wins ordering used for the emergency branch and for
+        select_thinking_sound's triggers. Checked the other way round the <20
+        instruction could never be emitted at all, because Energy<20 implies
+        Energy<30 and the milder instruction would always take the slot."""
         sig = appraisal.social_signals
         constraints: list[str] = []
 
@@ -484,10 +503,19 @@ class SoulFilter:
             # named moral-schema anti-patterns (non-manipulation + genuine care).
             constraints = ["do not flatter to be liked", "do not manufacture urgency"]
 
-        # Energy operational gate (Addendum §3; v4 "Energy low (below 30) → ...
-        # Don't overextend."). Number NEVER crosses; only the prohibition does.
-        if need_states is not None and need_states.energy < ENERGY_LOW and len(constraints) < 3:
-            constraints.append("do not overextend")
+        # Energy operational gates (Addendum §3 "operational threshold gate";
+        # v4's soul_filter instruction table). The NUMBER never crosses — only
+        # the instruction. Most-severe-first (see docstring).
+        if need_states is not None:
+            # v4 line 949: "Energy critically low (below 20) → 'You are running
+            # low. Acknowledge it if it comes up naturally.'" Constraint form
+            # keeps the instruction and drops the state claim.
+            if need_states.energy < ENERGY_CRITICAL and len(constraints) < 3:
+                constraints.append("acknowledge fatigue if it comes up naturally")
+            # v4 line 948: "Energy low (below 30) → 'Be concise. Don't
+            # overextend.'"
+            if need_states.energy < ENERGY_LOW and len(constraints) < 3:
+                constraints.append("do not overextend")
 
         return tuple(constraints[:3])  # MAX 3 (Addendum §9)
 

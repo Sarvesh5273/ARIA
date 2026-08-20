@@ -683,7 +683,10 @@ def test_soul_filter_assemble_instruction_consumes_produced_needstates():
         need_states=states,
     )
     assert isinstance(instr, FiveFieldInstruction)
-    assert "do not overextend" in instr.constraints
-    # The Energy NUMBER never crosses into the fields (only the prohibition).
+    # 18.0 is CRITICAL (<20), so Field 5 carries that tier's instruction (v4
+    # line 949) rather than the <30 row's "do not overextend". Either way the
+    # point of this test holds: an Energy-derived instruction reaches Constraints.
+    assert "acknowledge fatigue if it comes up naturally" in instr.constraints
+    # The Energy NUMBER never crosses into the fields (only the instruction).
     assert "18" not in instr.all_field_text()
     assert "energy" not in instr.all_field_text().lower()

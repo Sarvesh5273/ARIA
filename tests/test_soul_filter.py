@@ -23,10 +23,12 @@ OQ-M1 and Modules 3/4 precedent.
 
 import dataclasses
 import inspect
+import textwrap
 from datetime import datetime, timezone
 
 import pytest
 
+from daemon.types import ENERGY_LOW, ENERGY_CRITICAL
 from daemon.pad_engine import PADEngine, PADSnapshot, PADDelta, Valence, PAD_BASELINE
 from daemon.graph_manager import MemoryGraph, RelationalStage, PoignancyCategory
 from daemon.appraisal_chain import (
@@ -576,8 +578,11 @@ def test_constraints_vulnerability_uses_addendum_example():
 def test_constraints_energy_gate_translates_number_to_words():
     filt, *_ = make_filter()
     appr = make_appraisal()  # routine → baseline anti-manipulation prohibitions
+    # 25.0 sits in the LOW band (20 <= e < 30) this test is about. It used to be
+    # 10.0, which was fine when <30 was the only Energy gate but is now in the
+    # CRITICAL band and selects the <20 instruction instead.
     instr = filt.assemble_instruction(
-        appraisal_result=appr, user_message="m", need_states=NeedStates(energy=10.0))
+        appraisal_result=appr, user_message="m", need_states=NeedStates(energy=25.0))
     assert "do not overextend" in instr.constraints  # Energy<30 gate, in NL
     assert len(instr.constraints) <= 3
     assert not any(ch.isdigit() for ch in " ".join(instr.constraints))  # number never crosses
@@ -590,6 +595,114 @@ def test_constraints_never_exceed_three():
     instr = filt.assemble_instruction(
         appraisal_result=appr, user_message="m", need_states=NeedStates(energy=5.0))
     assert len(instr.constraints) == 3
+
+
+# ---------------------------------------------------------------------------
+# Energy instruction gates — v4 soul_filter instruction table lines 948/949,
+# carried in Field 5 per the architect ruling that Constraints holds behavioural
+# instructions (formalising the pre-existing <30 row).
+# ---------------------------------------------------------------------------
+
+_FATIGUE = "acknowledge fatigue if it comes up naturally"
+_OVEREXTEND = "do not overextend"
+
+
+def _constraints_at(filt, energy, **appraisal_kw):
+    instr = filt.assemble_instruction(
+        appraisal_result=make_appraisal(**appraisal_kw),
+        user_message="m",
+        need_states=NeedStates(energy=energy),
+    )
+    return instr.constraints
+
+
+def test_energy_critical_produces_the_acknowledge_fatigue_instruction():
+    # (a) v4 line 949's row is now actually emitted — it never was before.
+    filt, *_ = make_filter()
+    assert _FATIGUE in _constraints_at(filt, 15.0)
+
+
+def test_energy_low_still_produces_do_not_overextend():
+    # (b) the pre-existing <30 row is unchanged in the band it owns.
+    filt, *_ = make_filter()
+    constraints = _constraints_at(filt, 25.0)
+    assert _OVEREXTEND in constraints
+    assert _FATIGUE not in constraints
+
+
+def test_normal_energy_produces_neither_energy_instruction():
+    # (d) at or above both gates, neither fires.
+    filt, *_ = make_filter()
+    for energy in (30.0, 55.0, 100.0):
+        constraints = _constraints_at(filt, energy)
+        assert _OVEREXTEND not in constraints, energy
+        assert _FATIGUE not in constraints, energy
+    # Boundaries are exclusive: "below 30" / "below 20", so 30.0 and 20.0 are out.
+    assert _OVEREXTEND not in _constraints_at(filt, ENERGY_LOW)
+    assert _FATIGUE not in _constraints_at(filt, ENERGY_CRITICAL)
+    assert _OVEREXTEND in _constraints_at(filt, ENERGY_CRITICAL)  # 20.0 is still <30
+
+
+def test_energy_gates_are_categorical_at_their_boundaries():
+    filt, *_ = make_filter()
+    assert _FATIGUE in _constraints_at(filt, ENERGY_CRITICAL - 0.001)
+    assert _FATIGUE not in _constraints_at(filt, ENERGY_CRITICAL)
+    assert _OVEREXTEND in _constraints_at(filt, ENERGY_LOW - 0.001)
+    assert _OVEREXTEND not in _constraints_at(filt, ENERGY_LOW)
+
+
+def test_critical_energy_instruction_wins_the_last_free_slot():
+    """(c) Both Energy gates hold below 20, but every base branch yields 2 or 3
+    constraints, so at most ONE slot is ever free. The more specific instruction
+    takes it. Checked the other way round, the <20 row could never be emitted at
+    all — which is how it stayed dead until now."""
+    filt, *_ = make_filter()
+    constraints = _constraints_at(filt, 15.0)          # routine base = 2 items
+    assert len(constraints) == 3
+    assert _FATIGUE in constraints
+    assert _OVEREXTEND not in constraints              # dropped by the MAX-3 cap
+
+    # A 3-item base branch leaves no slot at all, so neither Energy instruction
+    # appears and the cap is still respected.
+    full = _constraints_at(
+        filt, 15.0, social_signals=make_social(vulnerability_disclosure=True))
+    assert len(full) == 3
+    assert _FATIGUE not in full and _OVEREXTEND not in full
+
+
+def test_the_two_energy_gates_are_independent_not_exclusive_tiers():
+    """Structural: the gates are two separate `if`s, so if a future base branch
+    ever leaves two slots free BOTH instructions fire. They were deliberately not
+    implemented as an if/elif tier, which would permanently exclude one. Asserted
+    against the source because the two-free-slot state is unreachable today (no
+    base branch yields fewer than 2 constraints), and a test must not fake a
+    state the code cannot reach."""
+    src = textwrap.dedent(inspect.getsource(SoulFilter._derive_constraints))
+    fatigue_line = f'constraints.append("{_FATIGUE}")'
+    overextend_line = f'constraints.append("{_OVEREXTEND}")'
+    assert fatigue_line in src and overextend_line in src
+    # The severe gate is checked first, so it wins the scarce slot.
+    assert src.index(fatigue_line) < src.index(overextend_line)
+    # Each append is guarded by its own `if`, never `elif`.
+    for line in (fatigue_line, overextend_line):
+        guard = src[:src.index(line)].rstrip().splitlines()[-1].strip()
+        assert guard.startswith("if "), guard
+        assert "len(constraints) < 3" in guard, guard
+
+
+def test_energy_instructions_carry_no_number_and_no_state_claim():
+    # (e) v4 line 949 is "You are running low. Acknowledge it if it comes up
+    # naturally." Only the INSTRUCTION half crosses: the "You are running low"
+    # state claim and the number are both withheld (Addendum §9).
+    filt, *_ = make_filter()
+    for energy in (5.0, 15.0, 25.0):
+        joined = " ".join(_constraints_at(filt, energy))
+        assert not any(ch.isdigit() for ch in joined), energy
+        assert "running low" not in joined.lower(), energy
+        assert "energy" not in joined.lower(), energy
+    # The instruction preserves v4's own conditional phrasing.
+    assert _FATIGUE.endswith("if it comes up naturally")
+    assert _FATIGUE.islower()          # same imperative style as its siblings
 
 
 def test_constraints_uncertainty_forbids_fake_confidence():
