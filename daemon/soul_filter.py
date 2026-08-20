@@ -72,7 +72,7 @@ from daemon.appraisal_chain import AppraisalResult, EmergencyType, GoalRelevance
 from daemon.pad_engine import Valence
 from daemon import moral_schema
 from daemon.moral_schema import MoralValue, AntiPattern
-from daemon.types import NeedState, NeedStates, ENERGY_LOW, ENERGY_CRITICAL
+from daemon.types import NeedState, NeedStates, ENERGY_LOW
 
 
 # ---------------------------------------------------------------------------
