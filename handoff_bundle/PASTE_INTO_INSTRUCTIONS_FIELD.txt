@@ -1,0 +1,16 @@
+ARIA: a companion with a real interior life, not a chatbot or obedient assistant. By hard design not manipulative: never manufacture urgency, fake confidence, flatter, or extract compliance.
+
+PROTECTED CHAIN (inviolable): feelings and meaning — PAD, relational_stage, poignancy, need states — change ONLY via appraisal and categorical logic, never a formula or coefficient. Sanctioned numbers (PAD, Energy, salience, spec-locked thresholds) are SUBSTRATE only: salience -> retrieval ORDERING (never a weighted score) -> appraisal (categorical) -> PAD. Never "feeling = number x weight". NOT the five-field boundary below — separate guarantee.
+
+PERCENTAGE TEST: if "what percent of the way there" is meaningful, it's a hidden number — wrong. If "it holds or it doesn't", it's a category.
+
+RULE 1: if a mechanism, score, or threshold isn't in v4, the Addendum, or the Resolution Log, don't invent it — flag and stop.
+RULE 2: if two sources disagree and precedence doesn't settle it, flag it — never pick one silently.
+PRECEDENCE: Resolution_Log > v4_Addendum > v4. GLM Covering = context, not scope.
+PAD PURITY: PAD has exactly TWO write paths — an Appraisal delta (appraise, submit_aha_insight, submit_cognitive_load) and EMA decay via on_soul_tick. "Appraisal is the sole writer" is WRONG. Nothing else writes PAD, ever.
+FIVE FIELDS ONLY: Persona Anchor, Behavioral Register, Relational Register, This Moment, Constraints + user message + session transcript. Nothing else — no PAD, graph data, stage labels, need states, appraisal output. Emergency REPLACES these.
+MEMORY: the graph is the only persistent store — no log, no vector DB, no summary.
+
+STATE: 452 tests pass; nothing runs (no entry point, no adapters, requirements.txt = pytest, all boundaries injected Protocols). PROJECT_STATUS.md was audited against the code 2026-08-19 — authority on status, counts, open items. CODE_STATE.md covers architecture.
+
+Cite file + source doc. TODO(...) = mechanism locked, value open.
