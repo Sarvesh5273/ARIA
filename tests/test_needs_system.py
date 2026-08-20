@@ -48,11 +48,13 @@ from daemon.needs_system import (
     K_REST,
     _ema_step,
 )
+# The two in-spec Energy gates live in daemon/types.py — the actual single
+# source of truth. soul_filter and needs_system both import them from there;
+# reaching for them through soul_filter's namespace was incidental coupling.
+from daemon.types import ENERGY_LOW, ENERGY_CRITICAL
 from daemon.soul_filter import (
     NeedState,
     NeedStates,
-    ENERGY_LOW,
-    ENERGY_CRITICAL,
     SoulFilter,
     FiveFieldInstruction,
 )
@@ -456,7 +458,8 @@ def test_energy_band_uses_in_spec_thresholds(energy, expected):
     e = EnergyTracker()
     e.initialize(energy)
     assert e.energy_band() == expected
-    # Bands trace to the in-spec soul_filter thresholds, single source of truth.
+    # Bands trace to the in-spec daemon/types.py thresholds — single source of
+    # truth, imported by both soul_filter and needs_system.
     assert ENERGY_LOW == 30.0 and ENERGY_CRITICAL == 20.0
 
 
