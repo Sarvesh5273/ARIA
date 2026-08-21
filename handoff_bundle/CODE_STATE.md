@@ -322,6 +322,29 @@ tasks}.md` is uploaded as a single consolidated `spec_<module>.md`, and
 `daemon/<file>.py` is uploaded as plain `<file>.py`. A "file not found" for a
 cited path is this, not a missing file.
 
+**Those consolidated files are GENERATED as of 2026-08-21. Do not hand-edit
+them.** `.kiro/specs/` is the source of truth; `tools/build_handoff_bundle.py`
+derives the bundle from it.
+
+```
+make bundle        regenerate handoff_bundle/specs/ from .kiro/specs/
+make check-bundle  verify in sync, non-zero exit if stale, writes nothing
+make check         test + check-bundle — run before committing
+```
+
+They were hand-synced before this, which is why the `tasks.md` checkbox ticks
+were missed on 2026-08-20 until someone asked. The generator was verified by
+reproducing all thirteen committed files BYTE-FOR-BYTE before it was committed,
+so the upload artifacts did not change when it landed — it only removed the
+possibility of them drifting again. One real drift it found on its first run is
+recorded in `HANDOFF_NOTES.md`.
+
+The only hand-authored part of a bundle file is its opening header — title,
+provenance line, and for five modules the condensed `> ## AMENDMENT` summaries
+hoisted above the specs. Those live in `handoff_bundle/spec_headers/<module>.md`
+(see its `README.md`) and are copied verbatim. The generator paraphrases nothing
+and decides nothing; it is not in the precedence chain.
+
 Thirteen modules, thirteen `spec_*.md` files as of 2026-08-20. Three of them —
 `spec_state-manager.md`, `spec_session-buffer.md`, `spec_backend-router.md` — are
 titled "module reference (NOT a locked spec)" rather than "locked spec", and say

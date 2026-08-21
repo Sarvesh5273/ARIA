@@ -471,3 +471,64 @@ does not make it unexported — check multi-line imports before deleting one.
   `daemon/types.py` shadows the stdlib `types` module. Use
   `python -m daemon.state_manager`. All its smoke checks pass that way, and the
   module now has real pytest coverage regardless.
+
+---
+
+## Bundle generation (2026-08-21) — Bucket D closed
+
+`handoff_bundle/specs/spec_<module>.md` is no longer maintained by hand. It is
+generated from `.kiro/specs/<module>/` by `tools/build_handoff_bundle.py`, with
+`make bundle` / `make check-bundle` / `make check` as the entry points. The two
+copies were hand-synced four times on 2026-08-20 and the `tasks.md` checkbox ticks
+were still missed until someone asked; that failure mode is now a non-zero exit
+rather than a thing to remember.
+
+**The generator was verified by reproducing all thirteen committed files
+byte-for-byte before it was committed** — `git diff` on `handoff_bundle/specs/`
+was empty, so the flat-upload artifacts did not change when this landed. That was
+the point: the script had to earn trust by agreeing with the hand-built output,
+not by replacing it. Its layout rules are therefore measured off the committed
+files, not invented. The staleness check was proved non-vacuous the same way
+everything else in this project is: an `- [x]` in `dmn/tasks.md` was flipped to
+`- [ ]`, `--check` was confirmed to exit 1 and name the file, regeneration was
+confirmed to propagate the flip, and the source was restored.
+
+The one hand-authored input is each file's opening header — title, provenance
+line, and for five modules the condensed `> ## AMENDMENT` summaries that sit above
+the specs so a reader of the flat upload meets them first. Those moved to
+`handoff_bundle/spec_headers/<module>.md` and are copied verbatim. They are inputs
+and live outside `specs/` because the bundle is uploaded flat. The generator drops
+a leading `> ## AMENDMENT` block from the design BODY, since the header already
+carries its condensed form; the rule keys on the AMENDMENT heading specifically,
+so the `> ## STATUS: DERIVED FROM CODE` banner that opens the three code-derived
+designs is left alone.
+
+### The drift it found on its first run
+
+Exactly one of the thirteen did not reproduce, and it was real pre-existing drift
+rather than a flaw in the rules: the `NEGLECTED` bullet in Module 2's design
+`_state` section. The bundle copy spelled the two-window rule out and gave
+Continuity's reason ("60d is the top rung… quality criterion… no signal wired");
+the `.kiro/specs/needs-system/design.md` copy delegated to *"see the AMENDMENT at
+the top of this file"*. Same claims, different words — nobody noticed, which is
+the whole argument for deriving the bundle.
+
+Resolved in the direction that discards nothing: **the source took the bundle's
+fuller wording**, so the generated output stayed byte-identical to what was
+committed and no upload artifact moved. Not treated as a Rule 2 conflict — no two
+precedence documents disagree here and no mechanism, number or meaning changed;
+it is one copy of an annotation being more explicit than the other. Worth knowing
+that the cross-reference still resolved in both files (the amendment is at the top
+of the bundle file too), so inlining it cost nothing and survives the passage
+being read out of context.
+
+### Convention
+
+Edit `.kiro/specs/<module>/` or `handoff_bundle/spec_headers/<module>.md`, then
+`make bundle`. Never edit a `spec_*.md` — the next regeneration overwrites it, and
+because the overwrite is silent the edit would simply disappear. `make check`
+before committing catches both a red suite and a stale bundle.
+
+`check-bundle` also reports an ORPHAN: a `spec_*.md` with no module behind it,
+which is what a renamed spec folder leaves. It only warns, since deleting a file
+that may be a deliberate leftover is not the script's call.
