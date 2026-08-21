@@ -840,6 +840,48 @@ def test_retrieve_mood_primary_over_need():
     assert edge_ids.index(mood_edge) < edge_ids.index(need_edge)  # mood primary
 
 
+def test_we_perspective_surfacing_fires_only_for_the_connection_pref():
+    """Addendum §3: "When Connection is neglected, Stage 1 surfaces
+    'We'-perspective and Connection-positive edges first." prefs["connection"]
+    now MEANS neglected (set by appraisal_chain._need_prefs for that state
+    alone), so the reordering must happen with the key present and not happen
+    without it — a merely-`due` Connection sends no key at all.
+
+    Mood is held NEUTRAL (sign 0) so need-preference is the only active
+    reordering and the effect is unambiguous."""
+    tbl = {"q": [1.0, 0, 0, 0, 0, 0, 0, 0], "anchor": [1.0, 0, 0, 0, 0, 0, 0, 0]}
+
+    def build():
+        mg = make_graph(tbl)
+        a = add_event(mg, description="anchor", appraisal_q2="neutral")
+        plain = mg.write_edge(from_node=a, to_node="p", edge_type=EdgeType.CONNECTS,
+                              valence=0.0, perspective=Perspective.I_NOW, now=T0)
+        we = mg.write_edge(from_node=a, to_node="w", edge_type=EdgeType.CONNECTS,
+                           valence=0.5, perspective=Perspective.WE, now=T0)
+        return mg, plain, we
+
+    # NEGLECTED -> the key is present -> the We edge is surfaced first.
+    mg, plain, we = build()
+    ids = [r.edge_id for r in mg.retrieve(
+        pad_pleasure_sign=0, need_prefs={"connection": True},
+        query_embedding=tbl["q"], now=T0) if isinstance(r, Edge)]
+    assert ids.index(we) < ids.index(plain)
+
+    # DUE -> _need_prefs emits {} -> no reordering; insertion order stands.
+    mg2, plain2, we2 = build()
+    ids2 = [r.edge_id for r in mg2.retrieve(
+        pad_pleasure_sign=0, need_prefs={},
+        query_embedding=tbl["q"], now=T0) if isinstance(r, Edge)]
+    assert ids2.index(plain2) < ids2.index(we2)
+
+    # Same for no need_prefs at all (all needs satisfied).
+    mg3, plain3, we3 = build()
+    ids3 = [r.edge_id for r in mg3.retrieve(
+        pad_pleasure_sign=0, query_embedding=tbl["q"], now=T0)
+        if isinstance(r, Edge)]
+    assert ids3.index(plain3) < ids3.index(we3)
+
+
 def test_habituation_repeated_similar_firing_decrements_salience():
     # OQ1 (architect trigger shape): a firing "without variation" (context
     # embedding-similar to recent firings of the same edge) decrements salience.

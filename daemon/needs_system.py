@@ -75,7 +75,14 @@ from daemon.types import (
     ENERGY_LOW,       # 30.0 — v4 "below 30" cognitive-load / reasoning-degrades
     ENERGY_CRITICAL,  # 20.0 — DMN shallow-pass gate / "critically low"
 )
-from daemon.graph_manager import MemoryGraph  # typing only; injected at runtime
+from daemon.graph_manager import (  # typing only; injected at runtime
+    MemoryGraph,
+    # The locked recency windows (Resolution Log item 7 / precision-decay ladder
+    # 72h / 14d / 60d). Imported rather than restated so the two-window need
+    # states can never drift from the values graph_manager owns.
+    WINDOW_GROWTH,
+    WINDOW_CONTINUITY,
+)
 
 
 # ===========================================================================
@@ -219,10 +226,21 @@ class NeedsEvaluator:
     from (now, graph). A need reverts satisfied->due purely because evidence
     ages out of its window as `now` advances — nothing is subtracted.
 
-    The categorical rule (identical for all four — the heart of Req 12):
-        evidence_present = graph.<need>_evidence(now=now[, self_entity_id])
-        state = SATISFIED if evidence_present else DUE
-    NEGLECTED is never produced (OQ-1). No number is ever produced (Req 7)."""
+    The categorical rule (Req 12) is TWO WINDOWS over the SAME evidence query:
+        near = graph.<need>_evidence(now=now)                   # its own window
+        far  = graph.<need>_evidence(now=now, window=<next rung>)
+        state = SATISFIED if near else DUE if far else NEGLECTED
+
+    This is Addendum §3's own shape, taken from the one need it defines fully:
+    Continuity is "neglected when updates have gapped for a long stretch". A
+    "long stretch" is a wider window, not a counter — §3 rules a counter out in
+    the same breath ("the state reverts on its own; nothing actively subtracts
+    anything ... not a running clock"). Both windows are already-locked values
+    from the 72h/14d/60d ladder (Resolution Log item 7 assigns the near ones;
+    the far one is the next rung up), so no window and no number is introduced.
+
+    Continuity remains TWO-valued — see evaluate_continuity. No number is ever
+    produced (Req 7)."""
 
     def __init__(
         self, graph: MemoryGraph, self_entity_id: Optional[str] = None
@@ -234,46 +252,81 @@ class NeedsEvaluator:
         self._self_entity_id = self_entity_id
 
     @staticmethod
-    def _state(evidence_present: bool) -> NeedState:
-        """Map the graph's binary evidence fact to a category (Req 12.1, 12.2).
-        SATISFIED <=> qualifying evidence in-window; else DUE. This is the whole
-        categorical logic — no numeric fraction, no window-elapsed measure, no
-        'due = >50%' (Req 12.3), and never NEGLECTED (Req 12.4 / OQ-1)."""
-        return NeedState.SATISFIED if evidence_present else NeedState.DUE
+    def _state(evidence_present: bool, evidence_in_long_window: bool) -> NeedState:
+        """Three categorical states from two evidence facts (Addendum §3).
+
+        Pure function of (now, graph). No counter, no clock, no number: each
+        input is a graph yes/no, and the output is one of three categories with
+        nothing in between — no numeric fraction, no window-elapsed measure, no
+        'due = >50%' (Req 12.3). The state reverts on its own as `now` advances
+        because both facts are recomputed from the graph every call; nothing is
+        stored and nothing is subtracted."""
+        if evidence_present:
+            return NeedState.SATISFIED
+        if evidence_in_long_window:
+            return NeedState.DUE
+        return NeedState.NEGLECTED
 
     def evaluate_connection(self, now: datetime) -> NeedState:
         """Connection = Relatedness: an interaction the appraisal chain already
-        scored Q1 medium-or-above within 72h (Addendum §3; Resolution Log
-        item 7). Calls the REAL graph query (Req 8.1, 8.2, 10.1)."""
-        return self._state(self._graph.connection_evidence(now=now))
+        scored Q1 medium-or-above (Addendum §3; Resolution Log item 7). Calls
+        the REAL graph query (Req 8.1, 8.2, 10.1) TWICE — same query, two
+        already-locked windows: satisfied within 72h, neglected once nothing
+        qualifies within 14d (the next rung up the ladder)."""
+        return self._state(
+            self._graph.connection_evidence(now=now),
+            self._graph.connection_evidence(now=now, window=WINDOW_GROWTH),
+        )
 
     def evaluate_growth(self, now: datetime) -> NeedState:
         """Growth = Competence: an UncertaintyNode actually resolved
-        (confirmed/inferred, not abandoned) within 14d (Addendum §3;
-        Resolution Log item 7). (Req 10.2)"""
-        return self._state(self._graph.growth_evidence(now=now))
+        (confirmed/inferred, not abandoned) (Addendum §3; Resolution Log
+        item 7). Satisfied within 14d; neglected once nothing qualifies within
+        60d (the next rung up). (Req 10.2)"""
+        return self._state(
+            self._graph.growth_evidence(now=now),
+            self._graph.growth_evidence(now=now, window=WINDOW_CONTINUITY),
+        )
 
     def evaluate_purpose(self, now: datetime) -> NeedState:
         """Purpose = Beneficence: user follow-through / explicit positive
-        feedback within 14d (Addendum §3; Resolution Log item 7). Addendum §3
-        flags this as the WEAKEST, lowest-confidence signal of the four, and
-        Memory_Graph's purpose_evidence carries its own TODO(OQ6-M2): its
-        current query is a stand-in over existing fields. Module 2 calls it
-        as-is; it does not invent a richer follow-through query (OQ-3).
-        (Req 10.3)"""
-        return self._state(self._graph.purpose_evidence(now=now))
+        feedback (Addendum §3; Resolution Log item 7). Satisfied within 14d;
+        neglected once nothing qualifies within 60d (the next rung up).
+
+        Addendum §3 flags this as the WEAKEST, lowest-confidence signal of the
+        four, and Memory_Graph's purpose_evidence carries its own TODO(OQ6-M2):
+        its current query is a stand-in over existing fields. Module 2 calls it
+        as-is; it does not invent a richer follow-through query (OQ-3). That
+        weakness now propagates to a NEGLECTED verdict as well as a DUE one —
+        flagged, not resolved here. (Req 10.3)"""
+        return self._state(
+            self._graph.purpose_evidence(now=now),
+            self._graph.purpose_evidence(now=now, window=WINDOW_CONTINUITY),
+        )
 
     def evaluate_continuity(self, now: datetime) -> NeedState:
         """Continuity = narrative coherence: the self-continuity narrative
         extended (relationship_summary updated) on the self-referential
         EntityNode within 60d (Addendum §3; Resolution Log item 7). If no self
         entity id is available, there is no narrative to find -> `due` (OQ-2).
-        (Req 10.4)"""
+        (Req 10.4)
+
+        DELIBERATELY TWO-VALUED — the only need of the four that cannot use the
+        two-window rule. Addendum §3 gives Continuity a QUALITY criterion, not
+        just a longer gap: "neglected when updates have gapped for a long
+        stretch, or new evidence CONTRADICTS rather than extends it". Its own
+        window is already 60d, the top rung of the locked 72h/14d/60d ladder, so
+        there is no wider window to step up to without inventing one.
+
+        TODO(Addendum §3): Continuity NEGLECTED needs a "contradicts rather than
+        extends" signal. The graph has adjacent machinery (GRAPH_CONFLICT /
+        reality_contradiction_check) but wiring either to the narrative-update
+        path is a mechanism this module does not have and must not invent
+        (Rule 1). Until then Continuity reports satisfied/due only."""
         if self._self_entity_id is None:
             return NeedState.DUE
-        return self._state(
-            self._graph.continuity_evidence(self._self_entity_id, now=now)
-        )
+        evidence = self._graph.continuity_evidence(self._self_entity_id, now=now)
+        return NeedState.SATISFIED if evidence else NeedState.DUE
 
     def evaluate_all(self, now: datetime) -> Dict[str, NeedState]:
         """All four need states as of `now` (Req 10, 11.1). A single `now` is

@@ -1155,13 +1155,31 @@ class AppraisalChain:
 
     @staticmethod
     def _need_prefs(need_states: Optional[Mapping[str, str]]) -> dict:
-        """Map recognized due/neglected needs to the graph's need_prefs dict
-        (Stage 5 = a Stage-1 retrieval preference, Addendum §3). Unknown keys
-        ignored; nothing here touches PAD."""
+        """Map unmet needs to the graph's need_prefs dict (Stage 5 = a Stage-1
+        retrieval preference, Addendum §3). Unknown keys ignored; nothing here
+        touches PAD.
+
+        CONNECTION is keyed on `neglected` ALONE, because that is what the spec
+        says the preference responds to: "When Connection is NEGLECTED, Stage 1
+        surfaces 'We'-perspective and Connection-positive edges first"
+        (Addendum §3). Memory_Graph's _need_relevant implements exactly that
+        profile off prefs["connection"], so the key must mean neglected and
+        nothing weaker. It previously fired on `due` too — unavoidable while
+        Needs System could not emit `neglected` at all, since `due` was then the
+        only unmet state in existence, but it applied the strong preference at
+        the weak state. Now that `neglected` is real, the key matches the spec.
+
+        The other three still accept due-or-neglected. Addendum §3 exemplifies
+        only Connection's profile and says nothing about what Growth, Purpose or
+        Continuity should surface, so their treatment is left exactly as it was
+        rather than narrowed on a guess (Rule 1)."""
         prefs: dict = {}
         if not need_states:
             return prefs
-        for key in ("connection", "growth", "purpose", "continuity"):
+        connection = need_states.get("connection")
+        if connection is not None and str(connection).lower() == "neglected":
+            prefs["connection"] = True
+        for key in ("growth", "purpose", "continuity"):
             v = need_states.get(key)
             if v is not None and str(v).lower() in ("due", "neglected"):
                 prefs[key] = True

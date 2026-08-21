@@ -119,21 +119,23 @@ class EvidenceSpyGraph:
         self._real = real
         self.calls = {"connection": 0, "growth": 0, "purpose": 0, "continuity": 0}
 
-    def connection_evidence(self, now=None):
+    # `window` is forwarded so the two-window rule (satisfied vs neglected) goes
+    # through the REAL query both times — the spy must not flatten it away.
+    def connection_evidence(self, now=None, **kw):
         self.calls["connection"] += 1
-        return self._real.connection_evidence(now=now)
+        return self._real.connection_evidence(now=now, **kw)
 
-    def growth_evidence(self, now=None):
+    def growth_evidence(self, now=None, **kw):
         self.calls["growth"] += 1
-        return self._real.growth_evidence(now=now)
+        return self._real.growth_evidence(now=now, **kw)
 
-    def purpose_evidence(self, now=None):
+    def purpose_evidence(self, now=None, **kw):
         self.calls["purpose"] += 1
-        return self._real.purpose_evidence(now=now)
+        return self._real.purpose_evidence(now=now, **kw)
 
-    def continuity_evidence(self, self_entity_id, now=None):
+    def continuity_evidence(self, self_entity_id, now=None, **kw):
         self.calls["continuity"] += 1
-        return self._real.continuity_evidence(self_entity_id, now=now)
+        return self._real.continuity_evidence(self_entity_id, now=now, **kw)
 
 
 def make_graph(table=None):
@@ -269,9 +271,17 @@ def test_evaluator_only_ever_returns_satisfied_or_due_never_a_number():
     # Sample many times, in-window and long after (aged out).
     for now in (T0 + timedelta(hours=1), T0 + timedelta(days=365)):
         for state in ev.evaluate_all(now).values():
-            assert isinstance(state, NeedState)
-            assert state in (NeedState.SATISFIED, NeedState.DUE)
-            assert state is not NeedState.NEGLECTED
+            assert isinstance(state, NeedState)          # never a number
+            assert state in (
+                NeedState.SATISFIED, NeedState.DUE, NeedState.NEGLECTED)
+    # All three categories are reachable, and CONTINUITY is the one exception —
+    # two-valued until the "contradicts rather than extends" signal exists.
+    fresh = ev.evaluate_all(T0 + timedelta(hours=1))
+    ancient = ev.evaluate_all(T0 + timedelta(days=365))
+    assert fresh["connection"] is NeedState.SATISFIED
+    assert ev.evaluate_connection(T0 + timedelta(days=8)) is NeedState.DUE
+    assert ancient["connection"] is NeedState.NEGLECTED
+    assert ancient["continuity"] is NeedState.DUE     # never NEGLECTED (TODO)
 
 
 def test_no_gradation_within_window_passes_percentage_test():
@@ -330,7 +340,9 @@ def test_revert_is_time_only_graph_and_state_untouched():
     ev = NeedsEvaluator(mg)
 
     assert ev.evaluate_connection(T0 + timedelta(hours=1)) is NeedState.SATISFIED
-    assert ev.evaluate_connection(T0 + timedelta(days=30)) is NeedState.DUE
+    assert ev.evaluate_connection(T0 + timedelta(days=8)) is NeedState.DUE
+    # Past the far window too (14d) the same untouched evidence reads NEGLECTED.
+    assert ev.evaluate_connection(T0 + timedelta(days=30)) is NeedState.NEGLECTED
 
     # Evidence still physically present (window widened proves it wasn't removed).
     assert mg.connection_evidence(
@@ -354,10 +366,16 @@ def test_each_need_uses_its_own_window():
     assert ev.evaluate_connection(now) is NeedState.DUE
     assert ev.evaluate_growth(now) is NeedState.SATISFIED
 
-    # 20 days later: both aged out.
+    # 20 days later: both aged out of their SATISFIED window, but they are at
+    # different points on their own ladders — Connection is past its far window
+    # (14d) and so NEGLECTED, while Growth is only past its near one (14d) and
+    # still inside its far one (60d), so merely DUE.
     now = T0 + timedelta(days=20)
-    assert ev.evaluate_connection(now) is NeedState.DUE
+    assert ev.evaluate_connection(now) is NeedState.NEGLECTED
     assert ev.evaluate_growth(now) is NeedState.DUE
+
+    # 70 days later: Growth is past 60d too.
+    assert ev.evaluate_growth(T0 + timedelta(days=70)) is NeedState.NEGLECTED
 
 
 def test_continuity_window_and_missing_self_node():
@@ -570,41 +588,88 @@ def test_pad_mutator_tripwire_never_fires(monkeypatch):
 # Group E — Real graph_manager evidence integration (Req 8)
 # ===========================================================================
 def test_evaluator_delegates_to_real_graph_queries():
-    """A call-count spy proves the evaluator CALLS graph_manager's four evidence
-    queries once each (delegation, not reimplementation — Req 8.2)."""
+    """A call-count spy proves the evaluator CALLS graph_manager's evidence
+    queries (delegation, not reimplementation — Req 8.2). The three-state needs
+    call theirs TWICE — same query, near window then far — which is the whole
+    two-window mechanism. Continuity stays two-valued, so it is called once."""
     real = make_graph()
     self_id = add_continuity_evidence(real)
     spy = EvidenceSpyGraph(real)
     ev = NeedsEvaluator(spy, self_entity_id=self_id)
     ev.evaluate_all(T0)
-    assert spy.calls == {"connection": 1, "growth": 1, "purpose": 1, "continuity": 1}
+    assert spy.calls == {"connection": 2, "growth": 2, "purpose": 2, "continuity": 1}
+
+
+def test_neglected_uses_the_next_rung_of_the_locked_window_ladder():
+    """No window is invented: the far window for each three-state need is an
+    already-locked value (Resolution Log item 7 / the 72h-14d-60d ladder)."""
+    seen = []
+
+    class WindowRecordingGraph:
+        def connection_evidence(self, now=None, window=WINDOW_CONNECTION):
+            seen.append(("connection", window))
+            return False
+
+        def growth_evidence(self, now=None, window=WINDOW_GROWTH):
+            seen.append(("growth", window))
+            return False
+
+        def purpose_evidence(self, now=None, window=WINDOW_PURPOSE):
+            seen.append(("purpose", window))
+            return False
+
+        def continuity_evidence(self, self_entity_id, now=None,
+                                window=WINDOW_CONTINUITY):
+            seen.append(("continuity", window))
+            return False
+
+    NeedsEvaluator(WindowRecordingGraph(), self_entity_id="self").evaluate_all(T0)
+    assert seen == [
+        ("connection", WINDOW_CONNECTION),   # near: 72h (default)
+        ("connection", WINDOW_GROWTH),       # far:  14d, next rung
+        ("growth", WINDOW_GROWTH),           # near: 14d (default)
+        ("growth", WINDOW_CONTINUITY),       # far:  60d, next rung
+        ("purpose", WINDOW_PURPOSE),         # near: 14d (default)
+        ("purpose", WINDOW_CONTINUITY),      # far:  60d, next rung
+        ("continuity", WINDOW_CONTINUITY),   # two-valued: one window only
+    ]
+    every_window = {w for _need, w in seen}
+    assert every_window <= {
+        WINDOW_CONNECTION, WINDOW_GROWTH, WINDOW_PURPOSE, WINDOW_CONTINUITY}
 
 
 def test_each_need_satisfied_only_with_its_own_real_evidence():
     """Build each need's evidence through the REAL graph write methods; only
     that need becomes satisfied (isolation), proving the correct query wiring."""
     # Connection only.
+    # The isolation property is "only the fed need is SATISFIED". The others have
+    # no qualifying evidence in EITHER window, so they read NEGLECTED rather than
+    # DUE — `due` means "aged out of the near window", which needs evidence to
+    # have existed at all.
     mg = make_graph()
     add_connection_evidence(mg)
     s = NeedsEvaluator(mg).evaluate_all(T0 + timedelta(hours=1))
     assert s["connection"] is NeedState.SATISFIED
-    assert s["growth"] is NeedState.DUE
-    assert s["purpose"] is NeedState.DUE
-    assert s["continuity"] is NeedState.DUE
+    assert s["growth"] is not NeedState.SATISFIED
+    assert s["purpose"] is not NeedState.SATISFIED
+    assert s["continuity"] is not NeedState.SATISFIED
+    assert s["growth"] is NeedState.NEGLECTED
+    assert s["purpose"] is NeedState.NEGLECTED
+    assert s["continuity"] is NeedState.DUE      # two-valued, and no self node
 
     # Growth only.
     mg = make_graph()
     add_growth_evidence(mg)
     s = NeedsEvaluator(mg).evaluate_all(T0 + timedelta(days=1))
     assert s["growth"] is NeedState.SATISFIED
-    assert s["connection"] is NeedState.DUE
+    assert s["connection"] is not NeedState.SATISFIED
 
     # Purpose only.
     mg = make_graph()
     add_purpose_evidence(mg)
     s = NeedsEvaluator(mg).evaluate_all(T0 + timedelta(days=1))
     assert s["purpose"] is NeedState.SATISFIED
-    assert s["connection"] is NeedState.DUE
+    assert s["connection"] is not NeedState.SATISFIED
 
 
 def test_all_four_satisfied_with_full_evidence():
@@ -622,13 +687,83 @@ def test_all_four_satisfied_with_full_evidence():
     assert st.continuity is NeedState.SATISFIED
 
 
-def test_empty_graph_all_due():
+def test_empty_graph_has_no_evidence_in_either_window():
+    """An empty graph has nothing in the near OR the far window, so the three
+    three-state needs read NEGLECTED, not DUE.
+
+    FIRST-RUN CONSEQUENCE, recorded deliberately: a brand-new install reports
+    Connection/Growth/Purpose as NEGLECTED rather than DUE. It is what Addendum
+    §3's rule yields ("determined by whether qualifying evidence exists in the
+    graph within a recency window" — none does), and it self-corrects on the
+    first qualifying turn, since Connection needs only one Q1 medium-or-above
+    event. Flagged for the architect rather than special-cased here: suppressing
+    it would need a "has she ever had evidence" "clock" the spec does not define.
+    """
     mg = make_graph()
     ns = NeedsSystem(mg, clock=fixed_clock(T0))
     ns.initialize()
     st = ns.get_need_states()
-    for need in (st.connection, st.growth, st.purpose, st.continuity):
-        assert need is NeedState.DUE
+    assert st.connection is NeedState.NEGLECTED
+    assert st.growth is NeedState.NEGLECTED
+    assert st.purpose is NeedState.NEGLECTED
+    assert st.continuity is NeedState.DUE      # two-valued; also no self node
+
+    # Self-corrects on the first qualifying interaction — no reset, no counter.
+    add_connection_evidence(mg, at=T0)
+    assert ns.get_need_states(now=T0).connection is NeedState.SATISFIED
+
+
+def test_need_state_is_a_step_function_not_a_gradient():
+    """The percentage test, executed. If the state were a score or a
+    proportion-of-window, the sweep would show intermediate behaviour or the
+    transition would move with how far through the window we are. Exactly two
+    transitions, both ON a locked window boundary, nothing in between."""
+    mg = make_graph()
+    add_connection_evidence(mg, at=T0)
+    ev = NeedsEvaluator(mg)
+
+    seen = []
+    for hours in range(0, 24 * 15):          # 0h -> 15d, hourly
+        seen.append(ev.evaluate_connection(now=T0 + timedelta(hours=hours)))
+
+    assert set(seen) == {
+        NeedState.SATISFIED, NeedState.DUE, NeedState.NEGLECTED}
+    transitions = [i for i in range(1, len(seen)) if seen[i] != seen[i - 1]]
+    assert len(transitions) == 2                      # a step function
+    assert seen[transitions[0] - 1] is NeedState.SATISFIED
+    assert seen[transitions[0]] is NeedState.DUE
+    assert seen[transitions[1] - 1] is NeedState.DUE
+    assert seen[transitions[1]] is NeedState.NEGLECTED
+    # The transitions sit ON the locked windows, not at a fraction of them. The
+    # graph's window test is INCLUSIVE (`created >= now - window`), so evidence
+    # exactly one window old still qualifies and the flip is the hour after.
+    assert transitions[0] == WINDOW_CONNECTION // timedelta(hours=1) + 1
+    assert transitions[1] == WINDOW_GROWTH // timedelta(hours=1) + 1
+    assert ev.evaluate_connection(now=T0 + WINDOW_CONNECTION) is NeedState.SATISFIED
+    assert ev.evaluate_connection(now=T0 + WINDOW_GROWTH) is NeedState.DUE
+    # Half-way through a window is indistinguishable from just-entered.
+    assert ev.evaluate_connection(now=T0 + WINDOW_CONNECTION / 2) is NeedState.SATISFIED
+    assert ev.evaluate_connection(
+        now=T0 + WINDOW_CONNECTION + (WINDOW_GROWTH - WINDOW_CONNECTION) / 2
+    ) is NeedState.DUE
+
+
+def test_need_state_is_pure_at_fixed_now():
+    """Calling evaluate_all 50 times at the same `now` returns identical results.
+    Fails immediately against any counter-based implementation, which would
+    advance on each call — the mechanism Addendum §3 rules out."""
+    mg = make_graph()
+    add_connection_evidence(mg, at=T0)
+    self_id = add_continuity_evidence(mg, at=T0)
+    ev = NeedsEvaluator(mg, self_entity_id=self_id)
+
+    now = T0 + timedelta(days=8)             # Connection DUE at this point
+    first = ev.evaluate_all(now)
+    for _ in range(50):
+        assert ev.evaluate_all(now) == first
+    assert first["connection"] is NeedState.DUE      # not drifting toward NEGLECTED
+    # And the evaluator still stores no per-need value.
+    assert set(vars(ev)) == {"_graph", "_self_entity_id"}
 
 
 # ===========================================================================

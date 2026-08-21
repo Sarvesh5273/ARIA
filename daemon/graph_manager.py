@@ -1215,6 +1215,11 @@ class MemoryGraph:
         # exemplified in the spec; preference profiles for Growth/Purpose/
         # Continuity would extend this per their (Needs System / Module 2)
         # definitions and are not invented here.
+        #
+        # CONTRACT: prefs["connection"] means "Connection is NEGLECTED" — the
+        # one state §3 attaches this profile to. The caller (appraisal_chain's
+        # _need_prefs) sets it for that state only; it is deliberately not set
+        # for the weaker `due`.
         if not need_prefs.get("connection"):
             return False
         persp = getattr(item, "perspective", None)

@@ -694,6 +694,36 @@ def test_need_prefs_mapping():
     assert AppraisalChain._need_prefs(None) == {}
 
 
+def test_connection_pref_is_keyed_on_neglected_alone():
+    """Addendum §3 attaches the 'We'-perspective profile to Connection being
+    NEGLECTED specifically: "When Connection is neglected, Stage 1 surfaces
+    'We'-perspective and Connection-positive edges first." `due` is the weaker
+    state and must NOT trigger it. It used to, unavoidably, because Needs System
+    could not emit `neglected` at all."""
+    assert AppraisalChain._need_prefs({"connection": "neglected"}) == {"connection": True}
+    assert AppraisalChain._need_prefs({"connection": "due"}) == {}
+    assert AppraisalChain._need_prefs({"connection": "satisfied"}) == {}
+    # The other three are untouched — the spec says nothing about their profiles,
+    # so they still accept due-or-neglected.
+    for state in ("due", "neglected"):
+        for need in ("growth", "purpose", "continuity"):
+            assert AppraisalChain._need_prefs({need: state}) == {need: True}
+
+
+def test_due_connection_does_not_request_the_we_perspective_preference():
+    """End-to-end through appraise(): a merely-`due` Connection sends NO
+    connection preference into retrieve(), while `neglected` does."""
+    chain, pad, g, emb = make_chain(spy=True)
+    chain.appraise(user_text="thanks", session_id="s", entity_refs=["user"],
+                   need_states={"connection": "due"}, now=T0)
+    assert g.retrieve_calls[0]["need_prefs"] == {}
+
+    chain2, _pad2, g2, _emb2 = make_chain(spy=True)
+    chain2.appraise(user_text="thanks", session_id="s", entity_refs=["user"],
+                    need_states={"connection": "neglected"}, now=T0)
+    assert g2.retrieve_calls[0]["need_prefs"] == {"connection": True}
+
+
 def test_need_pressure_does_not_change_pad():
     # Same turn, with and without need pressure → identical PAD movement.
     c1, p1, g1, e1 = make_chain()
