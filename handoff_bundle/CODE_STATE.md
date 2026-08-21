@@ -12,11 +12,16 @@ It resolves nothing and decides nothing. Precedence is unchanged:
 conflicts silently) apply exactly as before.
 
 **Relationship to `PROJECT_STATUS.md`:** none of the tracker's counts,
-line numbers, or open/closed states are duplicated here. On 2026-08-19
-`PROJECT_STATUS.md` was audited claim-by-claim against the code and corrected;
-it is accurate as it stands and is the authority on module status, test counts,
-and which open questions are open. If this file and the tracker ever appear to
-disagree, that is a defect in this file — report it, do not reconcile it.
+line numbers, or open/closed states are duplicated here. `PROJECT_STATUS.md` was
+audited claim-by-claim against the code on 2026-08-19 and re-measured on
+2026-08-20 after the open-question closure phase; it is the authority on module
+status, test counts, and which open questions are open. If this file and the
+tracker ever appear to disagree, that is a defect in this file — report it, do
+not reconcile it.
+
+One caution on its line-number claims: `apply_appraisal_delta`'s three call sites
+moved twice on 2026-08-20. Match the call pattern
+`\.apply_appraisal_delta\s*\(`, not a recorded line number.
 
 ---
 

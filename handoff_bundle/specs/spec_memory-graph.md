@@ -1425,14 +1425,14 @@ No invented value beyond the stated placeholders.
 
 ## Tasks
 
-- [ ] 1. Set up module scaffold
+- [x] 1. Set up module scaffold
   - Create `graph_manager.py` (no other module's files are touched;
     `daemon/state_manager.py` in particular is not modified).
   - Add imports for `Enum`, `dataclass`, `Optional`, `sqlite3`, `datetime`,
     `uuid`, typing helpers.
   - _Requirements: (structural only)_
 
-- [ ] 2. Implement the enums
+- [x] 2. Implement the enums
   - `NodeType`, `Precision`, `PoignancyCategory`, `Perspective`,
     `RelationalStage`, `UncertaintyType`, `UncertaintyStatus`, `EdgeType`,
     matching design.md's Data Types section verbatim (exact string values from
@@ -1442,7 +1442,7 @@ No invented value beyond the stated placeholders.
     `RelationalStage` has exactly the four Addendum §2 stages.
   - _Requirements: 1.1, 7.1, 7.2, 9.4_
 
-- [ ] 3. Implement the node and edge dataclasses
+- [x] 3. Implement the node and edge dataclasses
   - `EventNode`, `EntityNode`, `EmotionNode`, `UncertaintyNode`, `Edge` with
     exactly the fields v4 Layer 3 lists for each (per requirements.md Glossary).
     `EntityNode` omits `trust_score`, includes `relational_stage`.
@@ -1454,7 +1454,7 @@ No invented value beyond the stated placeholders.
     v4-schema fields.
   - _Requirements: 1.1, 1.2, 7.1, 7.2_
 
-- [ ] 4. Implement the SQLite store schema and initialization
+- [x] 4. Implement the SQLite store schema and initialization
   - Create tables `event_nodes`, `entity_nodes`, `emotion_nodes`,
     `uncertainty_nodes`, `edges` with columns matching the dataclass/schema
     fields, and `node_embeddings(node_id, embedding)` **as the architect-DECIDED
@@ -1469,7 +1469,7 @@ No invented value beyond the stated placeholders.
     presence of `relational_stage` and absence of `trust_score`.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 7.1, 7.2, 13.2_
 
-- [ ] 5. Implement `MemoryGraph.__init__` and the pre-init guard
+- [x] 5. Implement `MemoryGraph.__init__` and the pre-init guard
   - Constructor takes a SQLite connection/path and an injected
     `Embedding_Model` interface (design.md Embedding Dependency) — do NOT
     instantiate a specific embedding model inside `MemoryGraph`, and do NOT
@@ -1481,7 +1481,7 @@ No invented value beyond the stated placeholders.
   - _Requirements: (Error Handling); dependency-injection per design Embedding
     Dependency section_
 
-- [ ] 6. Implement `write_event_node` with base_salience floors
+- [x] 6. Implement `write_event_node` with base_salience floors
   - Create an EventNode with all v4 fields; set `precision = "vivid"`,
     `last_accessed = now`, `access_count = 0`.
   - Compute `base_salience = poignancy_floor + (0.15 if appraisal_q2 ==
@@ -1500,7 +1500,7 @@ No invented value beyond the stated placeholders.
   - _Requirements: 2.1, 2.2, 2.3, 5.1, 5.2, 5.3, 5.4; OQ2 (DEFERRED placeholder
     medium 0.35 / low 0.15, TODO(OQ2))_
 
-- [ ] 7. Implement `adjust_salience` and the base_salience-immutability invariant
+- [x] 7. Implement `adjust_salience` and the base_salience-immutability invariant
   - `adjust_salience(node_or_edge_id, new_salience)` writes only the
     fluctuating `salience` field; it never modifies `base_salience`. It is the
     low-level setter used by DMN consolidation and by habituation (Task 7b).
@@ -1508,7 +1508,7 @@ No invented value beyond the stated placeholders.
     is unchanged from creation.
   - _Requirements: 5.5, 9.2_
 
-- [ ] 7b. Implement `register_edge_firing` — habituation (OQ1 trigger RESOLVED)
+- [x] 7b. Implement `register_edge_firing` — habituation (OQ1 trigger RESOLVED)
   - Record each edge FIRING's retrieval-context embedding in the
     `edge_firing_contexts` side-table; bump `firing_count`/`last_activated`.
   - A firing is "without variation" (architect OQ1 trigger shape) iff its
@@ -1524,7 +1524,7 @@ No invented value beyond the stated placeholders.
     item for HARDEST review.
   - _Requirements: 5.5, 9.2; OQ1 trigger RESOLVED, OQ1-rate DEFERRED_
 
-- [ ] 8. Implement lazy precision-decay evaluation
+- [x] 8. Implement lazy precision-decay evaluation
   - Internal `_evaluate_precision(node, now)` called on each retrieval touch
     (Task 18), in the design's order: evaluate from the node's *current*
     `last_accessed`; advance `vivid→present→softened→faded` through every
@@ -1550,7 +1550,7 @@ No invented value beyond the stated placeholders.
   - _Requirements: 4.1, 4.3, 4.4, 4.5, 4.6; OQ5 RESOLVED (total-elapsed,
     multi-step catch-up)_
 
-- [ ] 9. Implement `create_uncertainty_node` with the max-5 cap
+- [x] 9. Implement `create_uncertainty_node` with the max-5 cap
   - Store with `status = ACTIVE`; set `is_protected = True` for
     INPUT_UNCERTAIN and VALENCE_UNCERTAIN.
   - Before creating a 6th ACTIVE node, force-resolve the **oldest
@@ -1570,7 +1570,7 @@ No invented value beyond the stated placeholders.
   - _Requirements: 3.1, 3.4, 3.5; max-5-no-evictable → keep raise (architect-
     confirmed; cognitive-ceiling alternative flagged, not implemented)_
 
-- [ ] 10. Implement `update_uncertainty_status`
+- [x] 10. Implement `update_uncertainty_status`
   - Accept RESOLVED_CONFIRMED / RESOLVED_INFERRED / ABANDONED writes; set
     `resolved`, `resolution_path`, and store `catch_up_delta_*` /
     `catch_up_magnitude_factor` as **data only**.
@@ -1585,7 +1585,7 @@ No invented value beyond the stated placeholders.
     ABANDONED write.
   - _Requirements: 3.2, 3.3, 13.1_
 
-- [ ] 11. Implement `write_edge` for connection / aha / tension edges
+- [x] 11. Implement `write_edge` for connection / aha / tension edges
   - Create an edge with all v4 Edge Schema fields; support `is_aha_edge`
     (DMN Step 2 insight connection) and `is_tension_pair` /
     `tension_partner_edge` (ambivalence).
@@ -1593,7 +1593,7 @@ No invented value beyond the stated placeholders.
     pair round-trips with both edges linked via `tension_partner_edge`.
   - _Requirements: 9.1, 9.3_
 
-- [ ] 12. Implement the `"resolved"` arc-closure edge with 3× salience
+- [x] 12. Implement the `"resolved"` arc-closure edge with 3× salience
   - When `write_edge` is called with `edge_type = "resolved"`, direct it
     closing→opening EventNode and weight its salience 3× at creation
     (Resolution Log item 5; v4 constants "Argument buffer resolution weight |
@@ -1602,7 +1602,7 @@ No invented value beyond the stated placeholders.
     non-resolved edge created from the same inputs.
   - _Requirements: 9.4_
 
-- [ ] 13. Implement `crystallize_emotion_node` (critical-only)
+- [x] 13. Implement `crystallize_emotion_node` (critical-only)
   - Create an EmotionNode with all v4 fields; `poignancy_category` fixed to
     `"critical"`.
   - Raise `ValueError` if asked to crystallize a non-critical state (Req 8.1;
@@ -1611,7 +1611,7 @@ No invented value beyond the stated placeholders.
     non-critical crystallization raises `ValueError`.
   - _Requirements: 8.1, 8.2, 8.3_
 
-- [ ] 14. Implement `update_relationship_summary` (single path incl. self node)
+- [x] 14. Implement `update_relationship_summary` (single path incl. self node)
   - One write path for every EntityNode's `relationship_summary`, including the
     self-referential EntityNode. Do NOT add a self-model-specific method, table,
     or node type (Resolution Log item 2).
@@ -1620,7 +1620,7 @@ No invented value beyond the stated placeholders.
     `write_self_model`-style method exists.
   - _Requirements: 10.1, 10.2_
 
-- [ ] 15. Implement `set_relational_stage` and `get_relational_stage`
+- [x] 15. Implement `set_relational_stage` and `get_relational_stage`
   - `set_relational_stage` accepts and persists a DMN-decided stage (advance or
     one-step regression, never below `observing`). It performs **no** gate
     evaluation (Req 7.5).
@@ -1632,7 +1632,7 @@ No invented value beyond the stated placeholders.
     references `relationship_depth`.
   - _Requirements: 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 16. Implement embedding-backed similarity (using the injected model)
+- [x] 16. Implement embedding-backed similarity (using the injected model)
   - Add an internal similarity ranking over stored `node_embeddings` vs. a
     supplied `query_embedding` (cosine similarity — standard for sentence
     embeddings; the "top 3–5" size is v4-stated). A node lacking a stored
@@ -1645,7 +1645,7 @@ No invented value beyond the stated placeholders.
     without error.
   - _Requirements: 6.4; OQ3 RESOLVED (embeddings in `node_embeddings` side-table)_
 
-- [ ] 17. Implement `retrieve()` with mood-congruence and need-preference
+- [x] 17. Implement `retrieve()` with mood-congruence and need-preference
   - Signature `retrieve(pad_pleasure_sign, need_prefs, entity_refs,
     query_embedding)`. Select candidates by similarity (Task 16) and
     entity_refs; on each touched node run Task 8's precision evaluation, then
@@ -1664,7 +1664,7 @@ No invented value beyond the stated placeholders.
   - _Requirements: 6.1, 6.2, 6.3, 6.5; OQ4 RESOLVED (mood PRIMARY / need
     SECONDARY, reorder-not-filter, no coefficient)_
 
-- [ ] 18. Wire the retrieval touch: evaluate-then-reset ordering
+- [x] 18. Wire the retrieval touch: evaluate-then-reset ordering
   - Ensure every node returned by (or scanned during) `retrieve()` has its
     precision evaluated (Task 8) **before** its `last_accessed`/`access_count`
     are updated, and that the reset happens exactly once per touch.
@@ -1673,7 +1673,7 @@ No invented value beyond the stated placeholders.
     time *before* this retrieval (not after the reset).
   - _Requirements: 4.6, 6.1_
 
-- [ ] 19. Implement the Needs_System qualifying-evidence queries
+- [x] 19. Implement the Needs_System qualifying-evidence queries
   - `connection_evidence(now, window=72h)` — EventNodes with `appraisal_q1` in
     {medium, high} in the last 72h.
   - `growth_evidence(now, window=14d)` — UncertaintyNodes resolved
@@ -1692,7 +1692,7 @@ No invented value beyond the stated placeholders.
   - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5; OQ6 (Purpose) NOT this
     module's decision — deferred to Needs System / Module 2_
 
-- [ ] 20. Implement `is_first_of_kind` and `resolved_edge_exists`
+- [x] 20. Implement `is_first_of_kind` and `resolved_edge_exists`
   - `is_first_of_kind(entity_ref, event_type)` — whether this event type is
     novel for this entity (poignancy Critical "novel entity" / Addendum §6
     "first-of-kind" input for Appraisal_Chain).
@@ -1706,7 +1706,7 @@ No invented value beyond the stated placeholders.
     `"resolved"` edge is within the window.
   - _Requirements: 12.1, 12.3_
 
-- [ ] 21. Implement `reality_contradiction_check`
+- [x] 21. Implement `reality_contradiction_check`
   - Compare the factual content of two same-`entity_ref` EventNode descriptions
     within a window, using the injected embedding model + basic negation
     detection, returning a structural contradiction boolean (Addendum §1).
@@ -1722,7 +1722,7 @@ No invented value beyond the stated placeholders.
     trust/meaning verdict.
   - _Requirements: 12.2, 12.4_
 
-- [ ] 22. Boundary-enforcement API-surface tests
+- [x] 22. Boundary-enforcement API-surface tests
   - Assert MemoryGraph exposes **no** method that mutates PAD, **no** method
     that accepts an LLM handle or returns LLM-formatted data, and **no** method
     that accepts a Needs-pressure / F4 / barge-in value as a PAD input
@@ -1732,7 +1732,7 @@ No invented value beyond the stated placeholders.
     does not alter live graph state).
   - _Requirements: 13.1, 13.2, 13.3, 7.6_
 
-- [ ] 23. Wire together, run the full suite, and confirm Open-Question status
+- [x] 23. Wire together, run the full suite, and confirm Open-Question status
       in code (architect-resolved 2026-07-05)
   - Ensure all tests from Tasks 2–22 pass together (each test seeds its own
     isolated in-memory SQLite store; no shared-state leakage).

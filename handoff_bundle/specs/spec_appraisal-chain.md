@@ -1356,7 +1356,7 @@ decay itself remains the architect's.
 
 ## Tasks
 
-- [ ] 1. Set up module scaffold and reused imports
+- [x] 1. Set up module scaffold and reused imports
   - Create `daemon/appraisal_chain.py`. Import the REAL types from
     `daemon.pad_engine` (`PADEngine`, `PADDelta`, `PADSnapshot`, `Valence`) and
     `daemon.graph_manager` (`MemoryGraph`, `PoignancyCategory`, `Perspective`,
@@ -1366,7 +1366,7 @@ decay itself remains the architect's.
     `Tuple`, `Sequence`, `datetime`).
   - _Requirements: 14.4 (inject/reuse, no redefinition)_
 
-- [ ] 2. Implement the own enums and dataclasses
+- [x] 2. Implement the own enums and dataclasses
   - `GoalRelevance` (none/low/medium/high), `Attribution` (self/user/
     circumstance/CAUSAL_UNCERTAIN), `EmergencyType` (PHYSICAL_THREAT/
     EXISTENTIAL_DISTRESS/DECISION_CRITICAL/UNCLASSIFIED), with exact string
@@ -1378,7 +1378,7 @@ decay itself remains the architect's.
     `AppraisalResult.q2` accepts a `Valence`; `AppraisalResult` is frozen.
   - _Requirements: 4.1, 4.2, 4.3, 5.3, 13.4_
 
-- [ ] 3. Implement module constants as flagged placeholders
+- [x] 3. Implement module constants as flagged placeholders
   - `_PAD_STEP` (none 0.0 < low < medium < high) — `TODO(build-time)` SUBSTRATE
     placeholders; comment: ordered/non-negative only, NOT weights on features.
   - `_COPING_ABSENT`/`_COPING_SEVERE`/`_COPING_ADEQUATE` — `TODO(build-time,
@@ -1399,7 +1399,7 @@ decay itself remains the architect's.
     Do NOT assert the exact placeholder magnitudes elsewhere.
   - _Requirements: 5.5, 8.1, 14.2; F-4a/F-4d/F-4e placeholders_
 
-- [ ] 4. Implement `AppraisalChain.__init__` (dependency injection)
+- [x] 4. Implement `AppraisalChain.__init__` (dependency injection)
   - Store injected `pad_engine`, `graph`, `embedding_model`, `config`.
   - Initialize in-memory conflict-arc bookkeeping (per-entity counters).
   - Do NOT instantiate a concrete embedding model; do NOT hold a PAD-writing
@@ -1409,7 +1409,7 @@ decay itself remains the architect's.
     concrete embedding model class instance it created itself.
   - _Requirements: 14.4_
 
-- [ ] 5. Implement the Social-Signal Pre-Pass — DISTRESS_MARKER (lexical)
+- [x] 5. Implement the Social-Signal Pre-Pass — DISTRESS_MARKER (lexical)
   - `_distress_marker(text) -> bool`: count absolutist + negative-emotion words
     and first-person-singular density; return True iff the count meets
     `_DISTRESS_MIN_MARKERS`. The count is PERCEPTION and stays inside this
@@ -1418,7 +1418,7 @@ decay itself remains the architect's.
     assert the exact count threshold value.
   - _Requirements: 3.2_
 
-- [ ] 6. Implement the Social-Signal Pre-Pass — VULNERABILITY_DISCLOSURE
+- [x] 6. Implement the Social-Signal Pre-Pass — VULNERABILITY_DISCLOSURE
   - `_vulnerability(text) -> bool`: embed `text` via the injected model and
     compare (cosine) to embedded `_VULNERABILITY_EXEMPLARS`; True iff max
     similarity ≥ `_VULNERABILITY_SIM_CUTOFF`.
@@ -1429,7 +1429,7 @@ decay itself remains the architect's.
     True; far text → False. Cutoff value itself not asserted.
   - _Requirements: 3.3; F-4e_
 
-- [ ] 7. Implement the Social-Signal Pre-Pass — REALITY_CONTRADICTION + conflict arc
+- [x] 7. Implement the Social-Signal Pre-Pass — REALITY_CONTRADICTION + conflict arc
   - `_reality_contradiction(entity_ref, text, now) -> bool`: delegate to
     `graph.reality_contradiction_check(entity_ref, text, now=now)` (real
     interface); no entity → False.
@@ -1446,7 +1446,7 @@ decay itself remains the architect's.
     and writes nothing to the graph except the arc-closure resolved edge.
   - _Requirements: 3.1, 3.4, 3.5, 3.6, 3.7; F-4d_
 
-- [ ] 8. Implement Stage 0 — input classification
+- [x] 8. Implement Stage 0 — input classification
   - `_stage0_classify_input(text, signals) -> bool`: conservative categorical
     heuristic (non-empty/non-whitespace and carries an appraisable referent);
     empty/contentless → unparseable. Comment `TODO(build-time, OQ-E)` on the
@@ -1454,7 +1454,7 @@ decay itself remains the architect's.
   - Unit tests: `"   "` → unparseable (False); a normal sentence → True.
   - _Requirements: 1.1; OQ-E_
 
-- [ ] 9. Implement Stage 2 — categorical Q1, Q2, Q3
+- [x] 9. Implement Stage 2 — categorical Q1, Q2, Q3
   - `_q1(text, context, signals) -> GoalRelevance`, `_q2(text, context, signals)
     -> Valence`, `_q3(text, context, signals) -> Attribution` — pure categorical
     dispatch over the pre-pass tags, small flagged lexical cue sets
@@ -1468,7 +1468,7 @@ decay itself remains the architect's.
     → Q3 CAUSAL_UNCERTAIN; Q1 never returns an UNCLEAR sentinel.
   - _Requirements: 4.1, 4.2, 4.3, 4.5_
 
-- [ ] 10. Implement Stage 2 — Q4 (qualitative) + needs-implications flag
+- [x] 10. Implement Stage 2 — Q4 (qualitative) + needs-implications flag
   - `_q4(q1, q2, q3, signals, need_states) -> (notes: Optional[str],
     has_needs_implications: bool)`: qualitative notes; the boolean is decided
     categorically (a need is implicated by the appraisal / social tags). Keep
@@ -1477,7 +1477,7 @@ decay itself remains the architect's.
     Connection note; a flat neutral turn → False, notes null/partial.
   - _Requirements: 4.4_
 
-- [ ] 11. Implement Stage 2 — emergency gate (transient coping_potential)
+- [x] 11. Implement Stage 2 — emergency gate (transient coping_potential)
   - `_severely_obstructive(q2, text, signals) -> bool` (categorical reading of
     Q2 = negative + threat cue / distress+vulnerability), and
     `_coping_potential(text, signals) -> float` computed ONLY when Q1 == high,
@@ -1495,7 +1495,7 @@ decay itself remains the architect's.
     category/type, never on the coping band value.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5; F-4a_
 
-- [ ] 12. Implement Stage 3 — output synthesis (full/partial/secondary + GRAPH_CONFLICT)
+- [x] 12. Implement Stage 3 — output synthesis (full/partial/secondary + GRAPH_CONFLICT)
   - Count UNCLEAR among {Q2, Q3, Q4}; set `is_partial_appraisal`. 1–2 unclear →
     create matching UncertaintyNode(s) (VALENCE_UNCERTAIN / CAUSAL_UNCERTAIN)
     via `graph.create_uncertainty_node`. 3 unclear → mark for secondary
@@ -1507,7 +1507,7 @@ decay itself remains the architect's.
     node created.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 7.2_
 
-- [ ] 13. Implement Stage 4 — `_build_pad_delta` (byproduct, no formula)
+- [x] 13. Implement Stage 4 — `_build_pad_delta` (byproduct, no formula)
   - Per-axis categorical direction (design.md tables): pleasure←Q2,
     arousal←relevance, dominance←(Q3×Q2). Magnitude = `_PAD_STEP[Q1]`, one tier.
     `d_axis = dir_axis × step`. When `is_partial`, step DOWN one tier first
@@ -1520,7 +1520,7 @@ decay itself remains the architect's.
     negativity inflation). Do NOT assert exact `_PAD_STEP` numbers.
   - _Requirements: 8.1, 8.3, 8.4_
 
-- [ ] 14. Implement the secondary-appraisal delta
+- [x] 14. Implement the secondary-appraisal delta
   - `_secondary_appraisal_delta() -> PADDelta`: fixed categorical profile —
     pleasure down (small tier), arousal up (a tier), dominance down (small
     tier), `valence = VALENCE_UNCERTAIN` — matching v4's described byproduct.
@@ -1529,7 +1529,7 @@ decay itself remains the architect's.
     VALENCE_UNCERTAIN.
   - _Requirements: 7.1, 8.1_
 
-- [ ] 15. Implement Stage 4 application through PAD_Engine (the only PAD write)
+- [x] 15. Implement Stage 4 application through PAD_Engine (the only PAD write)
   - Apply the constructed delta via `pad_engine.apply_appraisal_delta(delta)`.
   - A neutral appraisal (Q2 = neutral) is fully zero on every axis
     (arousal/dominance carry no direction without valenced meaning), so
@@ -1544,7 +1544,7 @@ decay itself remains the architect's.
     raise (never enters PAD_Engine's NEUTRAL decay branch).
   - _Requirements: 8.2, 8.5, 14.1; OQ-F_
 
-- [ ] 16. Implement Stage 5 — needs pressure as retrieval preference only
+- [x] 16. Implement Stage 5 — needs pressure as retrieval preference only
   - `_need_prefs(need_states) -> dict`: map recognized due/neglected needs to
     the `need_prefs` dict `graph.retrieve` consumes (e.g.
     `{"connection": True}`); unknown keys ignored.
@@ -1556,7 +1556,7 @@ decay itself remains the architect's.
     ordering only, not PAD).
   - _Requirements: 9.1, 9.2_
 
-- [ ] 17. Implement Stage 6 — poignancy (categorical) + graph write
+- [x] 17. Implement Stage 6 — poignancy (categorical) + graph write
   - `_poignancy(q1, q2, q3, has_needs, entity_ref, emergency) -> PoignancyCategory`
     per design.md, calling `graph.is_first_of_kind(entity_ref, q2_str, q3_str)`
     BEFORE the write for the Critical conjunct; emergency → Critical.
@@ -1572,7 +1572,7 @@ decay itself remains the architect's.
     with the emergency note in `appraisal_q4_notes`.
   - _Requirements: 10.1, 10.2, 11.1, 11.2, 11.3, 11.4, 12.2, 12.3_
 
-- [ ] 18. Implement uncertainty resolution (RESOLVED_CONFIRMED + catch-up)
+- [x] 18. Implement uncertainty resolution (RESOLVED_CONFIRMED + catch-up)
   - When Stage 3 is all-clear and `active_uncertainty_refs` are supplied (OQ-C),
     resolve each via `graph.update_uncertainty_status(ref, RESOLVED_CONFIRMED,
     resolution_path="direct_information", catch_up_delta_*=..., 
@@ -1589,7 +1589,7 @@ decay itself remains the architect's.
     private write, count unchanged).
   - _Requirements: 7.3, 7.4; OQ-A, OQ-C, OQ-D_
 
-- [ ] 19. Implement `appraise(...)` — orchestrate Stages 0–6, return AppraisalResult
+- [x] 19. Implement `appraise(...)` — orchestrate Stages 0–6, return AppraisalResult
   - Read current PAD (`pad_engine.get_current_pad`), embed text, run Stages 0→6
     in order, and assemble the frozen `AppraisalResult` (Q1–Q4, poignancy,
     applied `pad_delta`, emergency flag/type, node ids, social signals, and the
@@ -1606,7 +1606,7 @@ decay itself remains the architect's.
     with `appraisal_q2 == "negative"`.
   - _Requirements: 1.3, 13.1, 13.2, 13.3, 13.4, 13.5, 12.1, 12.3_
 
-- [ ] 20. Boundary / anti-machine API-surface tests
+- [x] 20. Boundary / anti-machine API-surface tests
   - Assert `AppraisalChain` exposes NO method that writes PAD directly (the only
     PAD path is `pad_engine.apply_appraisal_delta`), NO method that emits
     five-field / Type A/B/C LLM instruction text, and NO method that
@@ -1619,7 +1619,7 @@ decay itself remains the architect's.
   - Assert `coping_potential` never appears on `AppraisalResult`.
   - _Requirements: 5.5, 8.2, 14.1, 14.2, 14.3, 14.4_
 
-- [ ] 21. Wire together, run the full suite, and confirm flag/OQ status in code
+- [x] 21. Wire together, run the full suite, and confirm flag/OQ status in code
   - Ensure all tests pass together (each test builds its own in-memory
     `MemoryGraph`, its own baseline-initialized `PADEngine`, and a
     `FakeEmbedding`; no shared state).
