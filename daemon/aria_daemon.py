@@ -868,6 +868,13 @@ class AriaDaemon:
         # has_distress_markers() — no new lexicon, no LLM, no embedding, one
         # local string scan. Presence beats routing: when it fires, the turn
         # skips the proposal branch entirely and flows through the full pipeline.
+        #
+        # It is passed to the ROUTER rather than used to discard the router's
+        # answer. Discarding a propose=True result left transport=None, which
+        # silently handed the turn to LLMInterface's internal CLOUD-FIRST chain —
+        # so the most distressed, most personal messages were the ones leaving the
+        # machine, while small talk got the local voice. Telling the router not to
+        # propose lets its normal gemma-first order decide instead.
         distressed = self._appraisal.has_distress_markers(user_text)
 
         # --- STEP 5 (NEW): routing decision. If a router is wired, ask it
@@ -877,8 +884,10 @@ class AriaDaemon:
         # exactly as it was before Track A. ----------------------------------
         transport = None
         if self._backend_router is not None:
-            transport, propose = self._backend_router.select(user_text)
-            if propose and not distressed:
+            transport, propose = self._backend_router.select(
+                user_text, allow_tier_2_proposal=not distressed
+            )
+            if propose:
                 return self._begin_proposal(
                     user_text, now,
                     session_id=session_id,

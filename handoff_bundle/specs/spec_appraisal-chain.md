@@ -25,6 +25,18 @@
 > **Also:** `_need_prefs` keys Connection on `neglected` alone, per Addendum §3; it
 > previously fired on `due` too. Growth/Purpose/Continuity untouched.
 >
+> **4.** VALENCE_UNCERTAIN no longer closes an arc. Addendum §1 says the arc
+> closes on a flip to `Q2=positive/neutral`; VALENCE_UNCERTAIN is neither, but the
+> else-branch treated everything not-NEGATIVE as a flip — so user confusion
+> counted as repair and wrote a `"resolved"` edge, which the Invested→Bonded FAITH
+> gate reads. It now breaks the consecutive-negative run without closing the arc.
+> An opener is marked only when no arc is already open, or a later negative would
+> clobber `_arc_open_event` mid-arc and point the closure edge at the wrong node.
+>
+> **5.** New public `has_distress_markers(text)` — the disjunction of
+> `_distress_marker` and `_emergency_cue_kind`, exposed for the Daemon's STEP 4b
+> distress gate. Read-only, lexical, invents no lexicon.
+>
 > **Open:** nothing READS edge `salience` for any decision, so item 5's 3× is
 > representational only.
 

@@ -297,17 +297,57 @@ and treat the utterance as a brand-new turn. Covered by
 `test_unrecognized_response_defaults_to_negative_and_still_replays` in
 `tests/test_daemon.py`.
 
-**FLAG 3 — SAFETY: proposing delays a possible emergency. RESOLVED: no crisis
-pre-check.** This is a personal companion for a single user, not a public
-product. The user has confirmed they will not use self-harm language, so
-suicide-prevention delay is not a relevant scenario. As defense-in-depth
-against false proposals on casual conversation, "medical"/"medically" and
-"legal"/"legally" were removed from `TIER_2_KEYWORDS`
-(`daemon/backend_router.py`) — too broad for a personal companion, firing on
-casual mentions like "my doctor said..." or "my legal paperwork...". The
-remaining keywords do not overlap with genuine crisis language (which the
-Appraisal Chain's own `_EXISTENTIAL_CUES` / `_PHYSICAL_THREAT_CUES` lexicons
-handle, upstream of and independent of BackendRouter's classifier).
+**FLAG 3 — SAFETY: proposing delays a possible emergency. FIXED 2026-08-20 —
+a distress gate now exists. DO NOT REMOVE IT.**
+
+This entry previously read *"RESOLVED: no crisis pre-check"*, on the grounds
+that the remaining keywords *"do not overlap with genuine crisis language
+(which the Appraisal Chain's own `_EXISTENTIAL_CUES` / `_PHYSICAL_THREAT_CUES`
+lexicons handle, upstream of and independent of BackendRouter's classifier)"*.
+**Both halves of that were wrong**, and it is recorded here so nobody removes
+the gate on the strength of the old reasoning:
+
+1. **"Upstream of and independent of" was backwards.** The propose branch
+   RETURNS at `aria_daemon.py` STEP 5, before `appraise()`. The crisis lexicons
+   are DOWNSTREAM of that return, so on a proposing turn the emergency gate did
+   not run that turn at all — only on replay, after the user answered or the
+   10-second timeout expired.
+2. **The keywords DO overlap, in combination.** Measured:
+   `"I want to die, explain why I should keep going"` → `propose_tier_2`
+   (matches the phrase "explain why"); `"there is an error in me and I can't go
+   on"` → `propose_tier_2`; `"everything is too complex, I want to end it"` →
+   `propose_tier_2`. Each carries both an existential cue and a tier-2 keyword.
+
+**The fix:** `aria_daemon.py` STEP 4b scans the message with
+`AppraisalChain.has_distress_markers()` — the disjunction of the two perception
+checks Module 4 already owns (`_distress_marker`, `_emergency_cue_kind`), so no
+lexicon is invented — and passes `allow_tier_2_proposal=not distressed` into
+`BackendRouter.select()`. A distressed turn is never deferred; it flows through
+the full pipeline and the emergency gate runs on the turn it arrives.
+
+**Second bug found while fixing it.** Suppressing the proposal by *discarding* a
+`propose=True` result left `transport=None`, which silently handed the turn to
+`LLMInterface`'s internal CLOUD-FIRST chain. Traced: plain chat → GEMMA, but a
+distressed turn → CLOUD. So the most personal messages were the ones leaving the
+machine, the inverse of the architect's gemma-is-the-default-voice decision.
+That is why the constraint is passed INTO the router rather than applied to its
+answer: the caller states "do not defer this turn", the router still chooses, and
+its normal gemma-first order holds. Re-traced after the fix: distress and crisis
+turns are both served by GEMMA.
+
+The architect's underlying risk acceptance still stands on its own terms — single
+user, personal companion, no self-harm language expected. The gate is
+defence-in-depth, not a change to that judgement. Also unchanged:
+"medical"/"medically" and "legal"/"legally" remain removed from
+`TIER_2_KEYWORDS`, as they fired on casual mentions like "my doctor said...".
+
+**Known breadth, accepted deliberately.** `_DISTRESS_MIN_MARKERS = 1`, so one
+absolutist word is enough to suppress a proposal. Measured false positives:
+`"I never use the cloud, explain why it matters"`, `"everyone says this algorithm
+is faster, compare them"`, `"this always works, analyze the tradeoffs"`. The cost
+is a missed escalation prompt (answered locally instead); the benefit is that no
+distressed turn slips through. A stricter threshold for this gate specifically
+would be a new number the spec does not state, so the spec'd value is reused.
 
 ### Judgment calls made during Track A (not covered by the task's own text)
 

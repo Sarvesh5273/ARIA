@@ -20,6 +20,26 @@
 >
 > Also: `_highest_pressure_need` already treated `due` and `neglected` alike, so
 > Needs System now emitting `neglected` leaves initiative behaviour unchanged.
+>
+> ## AMENDMENT 2026-08-20 — STEP 4b distress gate (FLAG 3 fixed)
+>
+> A new step between the cognitive-load checks and the routing decision:
+> `distressed = self._appraisal.has_distress_markers(user_text)`, then
+> `select(user_text, allow_tier_2_proposal=not distressed)`.
+>
+> STEP 5 RETURNS on `propose`, and the tier-2 classifier is a keyword match that
+> emotional language routinely trips — so a distressed turn was answered with
+> "shall I escalate?" and the emergency gate did not run until the user replied or
+> the 10s timeout fired. Measured: *"I want to die, explain why I should keep
+> going"* → `propose_tier_2`. FLAG 3's old note claimed the crisis lexicons were
+> "upstream of and independent of" the classifier; they are DOWNSTREAM of that
+> return. The scan reuses Module 4's own lexicons — no lexicon invented, no LLM.
+>
+> The constraint is passed INTO the router, not applied to its answer: discarding
+> `propose=True` left `transport=None`, handing the turn to `LLMInterface`'s
+> CLOUD-FIRST chain (traced: plain chat → GEMMA, distressed → CLOUD). Accepted
+> breadth: `_DISTRESS_MIN_MARKERS = 1`, so one absolutist word suppresses a
+> proposal; a stricter threshold would be a new number the spec does not state.
 
 Consolidated from .kiro/specs/daemon/{requirements,design,tasks}.md for upload.
 Precedence: ARIA_Resolution_Log.md > ARIA_Soul_Spec_v4_Addendum.md > ARIA_Soul_Spec_v4.md.

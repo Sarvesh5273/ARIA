@@ -38,6 +38,43 @@
 > Unrelated to this change but worth noting here: `_highest_pressure_need` already
 > treated `due` and `neglected` alike, so Needs System now emitting `neglected`
 > (2026-08-20) leaves initiative behaviour unchanged.
+>
+> ## AMENDMENT 2026-08-20 — STEP 4b distress gate (FLAG 3 fixed)
+>
+> A new step sits between the cognitive-load checks and the routing decision:
+>
+> ```python
+> distressed = self._appraisal.has_distress_markers(user_text)   # STEP 4b
+> ...
+> transport, propose = self._backend_router.select(
+>     user_text, allow_tier_2_proposal=not distressed)           # STEP 5
+> ```
+>
+> **Why.** STEP 5 RETURNS on `propose`, and BackendRouter's tier-2 classifier is a
+> keyword match that emotional language routinely trips. So a distressed turn was
+> answered with *"shall I escalate to the reasoning tier?"* and the appraisal —
+> including the emergency gate — did not run until the user replied or the
+> 10-second timeout fired. Measured: *"I want to die, explain why I should keep
+> going"* → `propose_tier_2`. FLAG 3's old note claimed the crisis lexicons sat
+> *"upstream of and independent of"* the classifier; they are DOWNSTREAM of this
+> return.
+>
+> The scan reuses Module 4's own lexicons (`_distress_marker` ∨
+> `_emergency_cue_kind`) through the new public `has_distress_markers()` — no
+> lexicon invented, no LLM, no embedding, one local string scan.
+>
+> **The constraint is passed INTO the router, not applied to its answer.**
+> Discarding a `propose=True` result left `transport=None`, which handed the turn
+> to `LLMInterface`'s CLOUD-FIRST internal chain — traced as plain chat → GEMMA but
+> distressed turn → CLOUD, i.e. the most personal messages were the ones leaving
+> the machine. `allow_tier_2_proposal=False` lets the router's normal gemma-first
+> order decide instead.
+>
+> **Known breadth, accepted:** `_DISTRESS_MIN_MARKERS = 1`, so one absolutist word
+> suppresses a proposal (*"I never use the cloud, explain why it matters"*). Cost
+> is a missed escalation prompt; benefit is that no distressed turn slips through.
+> A stricter threshold for this gate alone would be a new number the spec does not
+> state (Rule 1).
 
 ## Overview
 

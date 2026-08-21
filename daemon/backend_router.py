@@ -368,14 +368,33 @@ class BackendRouter:
 
     # -- selection -----------------------------------------------------------
 
-    def select(self, user_text: str) -> tuple[Optional[ModelTransport], bool]:
+    def select(
+        self, user_text: str, *, allow_tier_2_proposal: bool = True
+    ) -> tuple[Optional[ModelTransport], bool]:
         """Returns `(transport_or_None, propose_flag)`.
 
         Reads the override from internal state and health from
         `check_health()` itself — `select` takes only `user_text` (the
         original design note's wider `(user_text, session_override,
         backend_health)` signature is superseded by the module's own
-        declared contract; the declared signature wins)."""
+        declared contract; the declared signature wins).
+
+        `allow_tier_2_proposal=False` tells the router this turn must NOT be
+        deferred into a pause-and-ask, so the tier-2 branch is skipped and the
+        normal gemma -> groq chain decides. The CALLER supplies the constraint;
+        the ROUTER still makes the choice — which is why this is a parameter and
+        not a "give me the local transport" accessor. An accessor would let a
+        caller bypass the fallback order and duplicate the "is gemma usable"
+        test that lives here.
+
+        The Daemon uses it for its distress gate: a distressed turn must reach
+        the pipeline as presence rather than be answered with "shall I escalate
+        to the reasoning tier?". Without it the caller had to discard a
+        `propose=True` result, which left `transport=None` and silently handed
+        the turn to `LLMInterface`'s internal CLOUD-FIRST chain — the exact
+        inverse of the architect's gemma-is-the-default-voice decision, on
+        precisely the most personal turns. Default `True` preserves the previous
+        behaviour exactly."""
         override = self.get_override()
         if override is not None:
             # Override WINS UNCONDITIONALLY — deliberately not health-gated.
@@ -391,7 +410,11 @@ class BackendRouter:
         # reads "explicitly healthy", never "not known to be down" (FLAG B).
         health = self.check_health()
 
-        if self.classify(user_text) == "propose_tier_2" and health["azure"]:
+        if (
+            allow_tier_2_proposal
+            and self.classify(user_text) == "propose_tier_2"
+            and health["azure"]
+        ):
             return None, True  # Daemon owns the pause-and-ask UX
 
         # CONSEQUENCE (documented, not a bug): when the classifier matches

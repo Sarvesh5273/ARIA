@@ -364,6 +364,47 @@ def test_select_falls_back_to_groq_when_gemma_unavailable():
     assert propose is False
 
 
+def test_allow_tier_2_proposal_false_never_proposes():
+    # The caller supplies a constraint ("this turn must not be deferred"); the
+    # ROUTER still chooses. So the tier-2 branch is skipped and the normal
+    # gemma -> groq chain decides, rather than the caller getting (None, True)
+    # and having to discard it.
+    router, gemma, groq, azure, clock = make_router()
+
+    transport, propose = router.select("there is an error here")
+    assert (transport, propose) == (None, True)          # default unchanged
+
+    transport, propose = router.select(
+        "there is an error here", allow_tier_2_proposal=False)
+    assert propose is False
+    assert transport is gemma        # a REAL transport, not None
+
+
+def test_allow_tier_2_proposal_false_still_honours_the_fallback_chain():
+    # Suppressing the proposal must not bypass the router's own ordering.
+    router, gemma, groq, azure, clock = make_router()
+    gemma.unload()                                       # gemma not resident
+    transport, propose = router.select(
+        "debug this traceback", allow_tier_2_proposal=False)
+    assert transport is groq and propose is False
+
+    # And it still reaches the degradation path when nothing is available.
+    r2, g2, q2, a2, _c2 = make_router()
+    g2.healthy = False
+    q2.healthy = False
+    assert r2.select("debug this traceback", allow_tier_2_proposal=False) == (None, False)
+
+
+def test_allow_tier_2_proposal_false_does_not_override_an_override():
+    # An explicit user override still wins unconditionally — the suppression
+    # only gates the CLASSIFIER's proposal branch.
+    router, gemma, groq, azure, clock = make_router()
+    router.set_override("tier_2")
+    transport, propose = router.select(
+        "there is an error here", allow_tier_2_proposal=False)
+    assert transport is azure and propose is False
+
+
 def test_select_all_down():
     router, gemma, groq, azure, clock = make_router()
 

@@ -26,7 +26,8 @@ This is the most commonly mis-stated constraint in the project, so it is first.
 
 ```
 1. Appraisal delta   PADEngine.apply_appraisal_delta(delta)
-                     called ONLY from appraisal_chain.py, 3 call sites:
+                     called ONLY from appraisal_chain.py, 3 call sites
+                     (lines shift often — match `\.apply_appraisal_delta\s*\(`):
                        appraise()               -> the Stage-4 turn delta
                        submit_aha_insight()     -> DMN's aha, routed as an EVENT
                        submit_cognitive_load()  -> TWO triggers as of 2026-08-20:
@@ -124,7 +125,7 @@ declares its own `AudioPipelinePort`; Module 10 exposes its own
 
 ## 4. Turn flow as implemented
 
-`AriaDaemon.route_inbound_turn()`, six steps:
+`AriaDaemon.route_inbound_turn()`, six steps (4 splits into 4 and 4b):
 
 1. Proposal-response interception — if the previous turn asked whether to
    escalate to the reasoning tier, this turn IS the answer; nothing below runs.
@@ -132,10 +133,20 @@ declares its own `AudioPipelinePort`; Module 10 exposes its own
    appraisal and the gate entirely.
 3. Backend meta-command check (`use cloud` / `stay local` / …) — sets or clears
    the router override, returns a pre-authored acknowledgement. No EventNode.
-4. Cognitive-load check — buffer fullness `heavy`/`critical` →
-   `appraisal.submit_cognitive_load()`.
-5. Routing decision — `BackendRouter.select()`. A `propose=True` result defers
-   the turn into `PROPOSING_CLOUD` instead of answering.
+4. Cognitive-load checks — TWO triggers: buffer fullness `heavy`/`critical`,
+   and Energy below the in-spec 30 gate. Both call
+   `appraisal.submit_cognitive_load()`, so both can fire in one turn.
+4b. Distress gate — `appraisal.has_distress_markers(user_text)`, one local
+   lexical scan over Module 4's own lexicons. Feeds step 5; see §6.
+5. Routing decision — `BackendRouter.select(user_text,
+   allow_tier_2_proposal=not distressed)`. A `propose=True` result defers the
+   turn into `PROPOSING_CLOUD` instead of answering. When the distress gate
+   fires the tier-2 branch is skipped, so a distressed turn is never deferred
+   and the router's normal gemma-first order serves it. The constraint is passed
+   IN rather than applied to the result: discarding a `propose=True` would leave
+   `transport=None`, which hands the turn to `LLMInterface`'s CLOUD-FIRST
+   internal chain — measured as plain chat → GEMMA but distressed → CLOUD before
+   the fix.
 6. The pipeline proper: note voice input → thinking sound (reads PAD, plays a
    pre-cached clip) → `NeedsSystem.get_need_states()` →
    `AppraisalChain.appraise()` → track turn →
@@ -218,6 +229,12 @@ cloud adapters unprobed     backend_router.py; FLAG B is closed (UNKNOWN is no
                             neither is selectable. Safe direction; still inert
 Daemon FLAG 2               ambiguous proposal response defaults to negative —
                             an inferred default, in no source document
+distress gate is broad      aria_daemon.py STEP 4b; _DISTRESS_MIN_MARKERS = 1, so
+                            ONE absolutist word suppresses a cloud proposal.
+                            Measured false positives ("I never use the cloud,
+                            explain why it matters"). ACCEPTED: presence beats
+                            routing, and a stricter threshold would be a new
+                            number the spec does not state
 ```
 
 CLOSED 2026-08-20, listed so a reader of an older copy of this file knows where
@@ -244,6 +261,15 @@ PAD restore not clamped     CLAMPED at the persistence boundary instead:
                             [0,100]; non-finite treated as corrupt. pad_engine.py
                             itself is unchanged
 state_manager no tests      tests/test_state_manager.py now exists (31 tests)
+VALENCE_UNCERTAIN closed    FIXED. appraisal_chain._conflict_arc_update closes on
+  conflict arcs             POSITIVE/NEUTRAL only, per Addendum §1. Ambiguity is
+                            not repair, so it no longer writes a "resolved" edge
+                            and no longer feeds the Invested->Bonded faith gate
+Daemon FLAG 3               FIXED, and DO NOT REMOVE THE GATE. aria_daemon STEP 4b
+  proposal delays an        scans with AppraisalChain.has_distress_markers() and
+  emergency                 passes allow_tier_2_proposal=not distressed into
+                            select(). The old "RESOLVED: no crisis pre-check"
+                            note rested on two false claims — see HANDOFF_NOTES
 ```
 
 Build-time tuning placeholders still carrying `TODO` — mechanism locked, value

@@ -37,6 +37,30 @@
 > strong preference at the weak state. Growth/Purpose/Continuity untouched; §3
 > exemplifies only Connection's profile.
 >
+> **4. VALENCE_UNCERTAIN no longer closes a conflict arc.** Addendum §1: the arc
+> *"closes when a later EventNode on that entity_ref flips to Q2=positive/neutral"*.
+> VALENCE_UNCERTAIN is neither, but the else-branch treated everything not-NEGATIVE
+> as a flip — so unresolved confusion (*"it's complicated, I can't tell"*) counted
+> as repair and wrote a `"resolved"` edge, and that edge is the evidence the
+> Invested→Bonded FAITH gate reads (`resolved_edge_exists`, ResLog item 5). It
+> earned relational trust on a turn where nothing was resolved. Now only
+> POSITIVE/NEUTRAL closes; VALENCE_UNCERTAIN breaks the consecutive-negative RUN
+> but leaves the arc open.
+>
+> This required a second change, not just the close condition. Keeping the arc open
+> across an ambiguous turn makes a previously unreachable path live: the ambiguous
+> turn resets the negative run, so the NEXT negative looked like a fresh opener and
+> the caller overwrote `_arc_open_event` MID-ARC — pointing the closure's
+> `"resolved"` edge at the wrong node and deriving its 3× `base_salience` from it.
+> An opener is now marked only when no arc is already open.
+>
+> **5. New public `has_distress_markers(text)`** — the disjunction of
+> `_distress_marker` and `_emergency_cue_kind`, exposed for the Daemon's STEP 4b
+> distress gate (see the daemon design amendment). Read-only and lexical: no LLM,
+> no embedding, no graph, no PAD, no mutation, and no lexicon of its own. Module
+> 4's public surface is now `appraise`, `has_distress_markers`,
+> `submit_aha_insight`, `submit_cognitive_load`.
+>
 > **Known open item:** nothing in the codebase READS edge `salience` for any
 > decision, so item 5's 3× is representational only. `resolved_edge_exists()` — its
 > own named consumer — selects on `edge_type` + `created`.

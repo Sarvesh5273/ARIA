@@ -1364,6 +1364,26 @@ def test_distress_suppresses_the_cloud_proposal(tmp_path):
     assert response.text                             # and she answered
 
 
+def test_distressed_turn_is_served_by_gemma_not_the_cloud(tmp_path):
+    """The distress gate must not accidentally send the MOST personal turns to
+    the cloud. Suppressing the proposal by discarding a `propose=True` result
+    left transport=None, which handed the turn to LLMInterface's internal
+    CLOUD-FIRST chain — so small talk got the local voice and a distressed
+    message went to Groq. The gate is passed to the router instead, so its
+    normal gemma-first order decides."""
+    for query in ("I feel hopeless, analyze what is wrong",
+                  "I want to die, explain why I should keep going"):
+        ctx = make_daemon(tmp_path / query[:12].replace(" ", "_"),
+                          backend_router=True)
+        ctx.daemon.startup()
+        local_before, cloud_before = len(ctx.local.prompts), len(ctx.cloud.prompts)
+
+        ctx.daemon.route_inbound_turn(user_text=query, now=T0)
+
+        assert len(ctx.local.prompts) > local_before, query   # Gemma answered
+        assert len(ctx.cloud.prompts) == cloud_before, query  # cloud untouched
+
+
 def test_distress_gate_leaves_ordinary_tier2_proposals_alone(tmp_path):
     """(b) A tier-2 query with no distress still proposes — the gate must not
     swallow the feature it guards."""
