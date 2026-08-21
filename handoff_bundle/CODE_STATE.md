@@ -307,3 +307,10 @@ tracker do not resolve. Mapping: `.kiro/specs/<module>/{requirements,design,
 tasks}.md` is uploaded as a single consolidated `spec_<module>.md`, and
 `daemon/<file>.py` is uploaded as plain `<file>.py`. A "file not found" for a
 cited path is this, not a missing file.
+
+Thirteen modules, thirteen `spec_*.md` files as of 2026-08-20. Three of them —
+`spec_state-manager.md`, `spec_session-buffer.md`, `spec_backend-router.md` — are
+titled "module reference (NOT a locked spec)" rather than "locked spec", and say
+so in their own banner. They hold a design reference only, derived from the
+shipped code rather than authored ahead of it, and no requirements or tasks. Do
+not read a SHALL into them; they record what the code does, not what it must do.

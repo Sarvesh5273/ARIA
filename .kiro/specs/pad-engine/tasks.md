@@ -104,14 +104,14 @@ raising task's own `NotImplementedError` message.
 
 ## Tasks
 
-- [ ] 1. Set up module scaffold
+- [x] 1. Set up module scaffold
   - Create the PAD_Engine module file/package structure (no other module's
     files are touched).
   - Add imports needed for `Enum`, `dataclass`, `Optional`, `Deque`,
     `Tuple`, `Literal`, and `collections.deque`.
   - _Requirements: (structural only, no acceptance criteria yet)_
 
-- [ ] 2. Implement `Valence` enum with exactly four members
+- [x] 2. Implement `Valence` enum with exactly four members
   - Define `Valence` with exactly four members, matching design.md's Data
     Types section verbatim: `POSITIVE = "positive"`, `NEGATIVE =
     "negative"`, `NEUTRAL = "neutral"`, `VALENCE_UNCERTAIN =
@@ -123,13 +123,13 @@ raising task's own `NotImplementedError` message.
     decision itself — reuse `EMA_COEFFICIENT_NEGATIVE` — is resolved in
     Task 14, not here)_
 
-- [ ] 3. Implement `PADSnapshot` frozen dataclass
+- [x] 3. Implement `PADSnapshot` frozen dataclass
   - Fields: `pleasure: float`, `arousal: float`, `dominance: float`.
   - Frozen/immutable, per design.md's Data Types rationale (no consumer can
     mutate PAD_Engine's live state through a returned snapshot).
   - _Requirements: 7.1_
 
-- [ ] 4. Implement `PADDelta` frozen dataclass
+- [x] 4. Implement `PADDelta` frozen dataclass
   - Fields: `d_pleasure: float`, `d_arousal: float`, `d_dominance: float`,
     `valence: Valence`, `origin: Literal["appraisal", "aha_insight"] =
     "appraisal"`.
@@ -138,7 +138,7 @@ raising task's own `NotImplementedError` message.
     an attribute after construction raises).
   - _Requirements: 2.2, 4.1, 4.3_
 
-- [ ] 5. Implement module constants
+- [x] 5. Implement module constants
   - `PAD_BASELINE = PADSnapshot(pleasure=0.55, arousal=0.45,
     dominance=0.58)`.
   - `EMA_COEFFICIENT_NEGATIVE = 0.6`, `EMA_COEFFICIENT_POSITIVE = 0.75`.
@@ -161,7 +161,7 @@ raising task's own `NotImplementedError` message.
   - _Requirements: 3.2, 3.3, 6.1, 8.1, 8.2; Open Question 1 (carried
     forward, not resolved)_
 
-- [ ] 6. Implement `PADEngine.__init__` and state fields
+- [x] 6. Implement `PADEngine.__init__` and state fields
   - `_pleasure`, `_arousal`, `_dominance: float` — uninitialized/unset
     until `initialize()` is called (do not default them to baseline inside
     `__init__` — baseline-or-restored assignment is `initialize()`'s job,
@@ -177,7 +177,7 @@ raising task's own `NotImplementedError` message.
     `apply_appraisal_delta`, not here at `__init__` time.
   - _Requirements: 1.1_
 
-- [ ] 7. Implement `initialize(restored)` including the baseline-fallback and
+- [x] 7. Implement `initialize(restored)` including the baseline-fallback and
       non-baseline-restore cases
   - If `restored` is `None`, or fails basic validity (not three finite
     floats), set current PAD to `PAD_BASELINE`.
@@ -213,7 +213,7 @@ raising task's own `NotImplementedError` message.
       snapshot exactly (not baseline).
   - _Requirements: 1.3, 9.1, 9.2, 9.4_
 
-- [ ] 7b. Extend `initialize()` with a `restored_valence` parameter (this
+- [x] 7b. Extend `initialize()` with a `restored_valence` parameter (this
       is the fix for the routine case of the NARROWED Open Question 4)
   - Add `restored_valence: Optional[Valence] = None` as a second parameter
     to `initialize()` (from Task 7).
@@ -244,7 +244,7 @@ raising task's own `NotImplementedError` message.
       test) — confirms the default preserves prior behavior.
   - _Requirements: 3.1, 9.4; narrows (does not resolve) Open Question 4_
 
-- [ ] 8. Extend the call-site conversion helper (outside `PADEngine`,
+- [x] 8. Extend the call-site conversion helper (outside `PADEngine`,
       outside `StateManager`) to also convert the persisted valence
       string
   - In the same integration/wiring code location as before (e.g. a Daemon
@@ -280,7 +280,7 @@ raising task's own `NotImplementedError` message.
     StateManager requirement per se — but necessary for either to be used
     together correctly); narrows (does not resolve) Open Question 4_
 
-- [ ] 9. Implement the pre-`initialize()` guard on `get_current_pad()`,
+- [x] 9. Implement the pre-`initialize()` guard on `get_current_pad()`,
       `on_soul_tick()`, and `apply_appraisal_delta()`
   - All three methods check the `_initialized`/unset-state sentinel from
     Task 6 before doing anything else, and raise `RuntimeError` if
@@ -302,7 +302,7 @@ raising task's own `NotImplementedError` message.
       reason anymore.
   - _Requirements: (Error Handling section, "Calls before `initialize()`")_
 
-- [ ] 10. Implement `apply_appraisal_delta(delta)`
+- [x] 10. Implement `apply_appraisal_delta(delta)`
   - Add `delta.d_pleasure`, `delta.d_arousal`, `delta.d_dominance` to the
     current `_pleasure`, `_arousal`, `_dominance` respectively.
   - Store `delta.valence` into `_last_applied_valence`.
@@ -322,7 +322,7 @@ raising task's own `NotImplementedError` message.
       each of the four `Valence` members in turn.
   - _Requirements: 2.1, 2.2, 4.1, 4.3_
 
-- [ ] 11. Implement `on_soul_tick()` for the `POSITIVE` and `NEGATIVE` cases
+- [x] 11. Implement `on_soul_tick()` for the `POSITIVE` and `NEGATIVE` cases
       only
   - No arguments (matches design.md's no-parameter signature).
   - Read `_last_applied_valence`.
@@ -354,7 +354,7 @@ raising task's own `NotImplementedError` message.
       `PADSnapshot`.
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.2, 6.1_
 
-- [ ] 12. Implement the standard EMA decay helper
+- [x] 12. Implement the standard EMA decay helper
   - Extract the EMA form `new = coefficient * baseline + (1 - coefficient)
     * current`, applied independently to each of P, A, D, into a small
     internal helper used by Task 11 (`NEGATIVE`/`POSITIVE`) and also by
@@ -365,7 +365,7 @@ raising task's own `NotImplementedError` message.
     values for at least two coefficient/starting-PAD combinations.
   - _Requirements: 3.1, 3.2, 3.3_
 
-- [ ] 13. Implement `on_soul_tick()` `NEUTRAL` case: raise
+- [x] 13. Implement `on_soul_tick()` `NEUTRAL` case: raise
       `NotImplementedError` (NOT an Open Question)
   - If `_last_applied_valence` is `Valence.NEUTRAL`, raise
     `NotImplementedError`.
@@ -390,7 +390,7 @@ raising task's own `NotImplementedError` message.
   - _Requirements: 3.1 (note). NOT an Open Question — do not label this
     task's gap as OQ4 anywhere, including in the exception message._
 
-- [ ] 14. Implement `on_soul_tick()` `VALENCE_UNCERTAIN` case: decay using
+- [x] 14. Implement `on_soul_tick()` `VALENCE_UNCERTAIN` case: decay using
       `EMA_COEFFICIENT_NEGATIVE` (former Open Question 3, now RESOLVED —
       does NOT raise)
   - If `_last_applied_valence` is `Valence.VALENCE_UNCERTAIN`, select
@@ -431,7 +431,7 @@ raising task's own `NotImplementedError` message.
   - _Requirements: 3.1; former Open Question 3 — now RESOLVED, reusing
     `EMA_COEFFICIENT_NEGATIVE`. This task alone resolves it._
 
-- [ ] 15. Implement `on_soul_tick()` residual restore-boundary case: raise
+- [x] 15. Implement `on_soul_tick()` residual restore-boundary case: raise
       `NotImplementedError` (narrowed Open Question 4 — UNCHANGED
       trigger condition and message)
   - If `_last_applied_valence` is `None` AND current PAD is NOT equal to
@@ -474,7 +474,7 @@ raising task's own `NotImplementedError` message.
     per Task 7b). This task alone covers the residual OQ4 case — Task 13
     does not, and Task 14 no longer raises at all._
 
-- [ ] 16. Implement `on_soul_tick()` `None`-at-baseline case: no-op skip
+- [x] 16. Implement `on_soul_tick()` `None`-at-baseline case: no-op skip
   - If `_last_applied_valence` is `None` AND current PAD equals
     `PAD_BASELINE` exactly, skip decay for this tick (no-op): do not change
     P/A/D, but still append the (unchanged, baseline) `PADSnapshot` to
@@ -495,7 +495,7 @@ raising task's own `NotImplementedError` message.
   - _Requirements: 3.1 (decay against baseline is a no-op by construction;
     skipping resolves nothing by invention)_
 
-- [ ] 17. Implement `get_current_pad()`
+- [x] 17. Implement `get_current_pad()`
   - Returns a `PADSnapshot` of the current `_pleasure`, `_arousal`,
     `_dominance` values. Single method, no caller-identity parameter (per
     design.md: all five consumers call the same accessor). Subject to the
@@ -505,7 +505,7 @@ raising task's own `NotImplementedError` message.
     decay/delta call.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 18. Implement `get_pad_history()`
+- [x] 18. Implement `get_pad_history()`
   - Returns an immutable `Tuple[PADSnapshot, ...]` copy of `_history`, in
     chronological order (oldest first).
   - Write unit tests:
@@ -521,7 +521,7 @@ raising task's own `NotImplementedError` message.
       `get_pad_history()`).
   - _Requirements: 6.1, 6.2_
 
-- [ ] 19. Verify no direct-assignment surface exists, and structural
+- [x] 19. Verify no direct-assignment surface exists, and structural
       rejection of out-of-contract inputs (API-surface tests)
   - Write a static/API-surface test asserting `PADEngine`'s public method
     list is exactly: `initialize`, `apply_appraisal_delta`, `on_soul_tick`,
@@ -536,7 +536,7 @@ raising task's own `NotImplementedError` message.
     the call path/surface itself, not a detection branch.
   - _Requirements: 7.1, 7.3, 7.4_
 
-- [ ] 20. Integration test: `StateManager` round-trip boundary, using the
+- [x] 20. Integration test: `StateManager` round-trip boundary, using the
       Task 8 call-site conversion helper (extended by Task 7b/8 to also
       cover `last_applied_valence`)
   - Using the existing, unmodified `daemon/state_manager.py` and the Task 8
@@ -560,7 +560,7 @@ raising task's own `NotImplementedError` message.
   - Do not modify `daemon/state_manager.py`.
   - _Requirements: 9.2_
 
-- [ ] 21. Wire together and run full test suite; confirm remaining Open
+- [x] 21. Wire together and run full test suite; confirm remaining Open
       Questions stay unresolved in code, and resolved/narrowed ones are
       accurately reflected
   - Ensure all tests from Tasks 3–20 pass together (no shared-state leakage
