@@ -213,10 +213,12 @@ tags every open row with a BLOCKER TYPE — `needs-ruling` / `needs-runtime` /
 decisions" section rather than in "Still Open". This section is only *where* each
 thing lives in the source.
 
-Two of the entries below are ACCEPTED decisions in the tracker, not open work,
+FOUR of the entries below are ACCEPTED decisions in the tracker, not open work,
 and are listed here purely so a reader who finds the behaviour can locate it:
-`first-run NEGLECTED` and `distress gate is broad`. Do not "fix" either — the
-reasoning is in the tracker.
+`first-run NEGLECTED`, `distress gate is broad`, `item 5's 3x is inert` and
+`load triggers stack`. Do not "fix" any of them — the reasoning is in the
+tracker's "Accepted decisions" section. In particular: do not collapse the two
+cognitive-load deltas, and do not invent a consumer for edge salience.
 
 ```
 OQ6 Purpose evidence        graph_manager.py purpose_evidence + max-5 cap raise
@@ -225,15 +227,18 @@ Continuity `neglected`      needs_system.py evaluate_continuity stays 2-valued;
                             no wider window, and Addendum §3 gives Continuity a
                             QUALITY criterion ("contradicts rather than extends")
                             that has no signal wired to the narrative path
-first-run NEGLECTED         needs_system.py; empty graph has no evidence in
+first-run NEGLECTED         ACCEPTED (self-corrects on first qualifying turn).
+                            needs_system.py; empty graph has no evidence in
                             either window -> neglected, not due. Self-corrects on
                             the first qualifying turn
-item 5's 3x is inert        graph_manager.py; nothing READS edge salience for any
+item 5's 3x is inert        ACCEPTED (record-only by design).
+                            graph_manager.py; nothing READS edge salience for any
                             decision. resolved_edge_exists() selects on
                             edge_type+created; retrieve() orders edges by
                             incidence and VALENCE. The weighting is recorded and
                             acts on nothing
-load triggers stack         aria_daemon.py; buffer pressure AND Energy<30 in one
+load triggers stack         ACCEPTED (keep both — independent causes).
+                            aria_daemon.py; buffer pressure AND Energy<30 in one
                             turn fire submit_cognitive_load twice -> two PAD
                             deltas. Measured, not collapsed (collapsing needs an
                             invented precedence rule)
@@ -243,7 +248,8 @@ cloud adapters unprobed     backend_router.py; FLAG B is closed (UNKNOWN is no
                             neither is selectable. Safe direction; still inert
 Daemon FLAG 2               ambiguous proposal response defaults to negative —
                             an inferred default, in no source document
-distress gate is broad      aria_daemon.py STEP 4b; _DISTRESS_MIN_MARKERS = 1, so
+distress gate is broad      ACCEPTED (presence beats routing).
+                            aria_daemon.py STEP 4b; _DISTRESS_MIN_MARKERS = 1, so
                             ONE absolutist word suppresses a cloud proposal.
                             Measured false positives ("I never use the cloud,
                             explain why it matters"). ACCEPTED: presence beats
@@ -255,6 +261,19 @@ CLOSED 2026-08-20, listed so a reader of an older copy of this file knows where
 the claim went (`PROJECT_STATUS.md` carries the full reasoning):
 
 ```
+v4 uncertainty rows        3 of 4 NOW LIVE in soul_filter._derive_constraints:
+                            943 "don't fake confidence" (base branch), 944
+                            INPUT_UNCERTAIN -> "do not project onto what you do
+                            not know yet", 946 resolved-this-turn -> "let it show
+                            that something became clearer". 944 reads the node's
+                            TYPE from the graph (identity is on AppraisalResult,
+                            type is not). Row 945 "uncertainty weight above 0.5"
+                            is PARKED and NOT implementable: the phrase occurs
+                            once in the whole precedence chain, no such quantity
+                            exists, and manufacturing one would be a number
+                            deciding what she says about her own interior.
+                            test_v4_uncertainty_row_945_is_not_implemented pins
+                            the absence -- delete it and say why, or leave it
 ENERGY_CRITICAL unused      NOW EMITTED. soul_filter._derive_constraints appends
                             "acknowledge fatigue if it comes up naturally"
                             (v4 line 949) below ENERGY_CRITICAL; architect ruling
