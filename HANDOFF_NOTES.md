@@ -532,3 +532,75 @@ before committing catches both a red suite and a stale bundle.
 `check-bundle` also reports an ORPHAN: a `spec_*.md` with no module behind it,
 which is what a renamed spec folder leaves. It only warns, since deleting a file
 that may be a deliberate leftover is not the script's call.
+
+---
+
+## Bucket B rulings (2026-08-20)
+
+Three questions were put to the architect. Two were accepted as-is; the third was
+answered by finding a better question.
+
+**A — cognitive-load stacking: KEEP BOTH.** Buffer pressure and Energy<30 are
+independent causes, so each emitting its own second-order byproduct is honest.
+Collapsing them needs a precedence rule no document states. Moved to Accepted
+decisions; the two-delta turn is expected behaviour, not a bug to fix.
+
+**B — ResLog item 5's 3×: RECORD-ONLY BY DESIGN.** Nothing reads edge `salience`
+for any decision. The weighting is now spec-faithfully derived from the opening
+EventNode, so the stored row is correct — it simply isn't consumed. Building a
+consumer to justify the number would be backwards. Moved to Accepted decisions.
+If someone later wants the 3× to *do* something, that is a new feature with its
+own reasoning, not the closing of this row.
+
+**C — the uncertainty row: the question was wrong.** It had been described as
+"ready, clean, ~30 min" in three successive handoff summaries. It is not
+implementable at all. But checking it turned up something better.
+
+v4's soul_filter table has **FOUR** uncertainty rows, not the two the summaries
+tracked:
+
+    943  node unresolved (any type)  -> don't fake confidence      ALREADY LIVE
+    944  INPUT_UNCERTAIN active      -> don't project              IMPLEMENTED
+    945  uncertainty weight > 0.5    -> acknowledge explicitly     PARKED
+    946  resolved this turn          -> let that show               IMPLEMENTED
+
+944 and 946 are purely categorical off signals `AppraisalResult` already carried,
+so they needed no new quantity, lexicon or threshold. 944 reads the active node's
+TYPE from the graph — identity is on the result, type is not, and a graph read is
+the same REAL-interface call this module already makes for `relational_stage`.
+946 reads `resolved_uncertainty_ids`. Net: two v4 rows closed instead of one, and
+nothing invented.
+
+**Row 945 is parked under Rule 1 and this is the third time it has resurfaced, so
+here is the evidence in one place.** The phrase `"uncertainty weight"` occurs
+EXACTLY ONCE in the entire precedence chain — v4 line 945 itself. No
+`uncertainty_weight` symbol exists in `daemon/` or `tests/`. `UncertaintyNode`'s
+only numerics are `interaction_count` and the four `catch_up_*` PAD fields, and
+repurposing either would invent a *meaning* for an existing number, which is
+worse than inventing a new one. There is no `0.5` to compare against. Building it
+requires a formula that produces a number deciding what she says about her own
+interior — the protected chain's core prohibition, and it fails the percentage
+test on sight ("what percent uncertain is she?" is a meaningful question, so it is
+a number in disguise). `test_v4_uncertainty_row_945_is_not_implemented` now pins
+the absence: anyone implementing it must delete that test and say why.
+
+If the behaviour is wanted, the non-inventing route is a categorical substitute —
+cheapest being to widen the live 943 branch — but which signal counts is an
+architect call, not a derivation.
+
+**ROW ORDER is a new flagged presentation choice.** v4 does not order its rows
+against each other and the MAX-3 cap means order decides which survives:
+
+    base -> 944 INPUT_UNCERTAIN -> Energy<20 -> Energy<30 -> 946 resolved
+
+Highest-stakes prohibition first (944 guards against inventing content for a turn
+she could not parse), the settled Energy block untouched in the middle,
+lowest-stakes permission last. Tested: with a 2-item base leaving one slot and
+both 944 and 946 applying, 944 takes it.
+
+**Still open, deliberately separated:** v4's Energy<30 self-acknowledgment ("I'm
+not thinking clearly right now") is a disclosure about internal state, which
+brushes §9 in a way the other permissions do not. Held back for its own decision
+rather than swept in with 944/946.
+
+Tracker after this pass: Still Open 9 -> 7, Accepted decisions 4 -> 6.
