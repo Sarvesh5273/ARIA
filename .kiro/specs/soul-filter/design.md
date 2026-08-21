@@ -35,11 +35,42 @@
 > not a vague directive", so a specific action carrying a condition still
 > qualifies.
 >
-> **Still unimplemented, same shape, now unblocked:** v4's *"Uncertainty weight
-> above 0.5 → 'Acknowledge the uncertainty explicitly if it comes up naturally.'"*
-> row, and v4's Energy<30 self-acknowledgment (*"I'm not thinking clearly right
-> now"*). Both are permissions rather than prohibitions; both now have a sanctioned
-> field to live in whenever the architect wants them.
+> **Two more v4 uncertainty rows landed 2026-08-20.** v4's soul_filter table has
+> FOUR uncertainty rows, not two. Now live: **944** *"INPUT_UNCERTAIN active → Be
+> present. Don't project onto what you don't know yet"* (emitted as `do not project
+> onto what you do not know yet`) and **946** *"Uncertainty resolved this turn →
+> Something just became clearer. You can let that show"* (emitted as `let it show
+> that something became clearer`). Both are purely categorical off signals
+> `AppraisalResult` already carried: 944 reads the active node's TYPE from the graph
+> (identity is on the result, type is not — the same REAL-interface read this module
+> already does for `relational_stage`), 946 reads `resolved_uncertainty_ids`. No
+> lexicon, no threshold, no new quantity. With 943 in the base branch, three of the
+> four rows are live.
+>
+> **ROW ORDER is a flagged build-time presentation choice**, not a spec reading. v4
+> does not order its rows against each other, and the MAX-3 cap means order decides
+> which survives:
+>
+>     base branch → 944 INPUT_UNCERTAIN → Energy<20 → Energy<30 → 946 resolved
+>
+> Highest-stakes PROHIBITION first (944 guards against inventing content for a turn
+> she could not parse), the settled Energy block untouched in the middle,
+> lowest-stakes PERMISSION last (946 merely allows something to show).
+>
+> **Row 945 is PARKED and is not implementable as written.** *"Uncertainty weight
+> above 0.5"* — the phrase `"uncertainty weight"` occurs **exactly once** in the
+> entire precedence chain, nothing defines or produces such a weight, and
+> `UncertaintyNode`'s only numerics are `interaction_count` and the `catch_up_*` PAD
+> fields (repurposing either would invent a *meaning* for an existing number). There
+> is no `0.5` to compare against. Implementing it needs a formula producing a number
+> that decides what she says about her own interior — the protected chain's core
+> prohibition, failing the percentage test on sight. Rule 1: flagged, not invented.
+> `test_v4_uncertainty_row_945_is_not_implemented` pins the absence so it reads as a
+> decision rather than an oversight.
+>
+> **Still genuinely open:** v4's Energy<30 self-acknowledgment (*"I'm not thinking
+> clearly right now"*), held back separately — a disclosure about internal state,
+> which brushes §9 in a way the other permissions do not.
 
 ## Overview
 

@@ -30,7 +30,9 @@ import pytest
 
 from daemon.types import ENERGY_LOW, ENERGY_CRITICAL
 from daemon.pad_engine import PADEngine, PADSnapshot, PADDelta, Valence, PAD_BASELINE
-from daemon.graph_manager import MemoryGraph, RelationalStage, PoignancyCategory
+from daemon.graph_manager import (
+    MemoryGraph, RelationalStage, PoignancyCategory, UncertaintyType,
+)
 from daemon.appraisal_chain import (
     AppraisalResult,
     SocialSignals,
@@ -688,6 +690,127 @@ def test_the_two_energy_gates_are_independent_not_exclusive_tiers():
         guard = src[:src.index(line)].rstrip().splitlines()[-1].strip()
         assert guard.startswith("if "), guard
         assert "len(constraints) < 3" in guard, guard
+
+
+_NO_PROJECT = "do not project onto what you do not know yet"
+_BECAME_CLEARER = "let it show that something became clearer"
+
+
+def test_input_uncertain_row_emits_do_not_project():
+    """v4 line 944: "INPUT_UNCERTAIN active → 'Be present. Don't project onto what
+    you don't know yet.'" Categorical — the active uncertainty node either IS that
+    type or it is not. AppraisalResult carries only the node's identity, so the
+    type is read from the graph."""
+    filt, pad, graph, emb = make_filter()
+    ev = graph.write_event_node(
+        description="", session_id="s", appraisal_q1="high",
+        appraisal_q2="valence_uncertain", appraisal_q3="circumstance",
+        poignancy_category=PoignancyCategory.MEDIUM, now=T0)
+    node = graph.create_uncertainty_node(
+        uncertainty_type=UncertaintyType.INPUT_UNCERTAIN,
+        trigger_event_ref=ev, now=T0)
+    appr = make_appraisal(uncertainty_node_id=node)
+
+    instr = filt.assemble_instruction(appraisal_result=appr, user_message="m")
+    assert _NO_PROJECT in instr.constraints
+    assert len(instr.constraints) <= 3
+
+
+def test_other_uncertainty_types_do_not_emit_the_input_uncertain_row():
+    """Only INPUT_UNCERTAIN. The other three types must not trigger it — v4 gives
+    them their own rows, and 943 already covers "unresolved, any type"."""
+    for utype in (UncertaintyType.VALENCE_UNCERTAIN,
+                  UncertaintyType.CAUSAL_UNCERTAIN,
+                  UncertaintyType.GRAPH_CONFLICT):
+        filt, pad, graph, emb = make_filter()
+        ev = graph.write_event_node(
+            description="x", session_id="s", appraisal_q1="medium",
+            appraisal_q2="neutral", appraisal_q3="user",
+            poignancy_category=PoignancyCategory.MEDIUM, now=T0)
+        node = graph.create_uncertainty_node(
+            uncertainty_type=utype, trigger_event_ref=ev, now=T0)
+        instr = filt.assemble_instruction(
+            appraisal_result=make_appraisal(uncertainty_node_id=node),
+            user_message="m")
+        assert _NO_PROJECT not in instr.constraints, utype
+
+
+def test_input_uncertain_row_is_absent_without_a_node():
+    filt, *_ = make_filter()
+    instr = filt.assemble_instruction(
+        appraisal_result=make_appraisal(uncertainty_node_id=None), user_message="m")
+    assert _NO_PROJECT not in instr.constraints
+
+
+def test_missing_uncertainty_node_does_not_raise():
+    """A node id that resolves to nothing is "no such signal", not an error worth
+    failing a turn over."""
+    filt, *_ = make_filter()
+    instr = filt.assemble_instruction(
+        appraisal_result=make_appraisal(uncertainty_node_id="does-not-exist"),
+        user_message="m")
+    assert _NO_PROJECT not in instr.constraints
+    assert instr.constraints  # the turn still produced constraints
+
+
+def test_resolved_uncertainty_row_emits_the_permission():
+    """v4 line 946: "Uncertainty resolved this turn → 'Something just became
+    clearer. You can let that show.'" Purely categorical off
+    resolved_uncertainty_ids, which AppraisalResult already carries."""
+    filt, *_ = make_filter()
+    instr = filt.assemble_instruction(
+        appraisal_result=make_appraisal(resolved_uncertainty_ids=("u1",)),
+        user_message="m")
+    assert _BECAME_CLEARER in instr.constraints
+
+    none_resolved = filt.assemble_instruction(
+        appraisal_result=make_appraisal(resolved_uncertainty_ids=()),
+        user_message="m")
+    assert _BECAME_CLEARER not in none_resolved.constraints
+
+
+def test_row_order_prohibition_before_permission_under_the_cap():
+    """The MAX-3 cap means row ORDER decides which survives. 944 is a prohibition
+    guarding against invented content; 946 is a permission. When both apply and
+    only one slot is free, the prohibition takes it."""
+    filt, pad, graph, emb = make_filter()
+    ev = graph.write_event_node(
+        description="", session_id="s", appraisal_q1="high",
+        appraisal_q2="valence_uncertain", appraisal_q3="circumstance",
+        poignancy_category=PoignancyCategory.MEDIUM, now=T0)
+    node = graph.create_uncertainty_node(
+        uncertainty_type=UncertaintyType.INPUT_UNCERTAIN,
+        trigger_event_ref=ev, now=T0)
+    # routine base = 2 items, so exactly one slot is free
+    appr = make_appraisal(uncertainty_node_id=node,
+                          resolved_uncertainty_ids=("u1",))
+    c = filt.assemble_instruction(appraisal_result=appr, user_message="m").constraints
+    assert len(c) == 3
+    assert _NO_PROJECT in c
+    assert _BECAME_CLEARER not in c        # yielded the slot
+
+
+def test_the_new_rows_carry_no_number_and_no_state():
+    """Same boundary as every other Field 5 row: an action, no digits, no
+    internal-state claim (Addendum §9)."""
+    for text in (_NO_PROJECT, _BECAME_CLEARER):
+        assert not any(ch.isdigit() for ch in text)
+        assert "uncertainty" not in text.lower()   # no node/type label crosses
+        assert text.islower()
+
+
+def test_v4_uncertainty_row_945_is_not_implemented():
+    """Row 945 ("Uncertainty weight above 0.5") is deliberately absent. The phrase
+    occurs once in the whole precedence chain, nothing defines or produces such a
+    weight, and manufacturing one would be a number deciding what she says about
+    her own interior. This test exists so the absence reads as a decision rather
+    than an oversight — if someone implements it, they must delete this test and
+    say why."""
+    src = inspect.getsource(SoulFilter)
+    assert "uncertainty_weight" not in src
+    assert "acknowledge the uncertainty" not in src.lower()
+    import daemon.soul_filter as _sf
+    assert not any("weight" in n.lower() for n in dir(_sf))
 
 
 def test_energy_instructions_carry_no_number_and_no_state_claim():

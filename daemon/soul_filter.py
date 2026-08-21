@@ -67,7 +67,7 @@ from typing import (
 
 # --- REAL interfaces (imported, never redefined) ---------------------------
 from daemon.pad_engine import PADEngine, PADSnapshot, PAD_BASELINE
-from daemon.graph_manager import MemoryGraph, RelationalStage
+from daemon.graph_manager import MemoryGraph, RelationalStage, UncertaintyType
 from daemon.appraisal_chain import AppraisalResult, EmergencyType, GoalRelevance
 from daemon.pad_engine import Valence
 from daemon import moral_schema
@@ -479,7 +479,24 @@ class SoulFilter:
         most-specific-wins ordering used for the emergency branch and for
         select_thinking_sound's triggers. Checked the other way round the <20
         instruction could never be emitted at all, because Energy<20 implies
-        Energy<30 and the milder instruction would always take the slot."""
+        Energy<30 and the milder instruction would always take the slot.
+
+        ROW ORDER (2026-08-20). v4's soul_filter table does not order its rows
+        against each other, and the MAX-3 cap means order decides which survives.
+        FLAGGED as a build-time presentation choice, not a spec reading:
+
+            base branch  →  944 INPUT_UNCERTAIN  →  Energy<20  →  Energy<30
+                         →  946 uncertainty resolved
+
+        The rationale: highest-stakes PROHIBITION first (944 guards against her
+        inventing content for a turn she could not parse), the settled Energy
+        block untouched in the middle, and the lowest-stakes PERMISSION last
+        (946 merely allows something to show). v4's four uncertainty rows are now
+        three-quarters live — 943 in the base branch above, 944 and 946 here.
+        Row 945 ("Uncertainty weight above 0.5") is NOT implementable: the phrase
+        occurs exactly once in the whole precedence chain, nothing defines or
+        produces such a weight, and manufacturing one would be a number deciding
+        what she says about her own interior. Parked under Rule 1, not forgotten."""
         sig = appraisal.social_signals
         constraints: list[str] = []
 
@@ -503,6 +520,14 @@ class SoulFilter:
             # named moral-schema anti-patterns (non-manipulation + genuine care).
             constraints = ["do not flatter to be liked", "do not manufacture urgency"]
 
+        # v4 line 944: "INPUT_UNCERTAIN active → 'Be present. Don't project onto
+        # what you don't know yet.'" Categorical — the active uncertainty node
+        # either IS that type or it is not. Placed FIRST of the added rows: it is
+        # the highest-stakes prohibition here, guarding against her inventing
+        # content for a turn she could not parse.
+        if self._input_uncertain_active(appraisal) and len(constraints) < 3:
+            constraints.append("do not project onto what you do not know yet")
+
         # Energy operational gates (Addendum §3 "operational threshold gate";
         # v4's soul_filter instruction table). The NUMBER never crosses — only
         # the instruction. Most-severe-first (see docstring).
@@ -517,7 +542,33 @@ class SoulFilter:
             if need_states.energy < ENERGY_LOW and len(constraints) < 3:
                 constraints.append("do not overextend")
 
+        # v4 line 946: "Uncertainty resolved this turn → 'Something just became
+        # clearer. You can let that show.'" Categorical — the appraisal either
+        # resolved something this turn or it did not; `resolved_uncertainty_ids`
+        # is already on AppraisalResult, so no new signal is needed. Placed LAST:
+        # it is a permission rather than a prohibition, and the lowest-stakes row
+        # of the set, so it yields the scarce slot to anything above it.
+        if appraisal.resolved_uncertainty_ids and len(constraints) < 3:
+            constraints.append("let it show that something became clearer")
+
         return tuple(constraints[:3])  # MAX 3 (Addendum §9)
+
+    def _input_uncertain_active(self, appraisal: AppraisalResult) -> bool:
+        """Whether this turn's active uncertainty node is INPUT_UNCERTAIN
+        (v4 line 944). AppraisalResult carries the node's IDENTITY, not its type,
+        so the type is read from the graph — the same REAL-interface read this
+        module already does for relational_stage and reality_contradiction_check.
+
+        Returns False when there is no node, when the node cannot be found, or
+        when it is any other uncertainty type. Never raises: a missing node is
+        "no such signal", not an error worth failing a turn over."""
+        node_id = appraisal.uncertainty_node_id
+        if not node_id:
+            return False
+        node = self._graph.get_uncertainty_node(node_id)  # REAL (Module 3)
+        if node is None:
+            return False
+        return node.uncertainty_type is UncertaintyType.INPUT_UNCERTAIN
 
     # =======================================================================
     # Assembly — emergency branch is checked FIRST, before field assembly

@@ -22,6 +22,18 @@
 > **RECORDED IN THE PRECEDENCE CHAIN 2026-08-20** as `ARIA_Resolution_Log.md`
 > item 16, with Addendum §9's Constraints row amended in place to match. §9 no
 > longer contradicts the code.
+>
+> **Two more v4 uncertainty rows landed 2026-08-20.** v4's table has FOUR, not two.
+> Live now: **944** INPUT_UNCERTAIN → `do not project onto what you do not know yet`,
+> and **946** resolved-this-turn → `let it show that something became clearer`. Both
+> categorical off signals `AppraisalResult` already carried. With 943 in the base
+> branch, three of four are live. **Row order is a FLAGGED presentation choice** —
+> base → 944 → Energy<20 → Energy<30 → 946; highest-stakes prohibition first,
+> lowest-stakes permission last, since the MAX-3 cap decides which survives.
+> **Row 945 ("Uncertainty weight above 0.5") is PARKED and not implementable**: the
+> phrase occurs once in the whole precedence chain, no such quantity exists, and
+> manufacturing one would be a number deciding what she says about her own interior.
+> Rule 1. See the design body for the full reasoning.
 
 Consolidated from .kiro/specs/soul-filter/{requirements,design,tasks}.md for upload.
 Precedence: ARIA_Resolution_Log.md > ARIA_Soul_Spec_v4_Addendum.md > ARIA_Soul_Spec_v4.md.
