@@ -454,7 +454,8 @@ does not make it unexported — check multi-line imports before deleting one.
   contradiction. Options: DMN's narrative step records extended-vs-contradicted,
   or a graph query compares successive `relationship_summary` states. Both are
   new mechanisms (Rule 1).
-- **An empty graph reports NEGLECTED on first run.** No evidence in either
+- **[ACCEPTED 2026-08-20 — not open]** An empty graph reports NEGLECTED on first
+  run. No evidence in either
   window. It is what §3's rule yields and it self-corrects on the first
   qualifying turn; `_maybe_initiate` already treated `due` and `neglected` alike
   so first-run initiative is unchanged. Suppressing it would need a "has she ever

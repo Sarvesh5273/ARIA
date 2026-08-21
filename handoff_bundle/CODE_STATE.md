@@ -207,7 +207,16 @@ Next build phase is adapters plus a wiring entry point, not more soul modules.
 
 ## 6. Where the open items live in code
 
-`PROJECT_STATUS.md` is the authority on *what* is open. This is *where*:
+`PROJECT_STATUS.md` is the authority on *what* is open, and since 2026-08-20 it
+tags every open row with a BLOCKER TYPE — `needs-ruling` / `needs-runtime` /
+`needs-adapter` — and keeps decisions-already-made in a separate "Accepted
+decisions" section rather than in "Still Open". This section is only *where* each
+thing lives in the source.
+
+Two of the entries below are ACCEPTED decisions in the tracker, not open work,
+and are listed here purely so a reader who finds the behaviour can locate it:
+`first-run NEGLECTED` and `distress gate is broad`. Do not "fix" either — the
+reasoning is in the tracker.
 
 ```
 OQ6 Purpose evidence        graph_manager.py purpose_evidence + max-5 cap raise
