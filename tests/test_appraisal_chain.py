@@ -299,6 +299,126 @@ def test_conflict_arc_absent_turn_threshold_is_a_turn_count():
         ac._CONFLICT_ARC_ABSENT_TURN_THRESHOLD
 
 
+def test_valence_uncertain_does_not_close_a_conflict_arc():
+    """(a) Addendum §1: the arc "closes when a later EventNode on that entity_ref
+    flips to Q2=positive/neutral". VALENCE_UNCERTAIN is NEITHER, so unresolved
+    confusion must not count as repair — closing here would write a "resolved"
+    edge, and that edge is what the Invested->Bonded FAITH gate reads
+    (resolved_edge_exists, ResLog item 5), earning trust on a turn where nothing
+    was resolved."""
+    chain, pad, g, emb = make_chain(config=AppraisalConfig(
+        arc_open_consecutive_negative=2))
+    window = _big_window()
+    chain.appraise(user_text="I hate my job, it is awful", session_id="s",
+                   entity_refs=["job"], now=T0)
+    chain.appraise(user_text="this is terrible and broken", session_id="s",
+                   entity_refs=["job"], now=T0)
+    assert chain._arc_open["job"] is True
+
+    # Kept short deliberately: a longer phrasing ("... I cannot tell") trips the
+    # reality-contradiction check against the two prior same-entity events, which
+    # forces Q2 NEGATIVE and would test a different path than the one intended.
+    r = chain.appraise(user_text="it is complicated and mixed",
+                       session_id="s", entity_refs=["job"], now=T0)
+    assert r.q2 is Valence.VALENCE_UNCERTAIN          # precondition
+    assert chain._arc_open["job"] is True             # STILL open
+    assert r.social_signals.conflict_arc_closed_this_turn is False
+    assert g.resolved_edge_exists("job", window) is False   # no trust credit
+
+
+def test_positive_and_neutral_still_close_a_conflict_arc():
+    """(b) and (c) — the two states Addendum §1 names still close, unchanged."""
+    for closing_text, expected in (
+        ("thanks, it is working great now", Valence.POSITIVE),
+        ("the meeting is at noon", Valence.NEUTRAL),
+    ):
+        chain, pad, g, emb = make_chain(config=AppraisalConfig(
+            arc_open_consecutive_negative=2))
+        window = _big_window()
+        chain.appraise(user_text="I hate my job, it is awful", session_id="s",
+                       entity_refs=["job"], now=T0)
+        chain.appraise(user_text="this is terrible and broken", session_id="s",
+                       entity_refs=["job"], now=T0)
+        assert chain._arc_open["job"] is True
+
+        r = chain.appraise(user_text=closing_text, session_id="s",
+                           entity_refs=["job"], now=T0)
+        assert r.q2 is expected, closing_text
+        assert chain._arc_open["job"] is False, closing_text
+        assert r.social_signals.conflict_arc_closed_this_turn is True, closing_text
+        assert g.resolved_edge_exists("job", window) is True, closing_text
+
+
+def test_ambiguous_turn_mid_arc_does_not_clobber_the_opening_event():
+    """Regression for a bug the VALENCE_UNCERTAIN fix would otherwise have
+    introduced. Keeping the arc open across an ambiguous turn makes a previously
+    unreachable path live: the ambiguous turn resets the consecutive-negative run,
+    so the NEXT negative looked like a fresh opener and the caller overwrote
+    _arc_open_event mid-arc. The closure edge would then point at the wrong node —
+    and derive its 3x base_salience from it. An opener is only marked when no arc
+    is already open."""
+    chain, pad, g, emb = make_chain(config=AppraisalConfig(
+        arc_open_consecutive_negative=2))
+    opener = chain.appraise(user_text="I hate my job, it is awful", session_id="s",
+                            entity_refs=["job"], now=T0)
+    chain.appraise(user_text="this is terrible and broken", session_id="s",
+                   entity_refs=["job"], now=T0)
+    assert chain._arc_open_event["job"] == opener.event_node_id
+
+    chain.appraise(user_text="it is complicated and mixed", session_id="s",
+                   entity_refs=["job"], now=T0)          # arc stays open
+    chain.appraise(user_text="I hate it, awful again", session_id="s",
+                   entity_refs=["job"], now=T0)          # would have clobbered
+    assert chain._arc_open_event["job"] == opener.event_node_id
+
+    # And the closure edge therefore points at the TRUE opener.
+    closing = chain.appraise(user_text="thanks, it is working great now",
+                            session_id="s", entity_refs=["job"], now=T0)
+    edges = [e for e in g._edges_incident_to(opener.event_node_id)
+             if e.edge_type is EdgeType.RESOLVED]
+    assert len(edges) == 1
+    assert edges[0].to_node == opener.event_node_id
+    assert edges[0].from_node == closing.event_node_id
+    opening_node = g.get_event_node(opener.event_node_id)
+    assert edges[0].base_salience == pytest.approx(opening_node.base_salience)
+
+
+def test_a_new_arc_after_closure_gets_a_fresh_opener():
+    """The opener guard must not pin the FIRST arc's opener forever: once an arc
+    closes, the next negative run records its own opening node."""
+    chain, pad, g, emb = make_chain(config=AppraisalConfig(
+        arc_open_consecutive_negative=2))
+    first = chain.appraise(user_text="I hate my job, it is awful", session_id="s",
+                           entity_refs=["job"], now=T0)
+    chain.appraise(user_text="this is terrible and broken", session_id="s",
+                   entity_refs=["job"], now=T0)
+    chain.appraise(user_text="thanks, it is working great now", session_id="s",
+                   entity_refs=["job"], now=T0)                     # closes
+    assert chain._arc_open["job"] is False
+
+    second = chain.appraise(user_text="I hate my job again, awful", session_id="s",
+                            entity_refs=["job"], now=T0)
+    assert chain._arc_open_event["job"] == second.event_node_id
+    assert chain._arc_open_event["job"] != first.event_node_id
+
+
+def test_aborted_negative_run_does_not_leave_a_stale_opener():
+    """A single negative that never reaches the open threshold, then a
+    positive/neutral turn, then a NEW negative run — the new run's opener wins,
+    not the aborted one's."""
+    chain, pad, g, emb = make_chain(config=AppraisalConfig(
+        arc_open_consecutive_negative=2))
+    aborted = chain.appraise(user_text="I hate this, it is awful", session_id="s",
+                             entity_refs=["job"], now=T0)
+    assert chain._arc_open.get("job", False) is False          # never opened
+    chain.appraise(user_text="the meeting is at noon", session_id="s",
+                   entity_refs=["job"], now=T0)                # run broken
+    fresh = chain.appraise(user_text="I hate it, terrible", session_id="s",
+                           entity_refs=["job"], now=T0)
+    assert chain._arc_open_event["job"] == fresh.event_node_id
+    assert chain._arc_open_event["job"] != aborted.event_node_id
+
+
 def test_resolved_edge_base_salience_equals_opening_node():
     """When a conflict arc closes (by Q2 flip OR by absence timeout), the
     'resolved' edge's base_salience equals the opening EventNode's

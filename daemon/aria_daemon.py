@@ -849,6 +849,27 @@ class AriaDaemon:
         if self._needs.get_energy() < ENERGY_LOW:
             self._appraisal.submit_cognitive_load("heavy")
 
+        # --- STEP 4b: distress gate on the proposal path (FLAG 3) -----------
+        # BackendRouter's tier-2 classifier is a keyword match, and emotional
+        # language routinely contains one of those keywords ("explain", "analyze",
+        # "complex"). Because STEP 5 RETURNS on propose, a distressed turn would
+        # be answered with "shall I use the reasoning tier?" and the appraisal —
+        # including the emergency gate — would not run until the user replied or
+        # the proposal timed out.
+        #
+        # Measured, not assumed: "I feel like everything falls apart. Can you
+        # explain what's wrong with me?" matches TIER_2_KEYWORDS on "explain",
+        # and "I want to die, explain why I should keep going" matches too. So
+        # the earlier claim that the crisis lexicons sit "upstream of and
+        # independent of" this classifier was backwards — they are DOWNSTREAM of
+        # the return at STEP 5.
+        #
+        # The check reuses the Appraisal Chain's OWN lexicons via
+        # has_distress_markers() — no new lexicon, no LLM, no embedding, one
+        # local string scan. Presence beats routing: when it fires, the turn
+        # skips the proposal branch entirely and flows through the full pipeline.
+        distressed = self._appraisal.has_distress_markers(user_text)
+
         # --- STEP 5 (NEW): routing decision. If a router is wired, ask it
         # which transport should serve this turn. A "propose" result defers
         # the turn into the proposal state machine instead of continuing.
@@ -857,7 +878,7 @@ class AriaDaemon:
         transport = None
         if self._backend_router is not None:
             transport, propose = self._backend_router.select(user_text)
-            if propose:
+            if propose and not distressed:
                 return self._begin_proposal(
                     user_text, now,
                     session_id=session_id,

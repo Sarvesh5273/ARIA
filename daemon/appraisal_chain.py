@@ -648,6 +648,24 @@ class AppraisalChain:
         # so it is applied (not skipped); PAD_Engine performs the write.
         self._apply_delta(delta)
         
+    def has_distress_markers(self, text: str) -> bool:
+        """Categorical, purely LEXICAL read of whether `text` carries distress or
+        an emergency cue. Composes the two perception checks this module already
+        owns — `_distress_marker` (Addendum §1's absolutist / negative-emotion
+        word lexicons) and `_emergency_cue_kind` (the physical / existential /
+        decision cue lexicons) — and INVENTS NO LEXICON of its own.
+
+        Exposed for the Daemon's pre-routing gate: a distressed turn must reach
+        the pipeline as presence, not be intercepted by a "shall I escalate to
+        the reasoning tier?" question. See aria_daemon's STEP 4b.
+
+        Read-only and non-generative: no LLM, no embedding, no graph, no PAD, no
+        state mutation. It answers a question about a string, nothing more."""
+        return (
+            self._distress_marker(text)
+            or self._emergency_cue_kind(text) is not None
+        )
+
     def submit_cognitive_load(self, load_state: str) -> None:
         """Second-order appraisal: ARIA's working memory is approaching capacity.
         Mirrors submit_aha_insight() — a small PAD shift from an internal event.
@@ -787,21 +805,42 @@ class AppraisalChain:
             return (False, False, False)
         closed = False
         first_negative = False
-        is_negative = q2 is Valence.NEGATIVE
-        if is_negative:
+        was_open = self._arc_open.get(entity_ref, False)
+        if q2 is Valence.NEGATIVE:
             self._arc_absent_turns[entity_ref] = 0
             c = self._arc_consecutive_negative.get(entity_ref, 0) + 1
             self._arc_consecutive_negative[entity_ref] = c
-            if c == 1:
+            # An opener is the first negative of a run that could open a NEW arc.
+            # While an arc is ALREADY open, a fresh negative must not re-mark an
+            # opener: the caller writes _arc_open_event[entity_ref] whenever this
+            # is True, so re-marking mid-arc would clobber the true opening node
+            # and the closure's "resolved" edge would point at the wrong one (and
+            # derive its 3x base_salience from it). Only reachable now that
+            # VALENCE_UNCERTAIN no longer closes arcs — before, an ambiguous turn
+            # closed the arc and cleared the id, so the run always restarted from
+            # a genuinely closed state.
+            if c == 1 and not was_open:
                 first_negative = True  # potential arc opener (id set post-write)
             if c >= self._cfg.arc_open_consecutive_negative:
                 self._arc_open[entity_ref] = True
-        else:
-            # Positive/neutral flip closes an OPEN arc (only if it had opened).
+        elif q2 in (Valence.POSITIVE, Valence.NEUTRAL):
+            # ONLY a positive/neutral flip closes an OPEN arc. Addendum §1: the
+            # arc "closes when a later EventNode on that entity_ref flips to
+            # Q2=positive/neutral".
             self._arc_consecutive_negative[entity_ref] = 0
-            if self._arc_open.get(entity_ref):
+            if was_open:
                 self._arc_open[entity_ref] = False
                 closed = True
+        else:
+            # VALENCE_UNCERTAIN — neither negative nor a positive/neutral flip, so
+            # Addendum §1's close condition does not apply. It breaks the
+            # consecutive-negative RUN (it is not a negative), but it does NOT
+            # close an open arc: unresolved confusion ("it's complicated, I can't
+            # tell") is not repair. Closing here would write a "resolved" edge,
+            # and that edge is the evidence the Invested->Bonded FAITH gate reads
+            # (resolved_edge_exists, Resolution Log item 5) — so it would earn
+            # relational trust on a turn where nothing was actually resolved.
+            self._arc_consecutive_negative[entity_ref] = 0
         return (self._arc_open.get(entity_ref, False), closed, first_negative)
 
     def _conflict_arc_absence_close(self, current_entity_ref) -> List[str]:

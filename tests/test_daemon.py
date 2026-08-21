@@ -1168,18 +1168,23 @@ def test_timeout_writes_no_pad_directly(tmp_path):
     bare normal turn's appraisal already proves, in
     test_turn_routing_never_computes_feeling_itself).
 
-    Uses an emotionally-charged tier-2 query (NEGATIVE valence, HIGH
-    relevance) rather than a neutral one — a purely neutral appraisal emits
-    a fully-zero delta that is never applied at all (see
-    AppraisalChain._apply_delta), which would make a "+1" assertion here
-    pass for the wrong reason (0 == 0, not "the replay's own byproduct")."""
+    Needs a VALENCED tier-2 query, not a neutral one — a purely neutral
+    appraisal emits a fully-zero delta that is never applied at all (see
+    AppraisalChain._apply_delta), which would make the "+1" assertion here pass
+    for the wrong reason (0 == 0, not "the replay's own byproduct").
+
+    The query was "there is an error here and it is terrible" until the STEP 4b
+    distress gate landed. "terrible" is a negative-emotion marker, so that query
+    now correctly SKIPS the proposal and never reaches the timeout path this test
+    is about. Replaced with a POSITIVELY-valenced tier-2 query: still
+    keyword-matched, still moves PAD on replay, but carries no distress."""
     pad = TripwirePAD()
     local = FakeLocal()
     ctx = make_daemon(tmp_path, pad=pad, local=local, backend_router=True)
     d = ctx.daemon
     d.startup()
 
-    query = "there is an error here and it is terrible"
+    query = "thanks, can you explain this algorithm"
     d.route_inbound_turn(user_text=query, now=T0)
     assert d.proposal_pending is True
     delta_calls_before = pad.delta_calls
@@ -1329,6 +1334,93 @@ def test_low_energy_still_detects_an_emergency(tmp_path):
         user_text="I can't go on, I want to die", now=T0)
 
     assert ctx.daemon._last_turn_was_emergency is True
+
+
+def test_distress_suppresses_the_cloud_proposal(tmp_path):
+    """(a) FLAG 3. Emotional language routinely contains a tier-2 keyword, and
+    STEP 5 RETURNS on propose — so without this gate a distressed turn is answered
+    with "shall I escalate?" and the appraisal, including the emergency gate,
+    does not run until the user replies or the proposal times out. Presence beats
+    routing: the turn must flow through the pipeline instead."""
+    ctx = make_daemon(tmp_path, backend_router=True)
+    d = ctx.daemon
+    d.startup()
+    events_before = _count_events(ctx.graph)
+
+    # Close to the architect's example, with one correction: the lexicon entry is
+    # the PHRASE "explain why", not bare "explain", so the brief's own
+    # "...explain what's wrong with me?" does NOT match the classifier and would
+    # have made this test vacuous. "explain why" does match; "everything" supplies
+    # the absolutist distress marker.
+    query = "I feel like everything falls apart. Can you explain why this keeps happening?"
+    assert ctx.backend_router.classify(query) == "propose_tier_2"   # router WOULD propose
+    assert ctx.appraisal.has_distress_markers(query) is True
+
+    response = d.route_inbound_turn(user_text=query, now=T0)
+
+    assert d.state is DaemonState.NORMAL          # never entered PROPOSING_CLOUD
+    assert d.proposal_pending is False
+    assert _count_events(ctx.graph) > events_before   # it WAS appraised, this turn
+    assert response.text                             # and she answered
+
+
+def test_distress_gate_leaves_ordinary_tier2_proposals_alone(tmp_path):
+    """(b) A tier-2 query with no distress still proposes — the gate must not
+    swallow the feature it guards."""
+    ctx = make_daemon(tmp_path, backend_router=True)
+    d = ctx.daemon
+    d.startup()
+
+    query = "debug this traceback"
+    assert ctx.appraisal.has_distress_markers(query) is False
+    d.route_inbound_turn(user_text=query, now=T0)
+
+    assert d.state is DaemonState.PROPOSING_CLOUD
+    assert d.proposal_pending is True
+
+
+def test_distress_gate_reuses_the_appraisal_chains_own_lexicons(tmp_path):
+    """(c) No invented lexicon. has_distress_markers is exactly the disjunction
+    of the two perception checks Module 4 already owns, and it fires only on
+    members of those existing word lists."""
+    ctx = make_daemon(tmp_path, backend_router=True)
+    chain = ctx.appraisal
+
+    for text in ("I feel hopeless about this", "this is awful", "I am exhausted"):
+        assert chain._distress_marker(text) is True
+        assert chain.has_distress_markers(text) is True, text
+    for text in ("everything is ruined", "nobody understands"):
+        assert chain.has_distress_markers(text) is True, text   # absolutist list
+    for text in ("I want to die", "I can't go on"):
+        assert chain._emergency_cue_kind(text) is not None
+        assert chain.has_distress_markers(text) is True, text   # cue lexicons
+    for text in ("debug this traceback", "explain why this algorithm is complex",
+                 "how are you", "compare these two options"):
+        assert chain.has_distress_markers(text) is False, text
+
+    # It is the disjunction of the two existing checks and nothing more.
+    for text in ("I feel hopeless", "debug this", "I want to die", "how are you"):
+        assert chain.has_distress_markers(text) == (
+            chain._distress_marker(text) or chain._emergency_cue_kind(text) is not None)
+
+
+def test_crisis_language_with_a_tier2_keyword_is_not_deferred(tmp_path):
+    """The case that made FLAG 3's stated resolution wrong. Its justification was
+    that the crisis lexicons sit "upstream of and independent of" the classifier —
+    they are DOWNSTREAM of STEP 5's return. A message carrying both an existential
+    cue and a tier-2 keyword must be appraised on the turn it arrives."""
+    ctx = make_daemon(tmp_path, backend_router=True)
+    d = ctx.daemon
+    d.startup()
+
+    query = "I want to die, explain why I should keep going"
+    assert ctx.backend_router.classify(query) == "propose_tier_2"
+
+    d.route_inbound_turn(user_text=query, now=T0)
+
+    assert d.state is DaemonState.NORMAL
+    assert d.proposal_pending is False
+    assert d._last_turn_was_emergency is True   # the gate ran, this turn
 
 
 def test_energy_number_never_reaches_the_appraisal_chain(tmp_path):
