@@ -1,5 +1,41 @@
 # Design Document — Module 5: Soul Filter
 
+> ## AMENDMENT 2026-08-20 — ARCHITECT RULING on Field 5
+>
+> **Field 5 (Constraints) carries behavioural INSTRUCTIONS, not prohibitions
+> only.** Everywhere the body below (and Addendum §9 itself) says Field 5 is *"a
+> closed list of specific prohibitions"*, read it as *behavioural instructions,
+> mostly prohibitions*. The MAX-3 cap and the "always specific actions, never
+> open-ended" rule are UNCHANGED.
+>
+> This formalises existing practice rather than adding a mechanism: the Energy<30
+> row (`"do not overextend"`) already lived in Field 5 before the ruling. It
+> unblocks v4's soul_filter instruction table line 949 — *"Energy critically low
+> (below 20) → 'You are running low. Acknowledge it if it comes up naturally.'"* —
+> now emitted in constraint form as **`"acknowledge fatigue if it comes up
+> naturally"`**. Previously `ENERGY_CRITICAL` was imported and never referenced.
+>
+> v4's *"You are running low"* clause is deliberately **NOT** passed through: that
+> half is Energy state rendered as a claim, and state never crosses (Addendum §9).
+> Only the instruction crosses. Verified end-to-end into Module 9's assembled
+> prompt with no digit and no state claim present.
+>
+> **The two Energy gates are checked MOST-SEVERE-FIRST (<20 before <30).** Every
+> base branch yields 2 or 3 constraints, so at most ONE slot is ever free; since
+> Energy<20 implies Energy<30, checking the milder gate first means it always takes
+> the last slot and the <20 row could never be emitted at all. Both remain
+> independent `if`s, so both fire if a future base branch leaves two slots.
+>
+> **⚠ This ruling widens Addendum §9's definition of a field and is recorded
+> nowhere in the precedence chain.** It belongs in an Addendum amendment. Until
+> then, a reviewer reading §9 will find code that contradicts its literal wording.
+>
+> **Still unimplemented, same shape, now unblocked:** v4's *"Uncertainty weight
+> above 0.5 → 'Acknowledge the uncertainty explicitly if it comes up naturally.'"*
+> row, and v4's Energy<30 self-acknowledgment (*"I'm not thinking clearly right
+> now"*). Both are permissions rather than prohibitions; both now have a sanctioned
+> field to live in whenever the architect wants them.
+
 ## Overview
 
 Soul_Filter is Aria's BUFFER to the language model. It has two jobs (v4 "Soul

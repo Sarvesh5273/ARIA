@@ -1,5 +1,30 @@
 # Design Document — Module 3: Memory Graph
 
+> ## AMENDMENT 2026-08-20 — OQ2 CLOSED, medium/low floors REMOVED
+>
+> Everything below about medium/low `base_salience` **placeholders (medium 0.35,
+> low 0.15, `TODO(OQ2)`)** is **SUPERSEDED**. Those numbers no longer exist in
+> code and must not be reintroduced.
+>
+> `ARIA_Resolution_Log.md` item 9 line 96 states literally: *"Medium/Low → no
+> floor, decays/discards as already locked."* That is a positive instruction, not
+> silence. This design read it as a gap and filled the gap with invented
+> magnitudes — against the highest-precedence document, and exactly the failure
+> the no-invented-numbers rule exists to prevent.
+>
+> Current behaviour: `_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER` is deleted;
+> `_compute_base_salience` falls through to **0.0** for medium/low. Only the
+> in-spec **Critical 0.85 / High 0.55** floors remain. The v4 Baumeister **+0.15**
+> negative bonus still stacks "on top of whichever floor applies", which for
+> medium/low is nothing — so a negative medium/low EventNode bases at exactly
+> 0.15. Behavioural consequence, tested: at 65d untouched, medium/low reach
+> `faded` while critical stays `vivid` and high holds at `present`.
+>
+> Where the body says tests assert "ordering + below-floor + stacking properties,
+> not the exact 0.35/0.15" — tests now assert `base_salience == 0.0` for medium/low
+> and that the constant is absent. Read the amendment, not the body, on this point.
+> The body is kept for provenance.
+
 ## Overview
 
 Memory_Graph is Aria's only persistent long-term memory store. It holds four

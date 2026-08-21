@@ -1,5 +1,46 @@
 # Design Document — Module 4: Appraisal Chain
 
+> ## AMENDMENT 2026-08-20 — conflict-arc 2nd close condition implemented
+>
+> Three changes; the body below is superseded on each.
+>
+> **1. Addendum §1's SECOND close condition now exists in behaviour.** The arc
+> *"closes when a later EventNode on that entity_ref flips to Q2=positive/neutral,
+> **or enough turns pass without that entity recurring**"*. Only the flip was
+> implemented; `_arc_absent_turns` was reset but never incremented and never read.
+> New `_conflict_arc_absence_close()` runs once per turn, increments the counter for
+> every open arc whose entity did NOT recur (including turns with no entity at
+> all), and closes those at the threshold. **Categorical** — the turns have passed
+> or they have not; no score, no partial close. Absence closures write the same
+> single `"resolved"` edge as a Q2 flip.
+>
+> **2. `_ARC_CLOSE_ABSENT_TURNS` is 5, not 3** — architect-set when the mechanism
+> landed. Both are `TODO(build-time)` placeholders, so no locked value was
+> overridden. In code the name is an ALIAS of
+> `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD`, so the knob and its `AppraisalConfig`
+> override cannot drift apart.
+>
+> **3. The `"resolved"` edge's `base_salience` is DERIVED, not invented.**
+> `poignancy_base_hint()` is **deleted** — it returned 0.35 for medium/low, the
+> same class of invented magnitude removed from Module 3's OQ2. v4 "Argument Buffer
+> Mode" names the multiplicand: the resolution is *"weighted 3× higher than **the
+> conflict itself**"*. The edge now takes the **opening EventNode's own
+> `base_salience`**. An arc only opens on a Q2=negative EventNode, so the Baumeister
+> +0.15 guarantees a non-zero multiplicand at every tier (critical 1.00→3.00, high
+> 0.70→2.10, medium/low 0.15→0.45) and ResLog item 5's 3× always has something real
+> to act on.
+>
+> **Also:** `_need_prefs` now keys Connection on `neglected` ALONE, per Addendum §3
+> (*"When Connection is **neglected**, Stage 1 surfaces 'We'-perspective and
+> Connection-positive edges first"*). It previously fired on `due` too —
+> unavoidable while Needs System could not emit `neglected`, but it applied the
+> strong preference at the weak state. Growth/Purpose/Continuity untouched; §3
+> exemplifies only Connection's profile.
+>
+> **Known open item:** nothing in the codebase READS edge `salience` for any
+> decision, so item 5's 3× is representational only. `resolved_edge_exists()` — its
+> own named consumer — selects on `edge_type` + `created`.
+
 ## Overview
 
 Appraisal_Chain is Aria's per-turn meaning-making engine. It runs the locked
@@ -273,7 +314,12 @@ _COPING_ADEQUATE = 0.50   # coping available → no emergency
 
 # ── F-4d conflict-arc turn-counts (build-time placeholders) ────────────────
 _ARC_OPEN_CONSECUTIVE_NEGATIVE = 2   # TODO(build-time, F-4d)
-_ARC_CLOSE_ABSENT_TURNS        = 3   # TODO(build-time, F-4d)
+_ARC_CLOSE_ABSENT_TURNS        = 5   # TODO(build-time, F-4d) — was 3; architect
+                                     # set 5 on 2026-08-20 when the absence close
+                                     # was implemented. In code this name is an
+                                     # ALIAS of _CONFLICT_ARC_ABSENT_TURN_THRESHOLD
+                                     # so the knob and its AppraisalConfig
+                                     # override cannot drift apart.
 
 # ── F-4e social-signal thresholds / lexicons (build-time placeholders) ─────
 _VULNERABILITY_SIM_CUTOFF = 0.6      # TODO(build-time, F-4e)

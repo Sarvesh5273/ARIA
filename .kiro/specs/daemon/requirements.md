@@ -192,7 +192,11 @@ initiative is genuine and not manipulative (v4 Layer 2/6; Addendum §7).
 #### Acceptance Criteria
 1. THE Daemon SHALL evaluate initiative on the soul tick, selecting the highest-pressure need
    (Resolution Log item 10) — keyed on the CATEGORICAL `due` state (the critical state Needs
-   System emits; `neglected` is never emitted — Needs System OQ-1 — FLAGGED, OQ-2). NO
+   System emits; `neglected` is accepted too and, as of 2026-08-20, IS now emitted
+   for Connection/Growth/Purpose — Needs System OQ-1 closed via the two-window
+   model. `_highest_pressure_need` already treated both states alike, so this
+   requirement is unchanged in behaviour; only the note that `neglected` never
+   fires is superseded. OQ-2 still FLAGGED). NO
    numeric need threshold (Addendum §3 supersedes v4's "Connection < 20").
 2. WHEN the highest-pressure need is `due` and has NOT been expressed this due-episode, THE
    Daemon SHALL express it EXACTLY ONCE.

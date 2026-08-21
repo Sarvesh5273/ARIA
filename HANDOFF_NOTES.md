@@ -148,7 +148,16 @@ Independent code audit (subagent) found 5 defects, all fixed:
 **The 6 Open Questions — PARTIALLY RESOLVED:**
 
 - **[RESOLVED]** OQ1 habituation rate — `_HABITUATION_DECREMENT` is computed and applied in `register_edge_firing`.
-- **[RESOLVED]** OQ2 medium/low base_salience — `_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER = {MEDIUM: 0.35, LOW: 0.15}`.
+- **[RESOLVED — SUPERSEDED 2026-08-20]** OQ2 medium/low base_salience. This
+  previously read: *"`_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER = {MEDIUM: 0.35,
+  LOW: 0.15}`"* — treating the question as answered by a placeholder. That was a
+  misreading of the highest-precedence document. ResLog item 9 line 96 states
+  literally *"Medium/Low → no floor, decays/discards as already locked"*: a
+  positive instruction, not silence. The constant is now **deleted**;
+  `_compute_base_salience` falls through to 0.0 for medium/low, and only the
+  in-spec Critical 0.85 / High 0.55 floors remain. The v4 Baumeister +0.15
+  negative bonus still stacks "on top of whichever floor applies", which for
+  medium/low is nothing.
 - OQ3 node embedding storage (`node_embeddings` table — persist vs re-embed) — **still open**.
 - OQ4 retrieval preference precedence/filter-vs-reorder — **still open**.
 - **[RESOLVED]** OQ5 precision-decay total-elapsed vs per-stage dwell — total-elapsed adopted.
@@ -246,10 +255,25 @@ running its own cloud-first chain. Gemma's lifecycle owner is now the Daemon:
 nothing in this codebase unloads it afterward (architect decision: Gemma
 loads at startup and stays resident on a 16GB machine).
 
-**BackendRouter FLAG B — still OPEN**, unchanged by this pass. Health probing
-remains optimistic for any transport exposing no `HealthProbe`
-(`daemon/backend_router.py::_probe_one` returns `True` for groq/azure by
-default). Still deferred to when the real cloud adapters are written.
+**BackendRouter FLAG B — CLOSED 2026-08-20.** This previously read *"still
+OPEN … health probing remains optimistic for any transport exposing no
+`HealthProbe` (`_probe_one` returns `True` for groq/azure by default)."*
+`_probe_one` now returns `Optional[bool]`: `True` explicitly healthy, `False`
+explicitly unhealthy, **`None` = UNKNOWN** for a non-local transport exposing no
+probe — because no probe means no answer, and "no answer" is not "yes".
+`check_health()` reports the HEALTHY SET, admitting only an explicit `True`, so
+UNKNOWN is folded out; its documented three-key shape is unchanged. The local
+tier is never UNKNOWN (residency is a real answer). `select()`'s branch logic is
+untouched — it was already correct once UNKNOWN stopped reading as `True`. All
+three consequences the old note implied are fixed and tested: no tier-2 proposal
+unless Azure is explicitly healthy, Groq selected only when explicitly healthy,
+and the `return None, False` all-down degradation path now reachable.
+
+**Successor item, still open:** no real Groq/Azure adapter exists yet, so in
+production both would report UNKNOWN and neither would be selectable. That is
+the safe direction to fail, but cloud routing stays inert until the adapters
+implement `HealthProbe`. Simplest non-inventing option, unchanged: back
+`is_healthy()` with the adapter's own last `LLMTransportError` state.
 
 **FLAG 1 — "light PAD delta on timeout" NOT IMPLEMENTED, by design.** The
 Daemon cannot write PAD (invariant + the source-scanning test
@@ -308,3 +332,99 @@ handle, upstream of and independent of BackendRouter's classifier).
   applies at all, so a neutral phrase would have made the test's "+1"
   assertion pass vacuously (0 == 0) rather than proving the replay's own
   byproduct is the only delta.
+
+---
+
+## Open-Question Closure Phase (2026-08-20)
+
+Ten commits closing long-standing flags, plus one docs commit. Full suite
+**452 → 514 passed**. `PROJECT_STATUS.md` carries the per-item reasoning and the
+commit table; this section records only what a future implementer needs to know
+that the tracker does not say.
+
+**Every new test was verified non-vacuous** — re-run against the pre-change
+behaviour and confirmed to fail. That mattered more than usual here, because
+several of these features were "present but inert" rather than absent, so a test
+written carelessly would have passed either way.
+
+### Three architect rulings applied
+
+1. **Field 5 (Constraints) carries behavioural instructions, not prohibitions
+   only.** This formalises what the code already did — the Energy<30 row ("do not
+   overextend") lived there before the ruling. It unblocked v4 line 949's
+   Energy<20 row, now emitted as `"acknowledge fatigue if it comes up
+   naturally"`. **This ruling widens Addendum §9's definition of a field and is
+   recorded nowhere in the precedence chain.** It belongs in an Addendum
+   amendment; until then a future reviewer reading §9 ("a closed list of specific
+   prohibitions") will find code that contradicts it.
+2. **`neglected` via the two-window model**, counter-based approach rejected.
+   Addendum §3 excludes a counter in the same paragraph that establishes the
+   three states ("reverts on its own; nothing actively subtracts anything … not a
+   running clock").
+3. **PAD/Energy clamping belongs at the StateManager restore boundary**, not
+   inside PAD_Engine. `pad_engine.py` is unchanged; the residual noted in its
+   own OQ4 entry is now covered at the persistence layer.
+
+### Two directed changes deliberately deviated from
+
+Both were flagged at the time and both are load-bearing:
+
+- **Energy gate order in `_derive_constraints` is most-severe-first.** The
+  direction was `<30` then `<20`. Every base branch yields 2 or 3 constraints, so
+  at most ONE slot is ever free; since Energy<20 implies Energy<30, checking the
+  milder gate first means it always takes the last slot and the `<20` row could
+  never be emitted at all. The directed order and the directed test ("Energy <20
+  produces the acknowledge-fatigue constraint") were mutually unsatisfiable.
+- **`neglected` is two-window, not counter-based** (see ruling 2).
+
+One directed test was **unreachable as specified**: "both Energy constraints
+present when base constraints < 2 items". No base branch yields fewer than 2, so
+there is no input that produces it. Covered instead by a test of the real
+precedence plus a structural test proving the two gates are independent `if`s
+rather than exclusive tiers — a test must not fake a state the code cannot reach.
+
+### One red commit, recorded not amended
+
+`80dfb33` removed `ENERGY_CRITICAL` from `soul_filter`'s imports on the premise
+it was unreferenced. It was unreferenced in that module's own logic but still
+reachable through its namespace, and `tests/test_needs_system.py` imported it
+**from there** inside a parenthesized multi-line import that a single-line grep
+missed. `c1989a0` repairs it by pointing that test at `daemon/types.py`, the
+canonical definition site. Left in history so `git bisect` across the range is
+not misleading. Lesson for the next pass: a symbol being unused inside a module
+does not make it unexported — check multi-line imports before deleting one.
+
+### Newly surfaced, needs a decision
+
+- **ResLog item 5's 3× is representational only.** The `"resolved"` edge's
+  weighting is now spec-faithfully derived from the opening EventNode's own
+  `base_salience` (v4: the resolution is "weighted 3× higher than *the conflict
+  itself*"), replacing an invented 0.35 placeholder. But **nothing reads edge
+  `salience` for any decision** — `resolved_edge_exists()`, item 5's own named
+  consumer, selects on `edge_type` + `created`; `retrieve()` orders edges by
+  incidence and by edge VALENCE. If the 3× is meant to *do* something, that
+  consumer does not exist yet.
+- **Continuity `neglected` is the one need the two-window model cannot serve.**
+  60d is already the top rung of the locked ladder, and §3 gives Continuity a
+  quality criterion ("contradicts rather than extends") with no signal wired to
+  the narrative-update path. `continuity_evidence` uses `last_referenced` on the
+  self node as an extension-timestamp proxy, which carries no notion of
+  contradiction. Options: DMN's narrative step records extended-vs-contradicted,
+  or a graph query compares successive `relationship_summary` states. Both are
+  new mechanisms (Rule 1).
+- **An empty graph reports NEGLECTED on first run.** No evidence in either
+  window. It is what §3's rule yields and it self-corrects on the first
+  qualifying turn; `_maybe_initiate` already treated `due` and `neglected` alike
+  so first-run initiative is unchanged. Suppressing it would need a "has she ever
+  had evidence" distinction the spec does not define.
+- **Cognitive-load triggers stack.** Buffer pressure AND Energy<30 in one turn
+  fire `submit_cognitive_load` twice — measured as
+  `['submit_cognitive_load:critical', 'submit_cognitive_load:heavy', 'appraise']`
+  — so two PAD deltas land in one turn. Defensible (two independent load sources)
+  but also a double-count. Collapsing them needs an invented precedence rule, so
+  both were left firing.
+- **`python daemon/state_manager.py` is broken** (pre-existing, confirmed against
+  an earlier commit). By-path invocation puts `daemon/` on `sys.path`, where
+  `daemon/types.py` shadows the stdlib `types` module. Use
+  `python -m daemon.state_manager`. All its smoke checks pass that way, and the
+  module now has real pytest coverage regardless.

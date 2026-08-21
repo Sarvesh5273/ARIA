@@ -1,4 +1,4 @@
-# ARIA — CODE STATE: architecture reference (verified 2026-08-19)
+# ARIA — CODE STATE: architecture reference (verified 2026-08-20)
 
 **What this file is:** a structural description of the code as it exists —
 the PAD write paths, the two distinct structural guarantees, the internal
@@ -29,7 +29,14 @@ This is the most commonly mis-stated constraint in the project, so it is first.
                      called ONLY from appraisal_chain.py, 3 call sites:
                        appraise()               -> the Stage-4 turn delta
                        submit_aha_insight()     -> DMN's aha, routed as an EVENT
-                       submit_cognitive_load()  -> SessionBuffer fullness
+                       submit_cognitive_load()  -> TWO triggers as of 2026-08-20:
+                                                   SessionBuffer fullness, and
+                                                   Energy < 30 (Addendum §3's
+                                                   operational threshold gate).
+                                                   Both are categorical load
+                                                   states handed in by the
+                                                   Daemon; Energy itself never
+                                                   crosses into this module.
 
 2. EMA decay         PADEngine.on_soul_tick()
                      called from aria_daemon.py's soul_tick(), on its own clock.
@@ -188,15 +195,55 @@ Next build phase is adapters plus a wiring entry point, not more soul modules.
 
 ```
 OQ6 Purpose evidence        graph_manager.py purpose_evidence + max-5 cap raise
-ENERGY_CRITICAL unused      soul_filter.py import line, never referenced again
-Energy<30 -> Stage 2        absent; submit_cognitive_load() is a different trigger
-`neglected` never emitted   needs_system.py NeedsEvaluator._state -> SATISFIED|DUE
-conflict-arc 2nd close      appraisal_chain.py _arc_absent_turns written, never read
-FLAG B optimistic health    backend_router.py _probe_one returns True by default
-PAD restore not clamped     pad_engine.py initialize(); _is_valid_snapshot rejects
-                            only NaN/±inf/non-numeric/bool
+Continuity `neglected`      needs_system.py evaluate_continuity stays 2-valued;
+                            60d is the TOP rung of the locked ladder so there is
+                            no wider window, and Addendum §3 gives Continuity a
+                            QUALITY criterion ("contradicts rather than extends")
+                            that has no signal wired to the narrative path
+first-run NEGLECTED         needs_system.py; empty graph has no evidence in
+                            either window -> neglected, not due. Self-corrects on
+                            the first qualifying turn
+item 5's 3x is inert        graph_manager.py; nothing READS edge salience for any
+                            decision. resolved_edge_exists() selects on
+                            edge_type+created; retrieve() orders edges by
+                            incidence and VALENCE. The weighting is recorded and
+                            acts on nothing
+load triggers stack         aria_daemon.py; buffer pressure AND Energy<30 in one
+                            turn fire submit_cognitive_load twice -> two PAD
+                            deltas. Measured, not collapsed (collapsing needs an
+                            invented precedence rule)
+cloud adapters unprobed     backend_router.py; FLAG B is closed (UNKNOWN is no
+                            longer optimistic), but no real Groq/Azure adapter
+                            implements HealthProbe, so both report UNKNOWN and
+                            neither is selectable. Safe direction; still inert
 Daemon FLAG 2               ambiguous proposal response defaults to negative —
                             an inferred default, in no source document
+```
+
+CLOSED 2026-08-20, listed so a reader of an older copy of this file knows where
+the claim went (`PROJECT_STATUS.md` carries the full reasoning):
+
+```
+ENERGY_CRITICAL unused      NOW EMITTED. soul_filter._derive_constraints appends
+                            "acknowledge fatigue if it comes up naturally"
+                            (v4 line 949) below ENERGY_CRITICAL; architect ruling
+                            that Field 5 carries behavioural instructions
+Energy<30 -> Stage 2        WIRED. aria_daemon.route_inbound_turn STEP 4 calls
+                            submit_cognitive_load("heavy") below ENERGY_LOW
+`neglected` never emitted   NOW EMITTED for Connection/Growth/Purpose, via the
+                            two-window model in NeedsEvaluator._state
+conflict-arc 2nd close      IMPLEMENTED. appraisal_chain
+                            ._conflict_arc_absence_close() reads the counter and
+                            closes the arc; absence closures write the same one
+                            "resolved" edge as a Q2 flip
+FLAG B optimistic health    FIXED. _probe_one returns Optional[bool] with
+                            None = UNKNOWN; check_health() admits only explicit
+                            True to the healthy set
+PAD restore not clamped     CLAMPED at the persistence boundary instead:
+                            state_manager.load_pad/load_energy bound to [0,1] and
+                            [0,100]; non-finite treated as corrupt. pad_engine.py
+                            itself is unchanged
+state_manager no tests      tests/test_state_manager.py now exists (31 tests)
 ```
 
 Build-time tuning placeholders still carrying `TODO` — mechanism locked, value
@@ -205,9 +252,10 @@ open. A value existing here is NOT the question being answered:
 ```
 pad_engine       PAD_HISTORY_LENGTH
 needs_system     K_LOAD = 0.05, K_REST = 0.03                        (F-2a/F-2b)
-graph_manager    medium 0.35 / low 0.15 base_salience                (OQ2)
 graph_manager    habituation 0.9 cutoff / 0.05 decrement / 5 window  (OQ1-rate)
 appraisal_chain  arc turn-counts, distress + social lexicons         (F-4d/F-4e)
+                 arc absent-turn threshold = 5, aliased to the
+                 spec-named _ARC_CLOSE_ABSENT_TURNS (was 3)
 moral_schema     anti-pattern marker lexicons                        (OQ-M1)
 soul_filter      deflection markers
 audio_pipeline   prosody magnitudes                                  (F-7-prosody)
@@ -217,9 +265,12 @@ aria_daemon      soul-tick 3s / DMN-tick 30s intervals                (F-8a)
 ```
 
 Pinned, not placeholders: idle window 8 min, reflection 6 h, precision decay
-72h/14d/60d, poignancy floors 0.85/0.55, Baumeister +0.15, speaker
-verification ≥0.75, VAD ≥0.5, emergency coping thresholds ≤0.15/≤0.04, Energy
-gates 30/20, visual stability 8 s.
+72h/14d/60d, poignancy floors 0.85/0.55 — **critical and high ONLY; medium/low
+have NO floor** (ResLog item 9, enforced in code since 2026-08-20) — Baumeister
++0.15, speaker verification ≥0.75, VAD ≥0.5, emergency coping thresholds
+≤0.15/≤0.04, Energy gates 30/20, PAD restore bounds [0,1] and Energy [0,100],
+need windows 72h/14d/14d/60d reused as the two-window `neglected` ladder,
+visual stability 8 s.
 
 ---
 
@@ -230,4 +281,3 @@ tracker do not resolve. Mapping: `.kiro/specs/<module>/{requirements,design,
 tasks}.md` is uploaded as a single consolidated `spec_<module>.md`, and
 `daemon/<file>.py` is uploaded as plain `<file>.py`. A "file not found" for a
 cited path is this, not a missing file.
-now give 

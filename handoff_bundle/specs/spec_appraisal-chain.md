@@ -1,5 +1,33 @@
 # ARIA locked spec — appraisal-chain
 
+> ## AMENDMENT 2026-08-20 — conflict-arc 2nd close condition implemented
+>
+> **1.** Addendum §1's second close condition (*"or enough turns pass without that
+> entity recurring"*) now exists in behaviour via `_conflict_arc_absence_close()`,
+> which runs once per turn, increments the absent counter for every open arc whose
+> entity did not recur (including turns with no entity), and closes those at the
+> threshold. Categorical — the turns have passed or they have not. Absence closures
+> write the same single `"resolved"` edge as a Q2 flip. Previously
+> `_arc_absent_turns` was reset but never incremented and never read.
+>
+> **2.** `_ARC_CLOSE_ABSENT_TURNS` is **5**, not 3 (architect-set; both are
+> `TODO(build-time)` placeholders). It is an ALIAS of
+> `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD` so the knob and its `AppraisalConfig`
+> override cannot drift.
+>
+> **3.** `poignancy_base_hint()` is **deleted**. It returned 0.35 for medium/low —
+> the same invented magnitude removed from Module 3's OQ2. v4 "Argument Buffer
+> Mode" names the multiplicand (*the resolution is "weighted 3× higher than **the
+> conflict itself**"*), so the `"resolved"` edge now takes the **opening
+> EventNode's own `base_salience`**. Non-zero at every tier because an arc only
+> opens on a Q2=negative node (Baumeister +0.15).
+>
+> **Also:** `_need_prefs` keys Connection on `neglected` alone, per Addendum §3; it
+> previously fired on `due` too. Growth/Purpose/Continuity untouched.
+>
+> **Open:** nothing READS edge `salience` for any decision, so item 5's 3× is
+> representational only.
+
 Consolidated from .kiro/specs/appraisal-chain/{requirements,design,tasks}.md for upload.
 Precedence: ARIA_Resolution_Log.md > ARIA_Soul_Spec_v4_Addendum.md > ARIA_Soul_Spec_v4.md.
 
@@ -864,7 +892,12 @@ _COPING_ADEQUATE = 0.50   # coping available → no emergency
 
 # ── F-4d conflict-arc turn-counts (build-time placeholders) ────────────────
 _ARC_OPEN_CONSECUTIVE_NEGATIVE = 2   # TODO(build-time, F-4d)
-_ARC_CLOSE_ABSENT_TURNS        = 3   # TODO(build-time, F-4d)
+_ARC_CLOSE_ABSENT_TURNS        = 5   # TODO(build-time, F-4d) — was 3; architect
+                                     # set 5 on 2026-08-20 when the absence close
+                                     # was implemented. In code this name is an
+                                     # ALIAS of _CONFLICT_ARC_ABSENT_TURN_THRESHOLD
+                                     # so the knob and its AppraisalConfig
+                                     # override cannot drift apart.
 
 # ── F-4e social-signal thresholds / lexicons (build-time placeholders) ─────
 _VULNERABILITY_SIM_CUTOFF = 0.6      # TODO(build-time, F-4e)

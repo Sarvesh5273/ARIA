@@ -1,5 +1,44 @@
 # Design Document — Module 8: Daemon / Soul Tick
 
+> ## AMENDMENT 2026-08-20 — Energy<30 wired to the cognitive-load modifier
+>
+> `route_inbound_turn` STEP 4 now has **two** cognitive-load triggers, not one:
+>
+> ```python
+> fullness = self._session_buffer.fullness_state()      # existing
+> if fullness in ("heavy", "critical"):
+>     self._appraisal.submit_cognitive_load(fullness)
+> if self._needs.get_energy() < ENERGY_LOW:             # NEW
+>     self._appraisal.submit_cognitive_load("heavy")
+> ```
+>
+> Addendum §3 keeps the *"reasoning degrades below 30"* rule as an operational
+> threshold gate, and v4's mechanism table files the "Cognitive load effect" as an
+> *"Appraisal modifier"* reaching *"Stage 2 appraisal + DMN depth check"* — so it
+> routes through the EXISTING `submit_cognitive_load` entry point. **No new
+> mechanism, no new number** (`ENERGY_LOW` imported from its canonical home
+> `daemon/types.py`), and Energy never crosses the module boundary: the Appraisal
+> Chain holds no Energy handle, and only the categorical load state crosses, exactly
+> as buffer fullness does.
+>
+> **It SKIPS NOTHING.** Stages 0–6 all still run, the Stage-1 social-signal pre-pass
+> (vulnerability check included) is untouched, and the emergency gate is untouched —
+> a tired ARIA still detects a crisis (explicitly tested). An earlier proposal to
+> skip `coping_potential` and the vulnerability check at low Energy was REJECTED: it
+> would have disabled crisis detection outright, and it contradicts v4, which says
+> emotional weighting *increases* below 30, not that perception is reduced.
+>
+> **Known open item:** the two triggers STACK. With buffer pressure and Energy<30 in
+> the same turn, `submit_cognitive_load` fires twice, so two PAD deltas land in one
+> turn — measured as `['submit_cognitive_load:critical',
+> 'submit_cognitive_load:heavy', 'appraise']`. Defensible (two independent load
+> sources) but also a double-count; collapsing them needs an invented precedence
+> rule, so both were left firing.
+>
+> Unrelated to this change but worth noting here: `_highest_pressure_need` already
+> treated `due` and `neglected` alike, so Needs System now emitting `neglected`
+> (2026-08-20) leaves initiative behaviour unchanged.
+
 ## Overview
 
 The Daemon (`daemon/aria_daemon.py`) is Aria's ORCHESTRATOR. It drives two separate clocks,

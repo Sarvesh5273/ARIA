@@ -1,5 +1,47 @@
 # Design Document — Module 2: Needs System
 
+> ## AMENDMENT 2026-08-20 — OQ-1 CLOSED, `neglected` now emitted
+>
+> Everything below stating that `NEGLECTED` is **never emitted** is
+> **SUPERSEDED** for Connection / Growth / Purpose. It remains accurate for
+> Continuity only.
+>
+> **Mechanism: two windows over the SAME evidence query.** `_state` is now
+> 3-valued — `satisfied` if evidence in the need's own window, else `due` if in
+> the next rung up the locked ladder, else `neglected`:
+>
+> | Need | satisfied within | neglected when nothing within |
+> |---|---|---|
+> | Connection | 72h | 14d (`WINDOW_GROWTH`) |
+> | Growth | 14d | 60d (`WINDOW_CONTINUITY`) |
+> | Purpose | 14d | 60d (`WINDOW_CONTINUITY`) |
+> | Continuity | 60d | *(two-valued — see below)* |
+>
+> This is Addendum §3's own shape, taken from the one need it defines fully:
+> Continuity is *"neglected when updates have gapped for a long stretch"* — a long
+> stretch is a **wider window**, not a counter. A counter was explicitly REJECTED:
+> §3 rules it out in the same paragraph that establishes the three states — *"the
+> state reverts on its own; nothing actively subtracts anything … **not a running
+> clock**"*.
+>
+> No window, constant, counter or storage is introduced: both windows are
+> already-locked ladder values (ResLog item 7 assigns the near ones; the far one is
+> the next rung), and `graph_manager` needed no change because all four
+> `*_evidence` methods already accept `window`. State stays a **pure function of
+> (now, graph)** and `NeedsEvaluator` stays stateless (Req 11.2).
+>
+> **Continuity stays two-valued**, deliberately. 60d is already the TOP rung of the
+> locked 72h/14d/60d ladder, so there is no wider window to step to without
+> inventing one; and §3 gives Continuity a QUALITY criterion rather than a gap
+> (*"or new evidence contradicts rather than extends it"*), which needs a signal
+> that is not wired to the narrative-update path. `TODO(Addendum §3)` in
+> `evaluate_continuity`; not invented (Rule 1).
+>
+> **Known consequence:** an empty graph has no evidence in either window, so a
+> brand-new install reports Connection/Growth/Purpose as `neglected`, not `due`. It
+> is what §3's rule yields, and it self-corrects on the first qualifying turn.
+> Flagged rather than special-cased.
+
 ## Overview
 
 Needs_System is a single module (Resolution Log item 11) with two internally separated,
@@ -164,7 +206,10 @@ state = NeedState.SATISFIED if evidence_present else NeedState.DUE
   the percentage test.
 - non-satisfied ⇒ `DUE` — the direct categorical complement ("evidence aged out; the
   need is now due"). No second signal, no numeric fraction, no window-elapsed measure.
-- `NEGLECTED` is **never emitted** — see the decision section below (OQ-1).
+- `NEGLECTED` is **emitted as of 2026-08-20** for Connection / Growth / Purpose,
+  via the two-window model — see the AMENDMENT at the top of this file. It is
+  still never emitted for Continuity. The OQ-1 decision section below is
+  superseded on this point and kept for provenance.
 
 `now` is passed straight through to the Memory_Graph query, which applies its own locked
 window default (`WINDOW_CONNECTION`/etc.). The evaluator introduces no window constant of

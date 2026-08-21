@@ -1,5 +1,26 @@
 # ARIA locked spec — daemon
 
+> ## AMENDMENT 2026-08-20 — Energy<30 wired to the cognitive-load modifier
+>
+> `route_inbound_turn` STEP 4 now has TWO cognitive-load triggers: the existing
+> SessionBuffer fullness check, plus
+> `if self._needs.get_energy() < ENERGY_LOW: self._appraisal.submit_cognitive_load("heavy")`.
+>
+> Addendum §3 keeps *"reasoning degrades below 30"* as an operational threshold
+> gate; v4's mechanism table files the "Cognitive load effect" as an *"Appraisal
+> modifier"* reaching *"Stage 2 appraisal + DMN depth check"*. No new mechanism, no
+> new number (`ENERGY_LOW` from `daemon/types.py`), and Energy never crosses into
+> the Appraisal Chain — only the categorical load state does. **Skips nothing:**
+> Stages 0–6 all run, the Stage-1 pre-pass and the emergency gate are untouched, so
+> a tired ARIA still detects a crisis (tested).
+>
+> **Known open item:** the two triggers STACK — buffer pressure plus Energy<30 in
+> one turn fires `submit_cognitive_load` twice, i.e. two PAD deltas. Measured, not
+> collapsed (collapsing needs an invented precedence rule).
+>
+> Also: `_highest_pressure_need` already treated `due` and `neglected` alike, so
+> Needs System now emitting `neglected` leaves initiative behaviour unchanged.
+
 Consolidated from .kiro/specs/daemon/{requirements,design,tasks}.md for upload.
 Precedence: ARIA_Resolution_Log.md > ARIA_Soul_Spec_v4_Addendum.md > ARIA_Soul_Spec_v4.md.
 
@@ -202,7 +223,11 @@ initiative is genuine and not manipulative (v4 Layer 2/6; Addendum §7).
 #### Acceptance Criteria
 1. THE Daemon SHALL evaluate initiative on the soul tick, selecting the highest-pressure need
    (Resolution Log item 10) — keyed on the CATEGORICAL `due` state (the critical state Needs
-   System emits; `neglected` is never emitted — Needs System OQ-1 — FLAGGED, OQ-2). NO
+   System emits; `neglected` is accepted too and, as of 2026-08-20, IS now emitted
+   for Connection/Growth/Purpose — Needs System OQ-1 closed via the two-window
+   model. `_highest_pressure_need` already treated both states alike, so this
+   requirement is unchanged in behaviour; only the note that `neglected` never
+   fires is superseded. OQ-2 still FLAGGED). NO
    numeric need threshold (Addendum §3 supersedes v4's "Connection < 20").
 2. WHEN the highest-pressure need is `due` and has NOT been expressed this due-episode, THE
    Daemon SHALL express it EXACTLY ONCE.
