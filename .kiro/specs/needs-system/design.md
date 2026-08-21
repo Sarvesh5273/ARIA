@@ -207,9 +207,11 @@ state = NeedState.SATISFIED if evidence_present else NeedState.DUE
 - non-satisfied ⇒ `DUE` — the direct categorical complement ("evidence aged out; the
   need is now due"). No second signal, no numeric fraction, no window-elapsed measure.
 - `NEGLECTED` is **emitted as of 2026-08-20** for Connection / Growth / Purpose,
-  via the two-window model — see the AMENDMENT at the top of this file. It is
-  still never emitted for Continuity. The OQ-1 decision section below is
-  superseded on this point and kept for provenance.
+  via the two-window model (satisfied if evidence in the need's own window, else
+  due if in the next rung up the locked ladder, else neglected). Still never
+  emitted for Continuity: 60d is the top rung, and Addendum §3 gives it a quality
+  criterion ("contradicts rather than extends") with no signal wired. The OQ-1
+  decision section below is superseded on this point, kept for provenance.
 
 `now` is passed straight through to the Memory_Graph query, which applies its own locked
 window default (`WINDOW_CONNECTION`/etc.). The evaluator introduces no window constant of
