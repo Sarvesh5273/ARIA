@@ -58,6 +58,13 @@ Numbers/formulas are allowed ONLY where they genuinely cannot be replaced
 `ARIA_Resolution_Log.md` > `ARIA_Soul_Spec_v4_Addendum.md` > `ARIA_Soul_Spec_v4.md`.
 `ARIA_GLM_Covering_Instruction.md` is covering context only, not a source of scope.
 
+Resolution Log items 16–19 (2026-08-20) carry the post-approval rulings: Field 5
+holds behavioural instructions not prohibitions only (16, amending Addendum §9);
+`neglected` derives from two windows and never a counter (17); restore-boundary
+clamping lives in State Manager (18); and the post-approval authorisation of
+record for Session Buffer, `session_context`, meta-commands, BackendRouter/Track
+A, the Energy<30 cognitive-load modifier and the Daemon distress gate (19).
+
 ## Rule 1 — Do not invent
 
 If a mechanism is not described in v4, the Addendum, or the Resolution Log, do

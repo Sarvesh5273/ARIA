@@ -19,8 +19,9 @@
 > since Energy<20 implies Energy<30 the milder instruction would otherwise always
 > take it and the <20 row could never fire.
 >
-> **⚠ This ruling widens Addendum §9's definition of a field and is recorded
-> nowhere in the precedence chain.** It belongs in an Addendum amendment.
+> **RECORDED IN THE PRECEDENCE CHAIN 2026-08-20** as `ARIA_Resolution_Log.md`
+> item 16, with Addendum §9's Constraints row amended in place to match. §9 no
+> longer contradicts the code.
 
 Consolidated from .kiro/specs/soul-filter/{requirements,design,tasks}.md for upload.
 Precedence: ARIA_Resolution_Log.md > ARIA_Soul_Spec_v4_Addendum.md > ARIA_Soul_Spec_v4.md.

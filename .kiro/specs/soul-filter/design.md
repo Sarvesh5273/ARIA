@@ -26,9 +26,14 @@
 > the last slot and the <20 row could never be emitted at all. Both remain
 > independent `if`s, so both fire if a future base branch leaves two slots.
 >
-> **⚠ This ruling widens Addendum §9's definition of a field and is recorded
-> nowhere in the precedence chain.** It belongs in an Addendum amendment. Until
-> then, a reviewer reading §9 will find code that contradicts its literal wording.
+> **RECORDED IN THE PRECEDENCE CHAIN 2026-08-20.** This ruling widens Addendum
+> §9's definition of a field, so it is not left to this spec: it is
+> `ARIA_Resolution_Log.md` **item 16**, and Addendum §9's Constraints row is
+> amended in place to match. §9 no longer contradicts the code. Item 16 also
+> pins the two limits on how such a row crosses — only the instruction half
+> crosses (state never does), and "never open-ended" means "a specific action,
+> not a vague directive", so a specific action carrying a condition still
+> qualifies.
 >
 > **Still unimplemented, same shape, now unblocked:** v4's *"Uncertainty weight
 > above 0.5 → 'Acknowledge the uncertainty explicitly if it comes up naturally.'"*

@@ -170,7 +170,28 @@ The original constants table entry is removed. No replacement entry is needed.
 | Behavioral Register | PAD state translated to natural language descriptors only. e.g. "warm and settled, unhurried" not "Pleasure: 0.6, Arousal: 0.2, Dominance: 0.7" | PAD numbers, coordinates, any internal state value |
 | Relational Register | relational_stage translated to natural language. e.g. "speak with the quiet assurance of someone who knows this person well and is known by them" not "stage: bonded" | Stage label, relationship history, memory of past interactions |
 | This Moment | One behavioral instruction maximum, written by soul_filter from the appraisal chain's most salient output. Tells the LLM HOW to respond, never WHAT happened. e.g. "what was just shared carries significant weight — engage it with full presence, no deflection" | Memory contents, past conversations, specific events, personal history, anything Aria has accumulated about the user over time |
-| Constraints | A closed list of specific prohibitions for this turn only, derived from the moral schema and Output Gate pre-check. Maximum three items. Always specific actions, never open-ended instructions. e.g. "do not problem-solve, do not minimize, do not deflect" | Graph data, appraisal vectors, node contents |
+| Constraints | A closed list of specific behavioural instructions for this turn only — most of them prohibitions — derived from the moral schema, the Output Gate pre-check, and the Energy threshold gates. Maximum three items. Always specific actions, never open-ended instructions. e.g. "do not problem-solve, do not minimize, do not deflect" | Graph data, appraisal vectors, node contents |
+
+**Amendment to the Constraints row (Resolution Log item 16).** This row read "a
+closed list of specific prohibitions ... derived from the moral schema and Output
+Gate pre-check." Field 5 in fact carries specific behavioural INSTRUCTIONS, most
+of which are prohibitions, and it always did: the Energy<30 instruction ("do not
+overextend") derives from the Energy gate rather than the moral schema, and has
+lived in this field from the start. The amendment records that, and unblocks v4's
+soul_filter instruction-table row for Energy<20 — "You are running low.
+Acknowledge it if it comes up naturally." — which has no prohibition form and was
+therefore specified but never emitted.
+
+Nothing else about the field moves. Maximum three items stands. "Always specific
+actions, never open-ended instructions" stands, read precisely: it requires a
+specific ACTION rather than a vague directive, so an action carrying a condition
+("if it comes up naturally") still qualifies, while a directive naming no
+identifiable action does not.
+
+The boundary rule is unchanged and binds this row as it binds every other: **only
+the instruction crosses.** v4's "You are running low" clause is Energy state
+rendered as a claim, and state never crosses — so the emitted form is the action
+alone, carrying no number and no state.
 
 **What the LLM also receives:** the user's current message — the thing they just said. This is unavoidable and the user knows they are sending it. This is the only personal information that crosses, and it crosses because the LLM must respond to it directly.
 

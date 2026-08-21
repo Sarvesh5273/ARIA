@@ -387,16 +387,18 @@ behaviour and confirmed to fail. That mattered more than usual here, because
 several of these features were "present but inert" rather than absent, so a test
 written carelessly would have passed either way.
 
-### Three architect rulings applied
+### Three architect rulings applied — all now in the precedence chain
+
+Recorded 2026-08-20 as `ARIA_Resolution_Log.md` items 16–18, with item 19 carrying
+the post-approval authorisation of record. Before that they existed only in code
+and in the trackers.
 
 1. **Field 5 (Constraints) carries behavioural instructions, not prohibitions
    only.** This formalises what the code already did — the Energy<30 row ("do not
    overextend") lived there before the ruling. It unblocked v4 line 949's
    Energy<20 row, now emitted as `"acknowledge fatigue if it comes up
-   naturally"`. **This ruling widens Addendum §9's definition of a field and is
-   recorded nowhere in the precedence chain.** It belongs in an Addendum
-   amendment; until then a future reviewer reading §9 ("a closed list of specific
-   prohibitions") will find code that contradicts it.
+   naturally"`. ResLog **item 16**, and Addendum §9's Constraints row is amended
+   in place, so §9 no longer contradicts the code.
 2. **`neglected` via the two-window model**, counter-based approach rejected.
    Addendum §3 excludes a counter in the same paragraph that establishes the
    three states ("reverts on its own; nothing actively subtracts anything … not a

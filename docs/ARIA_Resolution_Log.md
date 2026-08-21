@@ -165,6 +165,133 @@ resolve all three:
   layer generally, not the LLM) and doesn't override v4's own
   directory structure, which lists video_controller.py separately.
 
+## 16. Field 5 — behavioural instructions, not prohibitions only
+
+Addendum §9 defines Constraints (Field 5) as "a closed list of specific
+prohibitions." Amended: Field 5 carries specific behavioural
+INSTRUCTIONS, most of which are prohibitions. Everything else about the
+field is unchanged — maximum three items, always specific actions rather
+than vague directives, and no numbers or state may cross.
+
+This formalises what the field already carried rather than widening it
+after the fact: the Energy<30 row ("do not overextend") was derived from
+the Energy gate, not from the moral schema, and lived in Field 5 from the
+start. The amendment unblocks v4's soul_filter instruction table row for
+Energy<20 — "You are running low. Acknowledge it if it comes up
+naturally." — which has no prohibition form and was therefore never
+emitted despite being specified.
+
+Two constraints on how such a row crosses:
+
+- Only the INSTRUCTION half crosses. v4's "You are running low" clause is
+  Energy state rendered as a claim, and state never crosses (§9). The
+  emitted form is the action alone.
+- "Never open-ended" means "a specific action, not a vague directive."
+  A specific action carrying a condition ("if it comes up naturally") is
+  still specific; a directive with no identifiable action is not.
+
+Where two Energy rows both apply, the more severe fires first: Energy<20
+implies Energy<30, so checking the milder gate first would let it consume
+the last of the three slots and the <20 row could never be emitted at
+all.
+
+## 17. `neglected` need state — two-window derivation
+
+Addendum §3 requires three categorical states for Connection, Growth,
+Purpose and Continuity — satisfied / due / neglected — and the same
+section forbids a counter: "the state reverts on its own; nothing
+actively subtracts anything ... not a running clock." A
+consecutive-due-turns counter is therefore not available.
+
+Resolved: `neglected` is derived from TWO windows over the same
+qualifying-evidence query. Satisfied when evidence falls inside the
+need's own window (item 7); due when it falls inside the next wider
+window; neglected when it falls inside neither.
+
+  Connection  72h → 14d      Growth  14d → 60d      Purpose  14d → 60d
+
+Both windows are values item 7 already locked, so no window and no
+constant is introduced, and the state remains a pure function of (now,
+graph) that reverts on its own. This reads Addendum §3's own Continuity
+wording — "neglected when updates have gapped for a long stretch" — as
+what it says: a long stretch is a wider window, not an elapsed count.
+
+Continuity remains TWO-valued. Its own window is 60d, already the widest
+rung, so there is no wider window to step to; and §3 gives Continuity a
+quality criterion rather than a gap — "or new evidence contradicts rather
+than extends it" — which requires a contradiction signal that does not
+yet exist. Continuity `neglected` stays open; it is not to be
+approximated with a fourth window.
+
+Consequence, accepted: a graph with no evidence at all reports
+Connection / Growth / Purpose as neglected rather than due, since nothing
+falls in either window. This is what the rule yields and it corrects
+itself on the first qualifying interaction.
+
+## 18. Restore-boundary clamping — State Manager
+
+PAD is bounded to [0.0, 1.0] (v4 Layer 1) and Module 1 clamps live PAD in
+apply_appraisal_delta, but nothing bounded a RESTORED value, so a
+hand-edited or truncated state file could seed an out-of-range PAD into a
+live session.
+
+Resolved: the clamp belongs at the State Manager restore boundary, not
+inside PAD_Engine. `load_pad` bounds each axis to [0.0, 1.0]; `load_energy`
+bounds Energy to its 0–100 scale. Module 11 still computes nothing and
+interprets nothing — bounding a value read off disk is a boundary check,
+not meaning.
+
+Non-finite input is treated as CORRUPT rather than clamped, falling back
+to the spec default like any other unusable entry. NaN has no position on
+a scale, and it survives a naive clamp as the upper bound — a corrupt
+Energy entry would otherwise restore as "fully rested."
+
+The clamp is a READ boundary only. Save records what the owning module
+hands over; the resulting asymmetry for out-of-range input is intended.
+
+## 19. Post-approval work — authorisation of record
+
+Everything in this item was architect-directed after the thirteen modules
+were approved. None of it appeared in v4, the Addendum, or this log, which
+left a reviewer unable to distinguish architect-approved work from agent
+invention. Rule 1 ends "the architect resolves it"; this item is that
+resolution, recorded so the distinction is legible.
+
+Authorised, and locked on the same terms as any item above:
+
+- **Session Buffer (Module 12)** — ephemeral three-tier conversation
+  buffer, rule-based summarisation, cognitive-load reporting. Not
+  persistent memory; the graph remains the only memory.
+- **`session_context`** — the current session's transcript, passed to the
+  LLM alongside the five fields. Ephemeral record of what was already
+  said, not internal state. Its tension with §9's unqualified "nothing
+  else" is NOT resolved by this item and remains open.
+- **Meta-commands** — `rest` / `focus` / `unfocus`, and the backend
+  vocabulary ("use cloud" / "stay local" / ...). These bypass appraisal
+  and write no EventNode.
+- **BackendRouter (Module 13)** and the Track A wiring that threads a
+  caller-supplied transport through Soul Filter to the LLM Interface.
+  Gemma is the default voice for conversation and is tried first; Groq is
+  a fallback; the reasoning tier is proposed, never taken silently.
+- **Energy<30 → cognitive-load modifier.** Addendum §3 keeps "reasoning
+  degrades below 30" as an operational threshold gate and v4's mechanism
+  table files the effect as an appraisal modifier. It routes through the
+  Appraisal Chain's existing cognitive-load entry point. Energy itself
+  does not cross into that module; only the categorical load state does.
+  No appraisal stage is skipped — in particular the emergency gate and the
+  Stage-1 social-signal pre-pass both still run.
+- **Daemon distress gate.** The reasoning-tier proposal defers a turn
+  before appraisal runs, and the tier-2 classifier is a keyword match that
+  emotional language routinely trips. A turn carrying distress or an
+  emergency cue is therefore never deferred: the Daemon scans it against
+  the Appraisal Chain's existing lexicons and instructs the router not to
+  propose. Presence takes precedence over routing. The scan introduces no
+  lexicon and no threshold of its own.
+- **Conflict-arc absent-turn count = 5.** Still a build-time tuning
+  constant under "Open" below, not an architectural decision.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4
