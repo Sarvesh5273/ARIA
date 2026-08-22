@@ -122,6 +122,16 @@ aria_daemon.py     <- appraisal_chain, backend_router, dmn, graph_manager,
                       state_manager
 ```
 
+Outside the package, above everything (2026-08-22) — see §5:
+
+```
+adapters/*         -> daemon (Protocols only)
+main.py            -> daemon + adapters
+```
+
+No `daemon` module imports either. That one-way arrow is what keeps the soul
+layer dependency-free.
+
 `aria_daemon.py` does not import `audio_pipeline.py` or `visual_layer.py`. It
 declares its own `AudioPipelinePort`; Module 10 exposes its own
 `VisualLayerPort` and is wired above the Daemon.
@@ -177,31 +187,113 @@ to check for real calls; that returns nothing.
 
 ---
 
-## 5. Nothing runs yet
+## 5. It runs, text-first (2026-08-22)
 
-No entry point (`main.py`, package `__main__`, or CLI — the only
-`if __name__ == "__main__"` is a self-test inside `state_manager.py`). No
-concrete adapter for Ollama, MLX, Groq, Azure, `requests`, `httpx`, Whisper,
-Kokoro, Porcupine, Silero, sounddevice, PyQt6, libmpv, or any embedding
-library; each appears only in docstrings as the named reference
-implementation. `requirements.txt` declares pytest and its transitive
-dependencies only.
-
-The injected Protocols awaiting real implementations — this is effectively the
-adapter to-do list:
+This section read "Nothing runs yet" until 2026-08-22. `main.py` exists, wires
+the soul layer to real adapters, and drives turns from a text prompt. Verified
+end-to-end, with the per-turn evidence in `PROJECT_STATUS.md`'s "Current
+runnable state" table — that file is the authority on what was confirmed.
 
 ```
+.venv/bin/python main.py --local-model <gemma tag>
+```
+
+**`requirements.txt` is still pytest only, and that is now a property rather
+than a gap.** Both real adapters speak to the local Ollama HTTP API through
+stdlib `urllib`, so the system runs on zero runtime dependencies. No torch, no
+provider SDK, no `requests`.
+
+### The adapter layer, and why it is not in `daemon/`
+
+```
+adapters  ->  daemon         adapters import Protocols from daemon
+daemon    -/->  adapters     nothing in daemon imports adapters
+```
+
+That direction is the point: it keeps `daemon/` importable with zero external
+dependencies, which is what makes the 535 soul tests hermetic. v4's Conv.6
+directory listing puts everything under `daemon/`, but that listing is already
+superseded by the shipped code (`llm_manager.py`, `stt_engine.py`,
+`tts_manager.py`, `interrupt_handler.py`, `tcp_server.py` do not exist), so this
+is a layout choice, flagged in `PROJECT_STATUS.md`, not a spec deviation.
+
+The Protocol to-do list, with what is now filled:
+
+```
+graph_manager.py    EmbeddingModel        DONE  adapters/embedding_local.py
+                                                OllamaEmbeddingModel, all-minilm,
+                                                384-dim, 45 MB measured
+llm_interface.py    LocalModelTransport   DONE  adapters/transport_ollama.py
+                                                + HealthProbe, keep_alive residency.
+                                                DEFAULT_MODEL == SPEC_MODEL ==
+                                                gemma4:e2b-it-qat, v4's own
+                                                "Gemma 4 E2B QAT". A 12B build was
+                                                tried and reverted the same day on
+                                                measurement (10-13x slower, equal
+                                                gate metrics, worse register).
+                                                Two names for one value on purpose:
+                                                resolve_model's ladder is written
+                                                in terms of "configured default"
+                                                vs "what v4 names".
+llm_interface.py    ModelTransport        OPEN  adapters/transport_unconfigured.py
+                    (cloud x2)                  holds the slot and answers an
+                                                explicit False. Real Groq/Azure
+                                                adapters are purely additive
+aria_daemon.py      AudioPipelinePort     STUB  adapters/audio_noop.py — a LEAF,
+                                                nothing downstream reads it
 audio_pipeline.py   CaptureBackend, WakeWordBackend, SpeakerVerification,
                     VADBackend, STTBackend, TTSBackend (primary + fallback),
-                    PlaybackBackend
-visual_layer.py     VideoWindow
-graph_manager.py    embedding model (injected at construction)
-llm_interface.py    ModelTransport, LocalModelTransport
-backend_router.py   the same three transports, injected
-aria_daemon.py      AudioPipelinePort
+                    PlaybackBackend       OPEN  all leaves; text-first skips them.
+                                                Inbound STT was never a port —
+                                                route_inbound_turn takes text
+visual_layer.py     VideoWindow           OPEN  leaf; the Daemon takes no visual
+                                                parameter at all
 ```
 
-Next build phase is adapters plus a wiring entry point, not more soul modules.
+### The one adapter that could not be stubbed, and the measured reason
+
+`EmbeddingModel` is read by FOUR behaviours — `retrieve()` (as the base
+ORDER, no cutoff), `reality_contradiction_check` (0.6), `_vulnerability`
+(0.6), and habituation inside `register_edge_firing` (0.9). Not five: the
+handoff listed `is_first_of_kind`, which is a pure SQL check on the (Q2, Q3)
+profile and reads no embedding.
+
+`tests/test_embedding_local.py` measures the fake against the real thing rather
+than asserting the difference. Against the repo's own token-hash
+`FakeEmbedding`: a paraphrase sharing words scores 0.869, a paraphrase sharing
+NO words scores 0.000 — identical to the unrelated floor. The fake measures word
+overlap, not meaning, so every existing `retrieve()` test has been ordering on
+noise for any two turns phrased differently. That is the substantive reason the
+embedding cannot be faked, and it is now pinned by
+`test_contract_token_hash_fake_FAILS_similarity_ordering`.
+
+Cutoff calibration numbers live in `PROJECT_STATUS.md`, measured over a
+37-sentence three-band probe set. The headline: at the old
+`_VULNERABILITY_SIM_CUTOFF = 0.6`, nine of twelve genuine disclosures did not
+fire — a 75% miss rate on the signal that part of the architecture exists to
+detect. **Set to 0.25 on 2026-08-22** (architect ruling), which is Pareto-optimal
+on that probe set: 2/25 false positives, 0/12 missed.
+
+Two consequences worth knowing before touching it again:
+
+* **A false positive is expensive, and the chain is not obvious.** Firing raises
+  Q1 to HIGH; with a non-neutral Q2, needs implications and `is_first_of_kind`
+  that reaches poignancy CRITICAL, which means `base_salience` 0.85 — per ResLog
+  item 9 it "resists vivid→present indefinitely" — plus a forced early DMN
+  partial pass writing a second node. So a mundane turn can become a permanent
+  memory. `is_first_of_kind` bounds it: the CRITICAL path only opens once per
+  (Q2 × Q3) profile per entity.
+* **The bands OVERLAP** (non-disclosure ceiling 0.337, disclosure floor 0.296), so
+  no threshold separates them cleanly. The colliding pair both contain "tired": a
+  384-dim MiniLM reads surface affect and cannot tell *tired about a thing* from
+  *tired of carrying something alone*. That is a model ceiling, and the lever for
+  it collides with Addendum §1's "tens of megabytes".
+
+Lowering the cutoff also broke the repo's own test fake — see `tests/
+test_embedding_local.py`. Function-word overlap alone put ordinary text at 0.286
+against an exemplar, which flipped an end-to-end daemon test from one EventNode to
+two. The fake was sharpened (stopwords skipped) rather than the cutoff bent to
+suit it, and two tests now pin that relationship.
 
 ---
 

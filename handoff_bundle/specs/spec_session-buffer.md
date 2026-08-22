@@ -20,6 +20,31 @@ claim authority it does not have.
 > `ARIA_Soul_Spec_v4.md`. There is deliberately no `requirements.md`; see the
 > end of this file.
 
+> ## AMENDMENT 2026-08-20 — the §9 tension is RESOLVED
+>
+> The "One tension inside it is explicitly NOT resolved" paragraph below, and the
+> matching bullet under "What a real spec would still need", both predate the
+> ruling and are left in place so the change is legible.
+>
+> `ARIA_Soul_Spec_v4_Addendum.md` §9 now carries an in-place amendment naming
+> ephemeral session context as a THIRD sanctioned surface, alongside the five
+> fields and the user's current message: the current session's transcript only —
+> recent turns verbatim, medium-tier rule-based summaries, old-tier topic tags.
+> It is appended, never merged into a field, and it is still appended in
+> emergency mode, because the conversation thread continues even when the five
+> fields are replaced.
+>
+> **"Nothing else" was NOT narrowed.** The amendment adds one surface and leaves
+> the never-crosses list intact — all nine items. Seven of those nine are
+> current-turn data, excluded on their own terms rather than because they are
+> historical, so a reading that admitted current-turn internal state on a "only
+> past sessions are forbidden" basis would invert §9.
+>
+> The boundary is drawn at the SESSION boundary: within-session is a transcript,
+> across-session is memory and stays out. **If this module is ever changed to
+> persist across sessions, the amendment does not cover it and must be
+> revisited.** That is the live constraint this file should now be read under.
+
 ## Authority — and the honest caveat
 
 **This module appears in NONE of v4, the Addendum, or the original Build Plan.**
@@ -36,6 +61,11 @@ targets *past sessions* ("anything Aria remembers about the user from past
 sessions") and session context is current-session only, so it may fall outside
 its scope — but "nothing else" is unqualified. ResLog item 19 authorises the
 module while naming this as still open. Do not treat it as settled.
+
+**Superseded 2026-08-20 — see the AMENDMENT at the top of this file.** §9 now
+sanctions ephemeral session context explicitly, so this paragraph records the
+question rather than an open item. The one part of it that still binds: the
+resolution holds at the session boundary only.
 
 ## Responsibility
 
@@ -111,8 +141,11 @@ Interface — Soul Filter does not inspect it.
 ## What a real spec would still need
 
 - The four token budgets and the three trigger lexicons, all placeholders.
-- **The §9 tension above** — the one item here that is genuinely architectural
+- ~~**The §9 tension above** — the one item here that is genuinely architectural
   rather than tuning. It needs an explicit Addendum or Resolution Log amendment
-  saying whether current-session summaries are inside or outside "nothing else".
+  saying whether current-session summaries are inside or outside "nothing
+  else".~~ **CLOSED 2026-08-20**: Addendum §9 carries that amendment now —
+  current-session transcript is inside, as a third sanctioned surface; anything
+  crossing a session boundary stays outside. See the AMENDMENT at the top.
 - Whether `fullness_state()`'s four bands are the right granularity, given only
   two of them (`heavy`, `critical`) have a consumer.

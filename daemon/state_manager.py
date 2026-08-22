@@ -101,6 +101,7 @@ _KEY_PAD = "pad"
 _KEY_ENERGY = "energy"
 _KEY_LAST_APPLIED_VALENCE = "last_applied_valence"
 _KEY_SELF_ENTITY_ID = "self_entity_id"
+_KEY_PRIMARY_ENTITY_ID = "primary_entity_id"
 # Superseded keys dropped on write (locked decisions) so they are not perpetuated.
 _SUPERSEDED_KEYS = frozenset({"relationship_depth", "needs"})
 
@@ -309,6 +310,48 @@ class StateManager:
         (the id never changes after creation)."""
         data = self._read_json(self.state_file)
         data[_KEY_SELF_ENTITY_ID] = str(node_id)
+        for key in _SUPERSEDED_KEYS:
+            data.pop(key, None)
+        self._write_json_atomic(self.state_file, data)
+
+    # -- primary (user) entity id ---------------------------------------------
+    # Added 2026-08-22. Deliberately an exact mirror of the two methods above,
+    # because the problem is the same one Resolution Log §2 already solved for
+    # the SELF entity: an EntityNode id that must survive a restart or the graph
+    # loses track of who it is about.
+    #
+    # WHY THIS MATTERS MORE THAN IT LOOKS. This id is the key for
+    # relational_stage, conflict arcs, is_first_of_kind and
+    # reality_contradiction_check. Without persistence, every process start
+    # invents a new id and one person becomes a series of strangers — her
+    # relational_stage can never advance past OBSERVING, and nothing is ever
+    # first-of-kind twice. That is a memory-integrity failure, not an
+    # inconvenience.
+    #
+    # WHAT THIS MODULE DOES NOT DO: decide who the user IS. It stores an opaque
+    # string, exactly as it does for the self id, and owns no meaning about what
+    # the id refers to — the graph owns that. Creation stays with the caller.
+    #
+    # FORWARD-COMPATIBLE WITH ENROLMENT. v4's `aria_state.json` listing already
+    # contains `voiceprint_enrolled`, and Module 7 carries speaker verification
+    # at SPEAKER_THRESHOLD = 0.75, so v4's long-term user-identity story runs
+    # through the voiceprint. When enrolment is built it should SET this key
+    # rather than replace the mechanism: binding a voiceprint to an EntityNode id
+    # is exactly what these two methods store.
+
+    def load_primary_entity_id(self) -> Optional[str]:
+        """Returns the persisted primary (user) EntityNode id, or None on first
+        run. Opaque string; this module owns no meaning about it."""
+        value = self._read_json(self.state_file).get(_KEY_PRIMARY_ENTITY_ID)
+        if value is None:
+            return None
+        return str(value)
+
+    def save_primary_entity_id(self, node_id: str) -> None:
+        """Persist the primary (user) EntityNode id. Called once when the node is
+        first created or supplied; not part of the periodic save cadence."""
+        data = self._read_json(self.state_file)
+        data[_KEY_PRIMARY_ENTITY_ID] = str(node_id)
         for key in _SUPERSEDED_KEYS:
             data.pop(key, None)
         self._write_json_atomic(self.state_file, data)

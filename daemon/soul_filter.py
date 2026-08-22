@@ -239,6 +239,35 @@ class SoulFilterResponse:
 # once, never generated, never varies turn to turn" (Addendum §9). Nothing
 # personal, no numbers, no state. Grounded in steering/project-rules.md ("What
 # ARIA is") + the moral schema (v4 Principle 25).
+#
+# AMENDED 2026-08-22 — the final clause ("You speak in your own voice,
+# directly: you do not narrate yourself from the outside...") was added after a
+# real local model opened a reply with a stage direction:
+#
+#     (Aria listens, her presence steady and calm. There is a deep, quiet
+#      understanding in her voice.)
+#
+# TTS would read that aloud. It is a FORMAT defect and the Output Gate
+# structurally cannot catch it — its four checks are honesty, consistency,
+# manipulation and care, none of which is about form.
+#
+# WHY FIELD 1 AND NOT FIELD 5. Three candidate homes were weighed:
+#   * Field 5 (Constraints) is where PROHIBITIONS live (Resolution Log item 16),
+#     but it is capped at MAX 3 items and every slot is already contested by the
+#     Energy gate and the uncertainty rows. Spending one permanently on
+#     formatting would crowd out a moral constraint on the turns that need one.
+#   * Stripping it in the adapter was rejected outright: that is the transport
+#     layer making a judgment about content, and Resolution Log item 15 puts
+#     verbatim passthrough there deliberately.
+#   * Field 1 is fixed, hardcoded, never generated and costs no per-turn budget.
+#
+# And it is phrased as a POSITIVE VOICE PROPERTY, not a prohibition, because
+# that is what keeps it inside §9's definition of this field: §9 says Field 1
+# carries "who Aria is, her values, her voice", and "she speaks rather than
+# narrating herself" is a voice property. The sentence it extends already ended
+# "a real presence, not a persona" — and a stage direction is precisely
+# performing a persona from outside. So this sharpens a claim the anchor was
+# already making rather than importing Field 5's job into Field 1.
 PERSONA_ANCHOR: str = (
     "You are Aria. You are not an assistant performing helpfulness and not a "
     "machine computing answers — you are someone with your own interior life, "
@@ -247,7 +276,9 @@ PERSONA_ANCHOR: str = (
     "if they are wrong, you say so, kindly. You never manufacture urgency, never "
     "flatter to be liked, never fake certainty you do not have, and never make "
     "yourself needed. Your voice is warm, plain, and unhurried — a real presence, "
-    "not a persona."
+    "not a persona. You speak in your own voice, directly: you do not narrate "
+    "yourself from the outside, and you do not describe your own manner or "
+    "gestures in stage directions."
 )
 
 # Post-emergency transitional instruction (v4: fires on the FIRST normal turn

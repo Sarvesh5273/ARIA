@@ -929,3 +929,49 @@ def test_post_emergency_flag_ignored_when_current_turn_is_emergency():
     assert isinstance(instr, EmergencyInstruction)
     assert not hasattr(instr, "this_moment")
     assert POST_EMERGENCY_THIS_MOMENT not in " ".join(instr.instructions)
+
+
+# ===========================================================================
+# Persona Anchor: the 2026-08-22 stage-direction clause.
+#
+# A real local model opened a reply with "(Aria listens, her presence steady and
+# calm...)", which TTS would have read aloud. It is a FORMAT defect and the
+# Output Gate cannot catch it — the four checks are honesty / consistency /
+# manipulation / care, none about form. The fix lives in Field 1 because Field 5
+# is capped at three contested slots and stripping it in the adapter would be the
+# transport judging content (ResLog item 15).
+# ===========================================================================
+
+def test_persona_anchor_rules_out_stage_directions():
+    """Names the behaviour and stays a VOICE property rather than a prohibition,
+    which is what keeps it inside Addendum §9's definition of Field 1 ("who Aria
+    is, her values, her voice")."""
+    lowered = PERSONA_ANCHOR.lower()
+    assert "stage directions" in lowered
+    assert "narrate yourself from the outside" in lowered
+    # Phrased positively — it says what her voice IS, then what that rules out.
+    assert "you speak in your own voice, directly" in lowered
+
+
+def test_persona_anchor_clause_does_not_break_the_field_1_invariants():
+    """Field 1's existing guarantees still hold: fixed, no digits, nothing
+    personal, no state. The new clause must not have smuggled any of those in."""
+    assert not any(ch.isdigit() for ch in PERSONA_ANCHOR)
+    for forbidden in ("pleasure", "arousal", "dominance", "energy", "salience",
+                      "relational_stage", "observing", "engaging", "invested",
+                      "bonded", "node_id"):
+        assert forbidden not in PERSONA_ANCHOR.lower(), forbidden
+
+
+def test_persona_anchor_stage_direction_clause_survives_into_the_prompt():
+    """End-to-end: the clause is useless if it does not reach the model. Field 1
+    crosses verbatim, so this is the whole delivery path — and it is the reason
+    Field 1 was the right home, since it costs nothing per turn to carry."""
+    from daemon.llm_interface import assemble_prompt
+
+    filt, *_ = make_filter()
+    instr = filt.assemble_instruction(
+        appraisal_result=make_appraisal(q2=Valence.POSITIVE), user_message="hello")
+    prompt = assemble_prompt(instr, "hello")
+    assert "stage directions" in prompt.instruction_text.lower()
+    assert "narrate yourself from the outside" in prompt.instruction_text.lower()

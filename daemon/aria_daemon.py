@@ -1385,6 +1385,22 @@ class AriaDaemon:
     def started(self) -> bool:
         return self._started
 
+    @property
+    def session_buffer_fullness(self) -> str:
+        """The session buffer's categorical fullness state, read-only.
+
+        Added 2026-08-22 for the wiring layer's diagnostics. The Daemon
+        constructs its own `SessionBuffer` internally, so a caller has no handle
+        to ask `fullness_state()` itself — and this is the one piece of that
+        buffer's state a caller has any business seeing, since it is what drives
+        the cognitive-load trigger in STEP 4.
+
+        Read-only and categorical, like every other property in this section. It
+        is NOT a decision surface: nothing outside this module may act on it, and
+        it crosses no boundary to any model.
+        """
+        return self._session_buffer.fullness_state()
+
     # -- read-only observability (Track A — NOT decision surfaces) ----------
     @property
     def state(self) -> DaemonState:

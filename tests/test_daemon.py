@@ -74,12 +74,34 @@ _BENIGN_REPLY = "That's genuinely good to hear. Shipping something real is hard,
 # Soul_Filter, LLM Interface, DMN, State_Manager) are the REAL ones.
 # ===========================================================================
 
+#: Function words, skipped when building a fake vector. See FakeEmbedding.
+_FAKE_STOPWORDS = frozenset({
+    "i", "im", "i'm", "me", "my", "you", "your", "it", "its", "it's", "this",
+    "that", "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at",
+    "for", "with", "am", "is", "are", "was", "were", "be", "been", "do", "did",
+    "does", "have", "has", "had", "so", "just", "about", "what", "how",
+})
+
+
 class FakeEmbedding:
     """Injected embedding model (Addendum §1) — deterministic, non-generative.
     A token-hash bag-of-words over a wide vector so UNRELATED sentences are
     genuinely dissimilar (low cosine) — the char-frequency toy used elsewhere is
     too coarse and would false-trigger VULNERABILITY_DISCLOSURE on ordinary
-    text. Deterministic (stable token hash), so tests are reproducible."""
+    text. Deterministic (stable token hash), so tests are reproducible.
+
+    FUNCTION WORDS ARE SKIPPED, added 2026-08-22 when
+    `_VULNERABILITY_SIM_CUTOFF` moved 0.6 -> 0.25 on real-model measurement. At
+    0.6 the docstring's claim above held; at 0.25 it did not. "I finally shipped
+    the release and I'm proud of it" scored 0.286 against the exemplar "I have
+    been struggling and did not want to admit it" — on nothing but shared
+    `i` / `and` / `it`. That flipped a real end-to-end test.
+
+    A real encoder does not do this: it weights content over function words. So
+    the fake was repaired to match what it already CLAIMED, rather than the
+    cutoff being bent to suit the fake. Note this makes the fake no better at
+    MEANING — `tests/test_embedding_local.py` still proves it cannot tell a
+    paraphrase from an unrelated sentence when the words differ."""
     DIM = 128
 
     @staticmethod
@@ -92,6 +114,9 @@ class FakeEmbedding:
     def embed(self, text):
         v = [0.0] * self.DIM
         for tok in (text or "").lower().split():
+            tok = tok.strip(".,!?;:'\"")
+            if not tok or tok in _FAKE_STOPWORDS:
+                continue
             v[self._tok_hash(tok) % self.DIM] += 1.0
         return v
 
@@ -1464,3 +1489,44 @@ def test_energy_number_never_reaches_the_appraisal_chain(tmp_path):
     # And the chain itself holds no needs/state handle to read Energy from.
     held = set(vars(ctx.appraisal))
     assert not any("energy" in n.lower() or "needs" in n.lower() for n in held), held
+
+
+# ===========================================================================
+# 12) Session-buffer fullness observability (added 2026-08-22 for the wiring
+# layer, so `main.py` need not reach into `daemon._session_buffer`).
+# ===========================================================================
+
+def test_session_buffer_fullness_is_exposed_read_only(tmp_path):
+    """The Daemon builds its own SessionBuffer, so without this property a
+    caller cannot ask the one piece of its state that drives STEP 4's
+    cognitive-load trigger."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+
+    # Same answer as the buffer's own method — a read-through, not a second copy
+    # of the banding logic.
+    assert ctx.daemon.session_buffer_fullness == \
+        ctx.daemon._session_buffer.fullness_state()
+    assert isinstance(ctx.daemon.session_buffer_fullness, str)
+
+    # Read-only: no setter. Guards against it drifting into a decision surface.
+    with pytest.raises(AttributeError):
+        ctx.daemon.session_buffer_fullness = "critical"
+
+
+def test_session_buffer_fullness_tracks_real_turns(tmp_path):
+    """Non-vacuous: prove it reads LIVE buffer state rather than returning a
+    constant. Asserted as a set-membership on the documented bands, because the
+    exact band a turn lands in is SessionBuffer's business, not the Daemon's."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    before = ctx.daemon.session_buffer_fullness
+
+    for _ in range(3):
+        ctx.daemon.route_inbound_turn(user_text="tell me about your day", now=T0)
+
+    after = ctx.daemon.session_buffer_fullness
+    assert before in ("light", "moderate", "heavy", "critical")
+    assert after in ("light", "moderate", "heavy", "critical")
+    # The property is wired to the same object the pipeline appends to.
+    assert ctx.daemon._session_buffer.fullness_state() == after

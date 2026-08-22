@@ -175,7 +175,66 @@ _CONFLICT_ARC_ABSENT_TURN_THRESHOLD = 5  # TODO(build-time): value to be tuned.
 _ARC_CLOSE_ABSENT_TURNS = _CONFLICT_ARC_ABSENT_TURN_THRESHOLD
 
 # Social-signal thresholds / lexicons (F-4e build-time placeholders).
-_VULNERABILITY_SIM_CUTOFF = 0.6  # TODO(build-time, F-4e) — embedding cutoff
+#
+# _VULNERABILITY_SIM_CUTOFF: 0.6 -> 0.25 on 2026-08-22, architect ruling, on the
+# first measurement this project has ever had against a REAL embedding model
+# (all-minilm, 384-dim). Full table in PROJECT_STATUS.md; the short version:
+#
+#   probe set  37 sentences in three bands, scored the way THIS method scores
+#              (max cosine against ANY exemplar, since that is what fires)
+#     band 1   mundane                     n=15  max 0.216
+#     band 2   emotional, NOT disclosure   n=10  max 0.337
+#     band 3   genuine disclosure          n=12  min 0.296
+#
+#   At 0.6, NINE OF TWELVE genuine disclosures did not fire. Not a marginal
+#   mis-set: a 75% miss rate on the signal this check exists to detect.
+#
+#   0.25 is Pareto-optimal on that set — 2/25 false positives, 0/12 missed.
+#   0.20 has the same recall with 3x the false positives; 0.30 has the same
+#   false positives and misses two disclosures. The only other defensible pick
+#   is 0.35 (0 false positives, 2 missed), and the tie is broken by the
+#   project's OWN accepted precedent for this exact asymmetry: the Daemon's
+#   distress gate is deliberately broad because "presence beats routing".
+#
+# THE COST, traced in full on 2026-08-22 because it is much more than tone and
+# was twice described too lightly. Firing this signal raises Q1 to HIGH, and the
+# consequences cascade:
+#
+#   Q1=HIGH + Q2 non-neutral + needs implications + is_first_of_kind
+#                                        -> poignancy CRITICAL
+#     CRITICAL  -> base_salience floor 0.85, which per ResLog item 9 "resists
+#                  vivid->present INDEFINITELY - stays word-for-word forever"
+#               -> route_inbound_turn forces an EARLY DMN partial pass, which
+#                  writes a second (meta-observation) node
+#     otherwise -> poignancy HIGH, floor 0.55: permanently settles at the gist
+#
+# So a false positive can write a PERMANENT memory of a mundane turn. What bounds
+# it is `is_first_of_kind`: the CRITICAL path only opens the first time a given
+# (Q2 quadrant x Q3 attribution) profile appears for that entity, so the
+# never-fading inflation is a handful of nodes over the life of a relationship,
+# not a fraction of every turn. Later false positives land at HIGH.
+#
+# Measured consequence, worth knowing: this change alone flipped one existing
+# end-to-end daemon test from 1 EventNode to 2, by exactly that route. The suite
+# caught it. That is the cost being real rather than theoretical.
+#
+# The two that fire at 0.25 are "I am really tired today, I did not sleep well"
+# (0.337) and "I am a bit stressed about the amount left on the list" (0.309) —
+# mild-negative turns that arguably should register. If the permanent-memory cost
+# proves worse in real use than the missed disclosures, 0.35 is the other side of
+# the trade (0 false positives, 2/12 missed) and is a one-line change.
+#
+# BANDS 2 AND 3 OVERLAP (ceiling 0.337, floor 0.296) so NO cutoff separates them
+# cleanly. The colliding pair both contain "tired": a 384-dim MiniLM reads
+# surface affect and cannot tell "tired about a thing" from "tired of carrying
+# something alone". That is a ceiling of the MODEL, not of this threshold, and the
+# lever for it collides with Addendum §1's "tens of megabytes".
+#
+# Still a placeholder: 37 sentences is far better than none, but they were
+# authored for the measurement rather than drawn from real use, so the separation
+# partly reflects an intuition about what a disclosure sounds like. Injectable as
+# AppraisalConfig.vulnerability_sim_cutoff for per-deployment tuning.
+_VULNERABILITY_SIM_CUTOFF = 0.25  # TODO(build-time, F-4e) — measured 2026-08-22
 _DISTRESS_MIN_MARKERS = 1        # TODO(build-time, F-4e) — word-count threshold
 _ABSOLUTIST_WORDS = frozenset({
     "always", "never", "completely", "totally", "everyone", "nobody",

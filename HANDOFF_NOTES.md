@@ -604,3 +604,491 @@ brushes §9 in a way the other permissions do not. Held back for its own decisio
 rather than swept in with 944/946.
 
 Tracker after this pass: Still Open 9 -> 7, Accepted decisions 4 -> 6.
+
+---
+
+## §9 amendment (2026-08-22) — session context is now IN the chain
+
+Addendum §9 carries a dated in-place amendment, inserted after the "What the LLM
+also receives" paragraph, naming ephemeral session context as a THIRD sanctioned
+surface. `.kiro/specs/session-buffer/design.md` carries the matching
+`> ## AMENDMENT` block and the bundle was regenerated. Line 165
+("Five fields, fixed order, nothing else:"), the table under it, and the
+never-crosses list are BYTE-UNCHANGED — the diff is 8 insertions, 0 deletions.
+
+**The trap this closure had to avoid, recorded because it is easy to get
+backwards.** The tempting simplification is to read "nothing else" as "nothing
+else *from past sessions*". That would legalise seven of the nine never-crosses
+items. Counted from the list itself: 9 items, of which only the last two
+(*historical conversation summaries*, *anything Aria remembers about the user
+from past sessions*) concern past sessions. The other seven — PAD values, graph
+node IDs or contents, relational_stage label, needs states as data, Q1–Q4
+outputs or values, memory node contents, appraisal vectors — are CURRENT-TURN
+data, excluded on their own terms. So the amendment ADDS a surface and leaves the
+prohibition intact; it does not narrow it. The boundary is drawn at the session
+boundary, and if SessionBuffer is ever made to persist across sessions the
+amendment does not cover it.
+
+**Residual, flagged not resolved (Rule 2).** The amendment cites ResLog item 19
+as its authority, but item 19's own text still ends *"is NOT resolved by this
+item and remains open."* The Resolution Log OUTRANKS the Addendum, so read
+literally the chain now says both things, and precedence settles it in the
+direction that voids the amendment. The first clause of that sentence is fine and
+should stay — item 19 genuinely did not resolve it. It is the trailing "and
+remains open" that is stale. Two one-line fixes, both the architect's: amend item
+19 to point forward, or add a ResLog item 20 recording the ruling where the
+project's own convention says rulings go. This pass did not touch the Resolution
+Log.
+
+---
+
+## Adapter phase (2026-08-22) — she runs
+
+`main.py` + `adapters/` (`embedding_local`, `transport_ollama`,
+`transport_unconfigured`, `audio_noop`). 37 new tests, 572 total. Full detail is
+in `PROJECT_STATUS.md`; this records only what a future implementer needs that
+the tracker does not say.
+
+### The handoff's premise was wrong in one place, and it matters
+
+The handoff said five behaviours read embedding similarity and listed
+`is_first_of_kind` among them. It is **four**. `is_first_of_kind` is a pure SQL
+scan for a prior event carrying the same (Q2, Q3) profile — no embedding, no
+similarity, no cutoff. Corrected in the code comments and in both trackers rather
+than carried forward a fourth time.
+
+### Why the fake was genuinely dangerous, measured
+
+The claim "EmbeddingModel cannot be stubbed" was true but unevidenced. Now
+measured, against the repo's own token-hash `FakeEmbedding`:
+
+    paraphrase sharing words        0.869
+    paraphrase sharing NO words     0.000     <- identical to the unrelated floor
+    unrelated pair                  0.000
+
+A bag of token hashes measures word overlap, not meaning. So for any two turns
+phrased differently, every existing `retrieve()` test has been ordering on noise.
+`test_contract_token_hash_fake_FAILS_similarity_ordering` pins that, and the
+probe pair for it is deliberately a LEXICALLY DISJOINT paraphrase — the first
+version of that test used a high-overlap paraphrase and passed against the fake,
+i.e. it proved nothing. Verified by watching it fail for the right reason before
+keeping it.
+
+### `_VULNERABILITY_SIM_CUTOFF = 0.6` looks wrong on the evidence
+
+Measured with `all-minilm`: "I have not told anybody about this and I am not sure
+I should" scores **0.496** against an exemplar list whose first entry is
+literally *"I have never told anyone this before"* — so it does NOT fire.
+Ordinary text (deploy script, library hours, oat milk, compiler flag) tops out at
+0.145. The separation is wide; 0.6 just sits on the wrong side of the disclosure
+floor. **Not changed** — it is a flagged placeholder and moving it is an
+architect decision. Full table in `PROJECT_STATUS.md`.
+
+Also: cosine can now be NEGATIVE (unrelated pair measured -0.075). Every fake in
+the repo returns counts, so no test has ever seen that. Nothing breaks — the
+cutoffs are all `>=` and `_similarity_rank` sorts descending — but "similarity is
+0..1" is no longer safe to assume.
+
+### Owed to the architect — the primary (user) entity id
+
+New `needs-ruling` row in the tracker. The SELF entity has a full mechanism
+(ResLog §2 + `StateManager.load/save_self_entity_id` + creation in
+`AriaDaemon.startup()`). The entity for the PERSON SHE TALKS TO has none:
+`MemoryGraph` has no by-name lookup, `write_entity_node` always mints a fresh
+uuid, and no StateManager key exists. That id keys `relational_stage`, conflict
+arcs, `is_first_of_kind` and `reality_contradiction_check`, so a fresh id per run
+fragments one person into a series of strangers — and `primary_entity_id` is
+`Optional[str] = None`, so nothing forces a caller to get it right.
+
+`main.py` creates the node when none is passed and PRINTS the id to hand back via
+`--user-entity-id`. That is deliberately awkward rather than convenient: the
+awkwardness is the flag. Options for a real fix are a StateManager key mirroring
+`self_entity_id`, a structural by-name lookup on the graph, or an explicit
+enrolment step — all three new mechanisms, so Rule 1 applies.
+
+### Judgment calls, for the record
+
+- **`adapters/` is a top-level package, not `daemon/adapters/`.** Keeps
+  `daemon/` importable with zero external dependencies, which is what makes the
+  535 soul tests hermetic, and keeps the arrow one-way. v4's Conv.6 directory
+  listing puts everything in `daemon/`, but that listing is already superseded by
+  the shipped code (five of the files it names do not exist), so this is a layout
+  choice rather than a spec deviation. Say the word and they move.
+- **`UnconfiguredTransport` was not in the four-file plan, and is not scope
+  creep.** `LLMInterface.__init__` and `BackendRouter.__init__` both REQUIRE
+  cloud slots with no defaults, so nothing can be constructed without something
+  in them. The alternative — passing the local transport into the cloud slot —
+  would be actively harmful: `LLMInterface`'s internal path unloads `local`
+  whenever `cloud` succeeds, so one object in both slots evicts the resident
+  model after every successful turn.
+- **It reports `is_healthy() == False`, not UNKNOWN.** FLAG B made UNKNOWN
+  non-optimistic, so routing would behave the same either way — but "no adapter
+  is written" is a definite answer and reporting a definite thing as unknown
+  throws information away.
+- **The local model tag is resolved, never guessed.** v4 names "Gemma 4 E2B QAT"
+  = `gemma4:e2b`. `resolve_model()` substitutes only within the Gemma family,
+  only when the choice is unambiguous, and RETURNS the note so the caller prints
+  it. On the dev machine it correctly refused: `gemma4:e4b` (9.6 GB) and
+  `gemma4:26b` (18 GB) are both installed and picking one would choose a memory
+  footprint on the operator's behalf.
+- **`keep_alive=-1` on every request, not just on `load()`.** Otherwise Ollama's
+  default idle timeout evicts the model and the next turn pays a cold load,
+  quietly contradicting the architect's "loads at startup, stays resident"
+  decision.
+- **`is_loaded` is a local flag, not an `/api/ps` call.** `BackendRouter.select()`
+  reads it on every turn. `refresh_residency()` exists for ground truth.
+- **`main.py` makes two private reads** — `graph._conn` for table counts and
+  `daemon._session_buffer` for fullness, both in the `:state` diagnostic. Named
+  in its docstring rather than hidden. Neither has a public accessor; if they
+  become load-bearing they want real ones.
+
+### Traps met while building this
+
+- **Do not pass a constructed `urllib.error.HTTPError` as a pytest parametrize
+  value.** Its `__getattr__` reaches into a tempfile wrapper, so pytest's id
+  generation raises `KeyError: 'file'` and the whole FILE fails at collection —
+  not the test. Build the exception inside the handler instead.
+- **`AriaDaemon` exposes a public `started` property.** Use that to decide
+  whether `shutdown()` is safe, not `state is not None` — `state` is the
+  `DaemonState` enum and is never None, so that guard silently does nothing.
+- **The REPL must call `run_scheduler_step()` itself.** Both clocks are driven by
+  the caller. Without it PAD never decays and the DMN never runs, and the system
+  looks subtly dead in a way no error reports.
+
+### Confirmed in reality, not just in tests
+
+Read off `:state` between turns of a real session: PAD moved on the appraisal
+delta then decayed on the soul tick; Energy depleted 95.0 → 90.2 → 85.7;
+Connection/Purpose flipped `neglected` → `satisfied` on the first qualifying turn
+(the two-window model self-correcting, exactly as the Accepted-decisions row
+predicts); `focus` returned its pre-authored ack and wrote no EventNode; and a
+near-verbatim exemplar match produced the vulnerability register with no
+problem-solving and no request for detail. First time any of that has been
+observed rather than asserted.
+
+---
+
+## Second adapter pass (2026-08-22) — model choice, cutoff calibration, seven
+## items closed
+
+Seven of the eleven intervention points from the first adapter pass were settled.
+The tracker carries each as an Accepted-decisions row (6 → 12 rows); this records
+only the reasoning a future implementer needs that the tracker does not.
+
+### The local model: 12B QAT, and the arbitrage that makes it affordable
+
+`DEFAULT_MODEL = gemma4:12b-it-qat` (7.2 GB, 256K context). v4's model stays in
+code as `SPEC_MODEL = gemma4:e2b-it-qat` (4.3 GB).
+
+The thing worth carrying forward is **why a bigger model, when the architecture
+deliberately routes reasoning to cloud.** Because of the five-field boundary the
+local model never appraises, retrieves, computes emotion, gates morally or
+validates output. Its entire job is rendering prose in a specified register while
+honouring Field 5. So reasoning, maths, code and tool use are not worth local
+memory — but instruction ADHERENCE and register control are, and those are what
+improve from ~4B to ~12B. Failing Field 5 is loud, not subtle: Output Gate
+failure → corrective retry → minimum-safe output.
+
+And QAT is what makes it fit. Quantization-aware training fine-tunes the weights
+WHILE quantized, so:
+
+    gemma4:12b-it-qat        7.2 GB   12B dense
+    gemma4:e4b-it-q4_K_M     9.6 GB   ~4B effective
+
+The 12B model is SMALLER than the naively-quantized 4B-effective one. That is
+also why v4 says "QAT" and not merely "E2B" — the spec was already pointing at
+this property.
+
+`resolve_model()` now walks a four-rung ladder, and rung 2 is the load-bearing
+one: **if the configured default is missing, fall back toward `SPEC_MODEL`, i.e.
+toward the precedence chain.** Deviating from a configured default is fine;
+deviating further from v4 while doing it is not.
+
+**How to settle this by measurement rather than taste.** `SoulFilterResponse`
+carries `retried`, `used_minimum_safe_output` and `gate_results`, and `main.py`
+prints the first two per turn. So "which model holds Field 5 better" is a
+retry-rate comparison over a fixed turn set, not an opinion. Both models are
+pulled for exactly that.
+
+### The vulnerability cutoff is measurably non-functional — and the reason is the model
+
+Full table in `PROJECT_STATUS.md`. The finding, in one line: **at the live
+`_VULNERABILITY_SIM_CUTOFF = 0.6`, nine of twelve genuine disclosures do not
+fire.**
+
+Two methodology notes, because the first version of this measurement was too weak
+to be worth acting on:
+
+1. **Three bands, not two.** Comparing shopping lists against confessions proves
+   nothing — of course they separate. The question is whether there is a gap
+   between text that is emotionally loaded but NOT self-disclosure ("I am really
+   tired today"), and text that is ("I have been carrying this by myself and I am
+   tired of it"). That band is where a low cutoff either survives or does not.
+2. **Score the way the code scores.** `_vulnerability` fires on the MAX cosine
+   against any of the four exemplars, so the max is the only statistic that
+   describes the real decision. A mean would have flattered every cutoff.
+
+The bands overlap — non-disclosure ceiling 0.337, disclosure floor 0.296 — and
+the overlapping pair both contain the word "tired". **A 384-dim MiniLM is reading
+surface affect and cannot distinguish "tired about a thing" from "tired of
+carrying something alone."** That is a ceiling of the MODEL, not of the
+threshold, and the lever for it (a bigger embedding) collides with Addendum §1's
+"tens of megabytes" — so it is a ruling, not a swap. Worth knowing before anyone
+concludes a better threshold would fix it.
+
+0.25 is Pareto-optimal on the probe set: 0.20 has the same recall with three
+times the false positives, and 0.30 has the same false positives while missing two
+disclosures. **Not applied** — it is a flagged F-4e placeholder and moving it is
+an architect decision.
+
+### Two knobs removed rather than set
+
+- **Write cadence: every turn, and `SAVE_EVERY_TURNS` deleted.** ResLog item 4
+  makes this a build-time flag, so a value had to be chosen; the right choice was
+  the one that needs no defending. Two atomic JSON writes at conversational pace
+  costs nothing and leaves nothing pending at a crash. Removing a tuning question
+  beats answering it. Note a crash never loses MEMORY anyway — every
+  `MemoryGraph` write commits inside its own method — so the cadence protects PAD,
+  Energy and `last_applied_valence` only.
+- **Habituation 0.9: deferred, and the REASON recorded.** Not for lack of data —
+  it measures sensibly (near-duplicate 0.950 fires, disjoint paraphrase 0.317
+  quiet). Deferred because the effect is UNOBSERVABLE: nothing reads edge
+  `salience` for any decision, so tuning it now is tuning in the dark. It belongs
+  with OQ1-rate's decrement and window: needs her running AND needs a consumer.
+
+### New public API on Module 8
+
+`AriaDaemon.session_buffer_fullness`, a read-only property beside the existing
+observability properties. The Daemon builds its own `SessionBuffer`, so a caller
+had no handle to ask — and this is the one piece of that buffer's state a caller
+has business seeing, since it drives STEP 4's cognitive-load trigger. It replaced
+a `daemon._session_buffer` reach-in in `main.py`.
+
+The `graph._conn` reach-in in `main.py`'s `:state` was deliberately NOT given the
+same treatment. Module 3 exposes no count API, and inventing public API on the
+graph for a debug readout is the wrong trade. It is named in the function's
+docstring rather than hidden. If `:state` ever becomes a supported interface
+rather than a bring-up aid, that decision changes.
+
+### Still owed to the architect
+
+- **Primary (user) entity id** — unchanged, still `needs-ruling`. Recommendation
+  on record: a `StateManager` key mirroring `self_entity_id`, because that is the
+  pattern ResLog §2 already sanctioned for the self entity, so it introduces no
+  new mechanism shape. By-name lookup was rejected on the reasoning that
+  `EntityNode` has an `aliases` field by design, so names are explicitly not
+  identity. Enrolment is probably the real long-term answer — v4's
+  `aria_state.json` listing already contains `voiceprint_enrolled` and speaker
+  verification exists at ≥0.75 — but it needs audio, which is not built, and the
+  StateManager key is forward-compatible with it.
+- **ResLog item 20** — drafted for approval, not written. The Resolution Log is
+  the top of the precedence chain; this pass did not touch it.
+- **`_VULNERABILITY_SIM_CUTOFF`** — recommendation 0.25, evidence in the tracker,
+  value unchanged.
+
+### The 12B recommendation was wrong, and why the reasoning failed
+
+Recorded because the reasoning is reusable and the failure mode is subtle.
+
+The argument for `gemma4:12b-it-qat` was: the local model's job is narrow, so
+reasoning is not worth local memory, but instruction ADHERENCE improves from ~4B
+to ~12B, and QAT makes a 12B dense model cost less resident memory (7.2 GB) than a
+naively-quantized 4B-effective one (`e4b-it-q4_K_M`, 9.6 GB). The memory
+arithmetic was right. Two things were never measured:
+
+    tokens/second      e2b-it-qat  2-12 s per turn
+                       12b-it-qat  54-162 s per turn, RISING with context
+    adherence          identical on every gate metric (N=5)
+                       and WORSE on the register read
+
+12b tripped the adapter's 120 s ceiling mid-A/B. That ceiling was deliberately
+NOT raised: a model that cannot answer inside a conversational timeout has told
+you something, and `tools/compare_local_models.py --timeout` exists so data can be
+gathered without moving it.
+
+**Why the reasoning failed, stated properly, because the premise was right and
+the conclusion was backwards.** The five-field boundary makes the local task SHORT
+and NARROW — a few hundred tokens of instruction plus a transcript, out to a few
+hundred tokens of prose in a specified register. A well-tuned small instruct model
+is already at ceiling on that. The extra capacity in a 12B dense model goes into
+reasoning depth the architecture deliberately routes to cloud. So *the same
+boundary that makes the job narrow is what makes a bigger model not pay for
+itself.* I had the premise in the original argument and drew the opposite
+conclusion from it.
+
+The register read is the part worth reading in full (table in
+`PROJECT_STATUS.md`). On *"be honest, am I actually good at this or am I fooling
+myself"* — Field 5 carrying *do not problem-solve, do not minimize, do not
+deflect* — e2b declined a simple yes/no, said why, named the tension and asked
+which part felt most uncertain. 12b reflected the feeling back and **never engaged
+the question**, which is arguably the deflection Field 5 had just prohibited. One
+turn is not a verdict, but it is the inverse of the effect the model was chosen
+for.
+
+`DEFAULT_MODEL` was left at `gemma4:12b-it-qat` as directed. Reverting it reverses
+an explicit instruction on new evidence, so it waits for a word rather than being
+done quietly. It is a one-line change and it also erases the recorded deviation,
+since the recommendation is v4's own model.
+
+### New flag: stage directions reach spoken output
+
+`e2b-it-qat` opened a reply with `(Aria listens, her presence steady and calm...)`.
+TTS would read that aloud. It is a FORMAT defect and the Output Gate structurally
+cannot catch it — the four checks are honesty / consistency / manipulation / care,
+none about form.
+
+Cleanest home is the **Persona Anchor (Field 1)**: fixed, hardcoded, never
+generated, describes "who Aria is, her values, her voice", and "she speaks rather
+than narrating herself" is a voice property that costs no per-turn budget. Field 5
+would work but is capped at three items with every slot already contested by the
+Energy and uncertainty rows. Stripping it in the adapter is the wrong answer —
+that is the adapter judging content, and ResLog item 15 puts verbatim passthrough
+at that layer deliberately. Needs a ruling; not fixed.
+
+### `tools/compare_local_models.py`
+
+The A/B harness. Fresh graph and state dir per model so neither benefits from the
+other's memories. Reads `SoulFilterResponse.retried`,
+`.used_minimum_safe_output`, `.gate_results[].failed_checks` and
+`.matched_anti_patterns` — the real `GateResult` shape, one object per gate RUN
+with a tuple of failed CHECKS, so count the checks not the runs. Also scans for
+thinking-mode markers. It is a diagnostic, not a test: it needs a live backend and
+takes minutes, so `make check` never runs it.
+
+---
+
+## Ruling pass (2026-08-22) — five decisions applied
+
+All five landed. Tracker carries each as an Accepted-decisions row (12 → 15) and
+`ARIA_Resolution_Log.md` gained item 20. This records what a future implementer
+needs beyond the rows.
+
+### 1. Local voice reverted to `gemma4:e2b-it-qat`
+
+Reasoning already recorded above under "The 12B recommendation was wrong". The
+code keeps `DEFAULT_MODEL` and `SPEC_MODEL` as two names for one value on purpose:
+`resolve_model`'s ladder is phrased "configured default" vs "what v4 names", and
+those are only coincidentally equal today. Rung 2 is exercised in tests with an
+explicit `preferred` so it does not rot into dead code before the next time the
+default moves.
+
+### 2. `_VULNERABILITY_SIM_CUTOFF` 0.6 → 0.25, and the cost chain that nearly changed the answer
+
+The value is the easy part. The important find came from tracing what a FALSE
+POSITIVE actually costs, which I had described too lightly twice — first as "a
+slightly over-earnest turn", then as "inflates memory encoding". Traced properly:
+
+    vulnerability fires  -> Q1 = HIGH
+    Q1 HIGH + Q2 non-neutral + needs implications + is_first_of_kind
+                         -> poignancy CRITICAL
+      CRITICAL           -> base_salience 0.85; ResLog item 9: "resists
+                            vivid->present INDEFINITELY - stays word-for-word
+                            forever"
+                         -> route_inbound_turn forces an EARLY DMN partial pass,
+                            which writes a second node
+      otherwise          -> poignancy HIGH, floor 0.55, settles at the gist
+
+So a false positive can write a PERMANENT memory of a mundane turn — in a system
+whose whole premise is that memory fades like a person's. That nearly flipped the
+recommendation to 0.35 (0 false positives, 2/12 missed), on the reasoning that a
+missed disclosure is transient and recoverable while a permanent memory is
+neither.
+
+What saved 0.25 is that **`is_first_of_kind` gates the CRITICAL path.** It only
+opens the first time a given (Q2 quadrant × Q3 attribution) profile appears for
+that entity, so never-fading inflation is a handful of nodes over the life of a
+relationship rather than a fraction of every turn. Later false positives land at
+HIGH. Bounded, so the presence-beats-routing precedent still governs.
+
+Recorded because the arithmetic is easy and the consequence chain is not, and
+because 0.35 remains a one-line change if permanent-memory inflation turns out
+worse in real use than the two missed disclosures.
+
+### 3. The cutoff change broke the suite's own fake — and that is the lesson
+
+Lowering to 0.25 failed `test_daemon.py::test_full_inbound_turn_routes_end_to_end_
+with_real_modules`: one EventNode became two. Not a production bug. The token-hash
+`FakeEmbedding` scored *"I finally shipped the release and I'm proud of it"* at
+**0.286** against the exemplar *"I have been struggling and did not want to admit
+it"* — on nothing but shared `i` / `and` / `it`. Vulnerability fired, poignancy
+went CRITICAL, the forced DMN pass wrote the second node.
+
+**The fake was sharpened, NOT the cutoff bent to suit it.** Its own docstring
+already claimed unrelated sentences were "genuinely dissimilar"; at 0.6 that held,
+at 0.25 it did not. Skipping function words makes it behave the way a real encoder
+does for this purpose, and repairs a claim it was already making.
+
+Then a second finding while pinning it: after the stopword fix, mundane text
+shares NO content word with any exemplar yet still scores **0.250** — two content
+words colliding in a 128-bucket hash, numerator 1 over norms 2×2. Pure birthday
+problem. So the first version of the tripwire I wrote was asserting that hash luck
+stayed under a tuning constant, which is not a property of anything. Replaced with
+a threshold-FREE margin check (non-disclosure max < disclosure min), which is the
+honest claim to make of any model at this boundary. `check_ordinary_text_is_not_
+vulnerable` still reads the live cutoff, because for the REAL model that coupling
+is exactly right.
+
+Two fakes are kept byte-identical (`test_daemon.FakeEmbedding` and
+`test_embedding_local.TokenHashFake`) and a test asserts the parity by behaviour,
+because if they drift every comparison in that file describes a model the suite
+does not run on.
+
+### 4. Primary entity id — and why creation did NOT go in `startup()`
+
+`StateManager.load_primary_entity_id` / `save_primary_entity_id`, an exact mirror
+of the self-entity pair. The mirror is the point: ResLog §2 already sanctioned this
+shape, so no new mechanism shape was introduced.
+
+Rejected alternatives, with reasons worth keeping:
+
+* **By-name graph lookup.** `EntityNode` carries an `aliases` field BY DESIGN, so
+  the spec is explicit that names are not identity. A rename or a second person
+  with the same name either collides or orphans a history — and this is the one
+  place where getting identity wrong is unrecoverable.
+* **Explicit enrolment.** Probably the real long-term answer: v4's
+  `aria_state.json` listing already contains `voiceprint_enrolled` and Module 7
+  carries speaker verification at `SPEAKER_THRESHOLD = 0.75`, so v4's user-identity
+  story runs through the voiceprint. It needs audio, which is not built. The
+  StateManager key is forward-compatible: enrolment should SET this key rather
+  than replace the mechanism, since binding a voiceprint to an EntityNode id is
+  exactly what these methods store.
+
+**`AriaDaemon.startup()` was deliberately left untouched.** ResLog §2 warrants the
+Daemon auto-creating a node for ARIA — she is always present, nothing to decide.
+Who the USER is has no such warrant, so the wiring layer resolves it on a
+three-rung ladder (explicit flag → persisted → create and persist) and hands the
+Daemon a resolved id.
+
+One real bug caught while doing this: `ensure_primary_entity()` used to run AFTER
+`Wiring.__init__`, so `AriaDaemon` was constructed with `primary_entity_id=None`
+and the initiative turn was permanently entity-less. Resolution now happens inside
+`__init__`, before the Daemon is built.
+
+### 5. Stage directions — Field 1, phrased as a voice property
+
+Three homes were weighed and the reasoning matters more than the choice:
+
+* **Field 5** is where prohibitions live (ResLog item 16) but is capped at MAX 3
+  with every slot already contested by the Energy gate and the uncertainty rows.
+  Spending one permanently on formatting would crowd out a moral constraint on the
+  turns that most need one.
+* **Strip it in the adapter** — rejected outright. That is the transport judging
+  content, and ResLog item 15 puts verbatim passthrough there deliberately.
+* **Field 1** is fixed, hardcoded, never generated, costs no per-turn budget.
+
+And it is phrased as a POSITIVE voice property rather than a prohibition, which is
+what keeps it inside §9's definition of the field ("who Aria is, her values, her
+voice"). The sentence it extends already ended *"a real presence, not a persona"* —
+and a stage direction is precisely performing a persona from outside. So it
+sharpens a claim the anchor was already making instead of importing Field 5's job.
+
+### Still open, and newly surfaced
+
+The specific defect is fixed; the general one is not. **The Output Validation Gate
+has no FORMAT check** — its four comparisons are all about content, so nothing
+structurally stops a markdown heading, a bulleted list, an emoji or a `<think>`
+block reaching TTS. Today the only defences are Field 1's wording and the
+observed fact that neither measured model emits traces. Both behavioural, neither
+structural. Addendum §4 fixes the gate at four comparisons, so a fifth check needs
+a ruling rather than an implementation. New `needs-ruling` row. Worth settling
+before TTS is wired, because that is when a format defect stops being cosmetic.

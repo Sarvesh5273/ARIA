@@ -292,6 +292,37 @@ Authorised, and locked on the same terms as any item above:
 
 ---
 
+## 20. Ephemeral session context — third sanctioned surface
+
+*(2026-08-22)*
+
+Item 19 authorised `session_context` as post-approval work but explicitly
+left its tension with Addendum §9's unqualified "nothing else" unresolved.
+This item resolves it.
+
+Resolved: ephemeral session context is a THIRD sanctioned surface
+alongside the five fields and the user's current message — the current
+session's transcript only, appended and never merged into a field, and
+still appended in emergency mode. Addendum §9 carries the in-place
+amendment.
+
+"Nothing else" is NOT narrowed. Reading it as "nothing else *from past
+sessions*" would legalise seven of the nine never-crosses items: only the
+last two concern past sessions, while PAD values, graph node IDs or
+contents, relational_stage label, needs states as data, Q1–Q4 outputs,
+memory node contents and appraisal vectors are current-turn data excluded
+on their own terms.
+
+The boundary is the SESSION boundary: within-session is a transcript,
+across-session is memory and stays out. If the Session Buffer is ever
+changed to persist across sessions, this item does not cover it and must
+be revisited.
+
+Item 19's own wording stands as the dated record of what was true when
+written.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4

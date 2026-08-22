@@ -479,3 +479,91 @@ def test_state_manager_owns_no_meaning_surface(tmp_path):
         assert "graph" not in low and "retrieve" not in low, name
     # Every public method is a load/save (plus the two file-path attributes).
     assert all(n.startswith(("load_", "save_")) for n in public), public
+
+
+# ===========================================================================
+# Primary (user) entity id — added 2026-08-22. An exact mirror of the self
+# entity id methods, for the same reason Resolution Log §2 gave the self entity
+# one: an EntityNode id that must survive a restart or the graph loses track of
+# who it is about.
+#
+# Without this, every process start invents a new id and one person becomes a
+# series of strangers — relational_stage can never advance past OBSERVING and
+# nothing is ever first-of-kind twice.
+# ===========================================================================
+
+def test_primary_entity_id_defaults_to_none_on_first_run(tmp_path):
+    sm = make_manager(tmp_path)
+    assert sm.load_primary_entity_id() is None
+    # Reading must not create anything, same as every other loader.
+    assert not sm.state_file.exists()
+
+
+def test_primary_entity_id_round_trips_across_instances(tmp_path):
+    """The whole point: it survives a process restart. Without this, every start
+    invents a new id and one person becomes a series of strangers."""
+    make_manager(tmp_path).save_primary_entity_id("user-node-1")
+    assert make_manager(tmp_path).load_primary_entity_id() == "user-node-1"
+
+
+def test_primary_entity_id_restores_from_a_hand_written_snapshot(tmp_path):
+    sm = make_manager(tmp_path)
+    write_state_file(sm, {
+        "self_entity_id": "aria-node",
+        "primary_entity_id": "user-node",
+    })
+    assert sm.load_primary_entity_id() == "user-node"
+
+
+def test_primary_entity_id_is_stored_as_an_opaque_string(tmp_path):
+    """This module owns no meaning about the id; the graph owns that. A
+    non-string is coerced rather than validated — same as the self id."""
+    sm = make_manager(tmp_path)
+    sm.save_primary_entity_id(12345)
+    assert sm.load_primary_entity_id() == "12345"
+
+
+def test_primary_and_self_entity_ids_are_independent_keys(tmp_path):
+    """The two must never alias. If they did, Aria's self node and the user's
+    node would collide, and every self-referential narrative the DMN writes
+    would be written about the user instead."""
+    sm = make_manager(tmp_path)
+    sm.save_self_entity_id("aria-node")
+    sm.save_primary_entity_id("user-node")
+    assert sm.load_self_entity_id() == "aria-node"
+    assert sm.load_primary_entity_id() == "user-node"
+
+    raw = json.loads(sm.state_file.read_text())
+    assert raw["self_entity_id"] == "aria-node"
+    assert raw["primary_entity_id"] == "user-node"
+
+
+def test_saving_primary_entity_id_preserves_sibling_keys(tmp_path):
+    """The sibling-key guarantee this module already makes for every writer.
+    Writing the id must not clobber PAD, Energy or the self id."""
+    sm = make_manager(tmp_path)
+    sm.save_pad(PADState(0.7, 0.3, 0.6))
+    sm.save_energy(42.0)
+    sm.save_last_applied_valence("negative")
+    sm.save_self_entity_id("aria-node")
+
+    sm.save_primary_entity_id("user-node")
+
+    assert sm.load_pad() == PADState(0.7, 0.3, 0.6)
+    assert sm.load_energy() == pytest.approx(42.0)
+    assert sm.load_last_applied_valence() == "negative"
+    assert sm.load_self_entity_id() == "aria-node"
+    assert sm.load_primary_entity_id() == "user-node"
+
+
+def test_saving_primary_entity_id_writes_no_extra_files(tmp_path):
+    """The state dir holds exactly two files. A new key goes INSIDE
+    aria_state.json, never beside it."""
+    sm = make_manager(tmp_path)
+    sm.save_pad(PADState.baseline())
+    sm.save_self_model(SelfModel.default())
+    sm.save_primary_entity_id("user-node")
+    assert sorted(p.name for p in sm.state_dir.iterdir()) == [
+        "aria_state.json", "self_model.json"
+    ]
+    assert not list(sm.state_dir.glob("*.tmp"))
