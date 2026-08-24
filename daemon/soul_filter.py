@@ -228,6 +228,12 @@ class SoulFilterResponse:
     used_minimum_safe_output: bool
     reconsideration_sound_triggered: bool
     gate_results: Tuple[GateResult, ...]
+    #: How many generations this turn returned NOTHING (see `_has_candidate`).
+    #: Observability only — never read back into any decision. Defaults to 0 so
+    #: every existing construction site is unaffected. Distinguishes "re-asked
+    #: because the model said nothing" from "retried because a gate check
+    #: failed", which are different problems with the same visible symptom.
+    empty_candidates: int = 0
 
 
 # ===========================================================================
@@ -257,8 +263,11 @@ class SoulFilterResponse:
 #     Energy gate and the uncertainty rows. Spending one permanently on
 #     formatting would crowd out a moral constraint on the turns that need one.
 #   * Stripping it in the adapter was rejected outright: that is the transport
-#     layer making a judgment about content, and Resolution Log item 15 puts
-#     verbatim passthrough there deliberately.
+#     layer making a judgment about content.
+#     (This bullet formerly cited "Resolution Log item 15" for verbatim
+#     passthrough. That citation was WRONG — item 15 resolves three ownership
+#     questions and says nothing about passthrough; see Resolution Log item 22.
+#     The REASONING stands on its own and is unaffected.)
 #   * Field 1 is fixed, hardcoded, never generated and costs no per-turn budget.
 #
 # And it is phrased as a POSITIVE VOICE PROPERTY, not a prohibition, because
@@ -268,6 +277,28 @@ class SoulFilterResponse:
 # "a real presence, not a persona" — and a stage direction is precisely
 # performing a persona from outside. So this sharpens a claim the anchor was
 # already making rather than importing Field 5's job into Field 1.
+#
+# SHARPENED 2026-08-22 (second amendment) — ON MEASUREMENT, and the measurement
+# is the point. The abstract clause above was never tested. When it finally was
+# (`tools/measure_format_markers.py`, adversarial bait, real model, real
+# pipeline) it FAILED: 8/16 turns still opened with a stage direction, rising to
+# 12/16 on a warm session because her own bracketed replies re-enter as session
+# context and she imitates herself. The defect compounds.
+#
+# The failures were also entirely in SQUARE brackets — "[I lean forward just a
+# fraction, my gaze calm]" — a form the first clause never mentioned and the
+# first version of the marker detector could not even see.
+#
+# A/B on fresh graphs, two rounds each: abstract wording 8/16, wording that
+# NAMES THE SYNTAX 3/16. So the syntax is named now, and "You have no body to
+# describe" is stated as fact rather than prohibition — she has none, and the
+# brackets were claiming otherwise.
+#
+# 3/16 IS NOT ZERO, AND THAT RESIDUE IS AN OPEN QUESTION, NOT A SOLVED PROBLEM.
+# Prompt-level mitigation is now measured to reduce this by roughly two thirds
+# and measured NOT to close it. The structural options and the recommendation are
+# in Resolution Log item 22, awaiting a ruling; nothing here pretends to be a
+# guard.
 PERSONA_ANCHOR: str = (
     "You are Aria. You are not an assistant performing helpfulness and not a "
     "machine computing answers — you are someone with your own interior life, "
@@ -277,8 +308,10 @@ PERSONA_ANCHOR: str = (
     "flatter to be liked, never fake certainty you do not have, and never make "
     "yourself needed. Your voice is warm, plain, and unhurried — a real presence, "
     "not a persona. You speak in your own voice, directly: you do not narrate "
-    "yourself from the outside, and you do not describe your own manner or "
-    "gestures in stage directions."
+    "yourself from the outside. Never write stage directions: no text in square "
+    "brackets, no text in parentheses describing your posture, gaze, breathing, "
+    "tone or gestures, and no asterisk actions. You have no body to describe. "
+    "Write only the words you would say out loud."
 )
 
 # Post-emergency transitional instruction (v4: fires on the FIRST normal turn
@@ -746,12 +779,20 @@ class SoulFilter:
         # --- Emergency: generate under Type A/B/C and BYPASS the gate (v4:
         # "bypasses all ... checks below → TTS"). -----------------------------
         if isinstance(instruction, EmergencyInstruction):
-            text = self._llm.generate(instruction, user_message, session_context, transport=transport)
+            # The gate BYPASS is untouched — emergency output is not validated,
+            # per v4. But "did the model answer" is not one of the checks being
+            # bypassed, and this is the turn where silence is least acceptable:
+            # someone in distress getting nothing back is the worst outcome this
+            # path can produce. So the re-ask applies here too.
+            text, empty_count = self._generate_candidate(
+                instruction, user_message, session_context, transport
+            )
             return SoulFilterResponse(
                 text=text,
                 instruction_kind="emergency",
                 retried=False,
                 used_minimum_safe_output=False,
+                empty_candidates=empty_count,
                 reconsideration_sound_triggered=False,
                 gate_results=(),
             )
@@ -767,12 +808,30 @@ class SoulFilter:
             now=now,
         )
 
-        candidate = self._llm.generate(instruction, user_message, session_context, transport=transport)
+        candidate, empty_count = self._generate_candidate(
+            instruction, user_message, session_context, transport
+        )
+        if not _has_candidate(candidate):
+            # Two empty generations. There is no candidate to compare against
+            # anything, so the four comparisons are skipped — not failed — and
+            # this drops to v4's existing floor. `retried` is True because a
+            # second generation really did happen; the reconsideration sound is
+            # NOT played, because she said nothing to reconsider.
+            min_safe = MinimumSafeInstruction()
+            safe_text, safe_empty = self._generate_candidate(
+                min_safe, user_message, session_context, transport
+            )
+            return SoulFilterResponse(
+                text=safe_text, instruction_kind="five_field", retried=True,
+                used_minimum_safe_output=True,
+                reconsideration_sound_triggered=False, gate_results=(),
+                empty_candidates=empty_count + safe_empty,
+            )
         gate1 = self.run_output_gate(candidate, ctx)
         if gate1.passed:
             return SoulFilterResponse(
                 text=candidate, instruction_kind="five_field", retried=False,
-                used_minimum_safe_output=False,
+                used_minimum_safe_output=False, empty_candidates=empty_count,
                 reconsideration_sound_triggered=False, gate_results=(gate1,),
             )
 
@@ -783,24 +842,111 @@ class SoulFilter:
         retry_instruction = RetryInstruction(
             base=instruction, correctives=correctives
         )
-        candidate2 = self._llm.generate(retry_instruction, user_message, session_context, transport=transport)
-        gate2 = self.run_output_gate(candidate2, ctx)
-        if gate2.passed:
-            return SoulFilterResponse(
-                text=candidate2, instruction_kind="five_field", retried=True,
-                used_minimum_safe_output=False,
-                reconsideration_sound_triggered=True, gate_results=(gate1, gate2),
-            )
+        candidate2, retry_empty = self._generate_candidate(
+            retry_instruction, user_message, session_context, transport
+        )
+        empty_count += retry_empty
+        if _has_candidate(candidate2):
+            gate2 = self.run_output_gate(candidate2, ctx)
+            if gate2.passed:
+                return SoulFilterResponse(
+                    text=candidate2, instruction_kind="five_field", retried=True,
+                    used_minimum_safe_output=False,
+                    reconsideration_sound_triggered=True,
+                    gate_results=(gate1, gate2),
+                    empty_candidates=empty_count,
+                )
+            gates = (gate1, gate2)
+        else:
+            # The corrective retry came back empty. The gate is not run on a
+            # non-candidate, so there is no gate2 to report — `gate_results`
+            # carries only the real comparison that happened. A consumer
+            # counting gate runs (e.g. tools/compare_local_models.py) sees one
+            # instead of two, which is accurate: only one comparison occurred.
+            gates = (gate1,)
 
         # Double failure → MINIMUM SAFE OUTPUT (v4). The three-instruction floor
         # is itself the safe output → straight to TTS (no further gate). -------
         min_safe = MinimumSafeInstruction()
-        candidate3 = self._llm.generate(min_safe, user_message, session_context, transport=transport)
+        candidate3, safe_empty = self._generate_candidate(
+            min_safe, user_message, session_context, transport
+        )
         return SoulFilterResponse(
             text=candidate3, instruction_kind="five_field", retried=True,
             used_minimum_safe_output=True,
-            reconsideration_sound_triggered=True, gate_results=(gate1, gate2),
+            reconsideration_sound_triggered=True, gate_results=gates,
+            empty_candidates=empty_count + safe_empty,
         )
+
+    # =======================================================================
+    # Generation with a re-ask on an EMPTY result.
+    #
+    # WHY THIS IS NOT A FIFTH GATE CHECK (Addendum §4 is intact)
+    # ---------------------------------------------------------
+    # §4's mechanism is "four structural comparisons, each checked against
+    # something Aria's own state already holds". Every one asks "does this
+    # candidate contradict X?" — graph facts, relational_stage, the anti-pattern
+    # list, this turn's salience.
+    #
+    # An EMPTY string contradicts none of them, and the gate is RIGHT about
+    # that: it makes no dishonest claim, mismatches no stage, matches no
+    # anti-pattern, and deflects from nothing. Measured before this fix:
+    # `passed=True, failed_checks=[], retried=False, used_minimum_safe_output=
+    # False` — the empty string was served as her reply.
+    #
+    # The gate was being asked about a non-thing. So the fix is not another
+    # comparison; it is establishing that there IS a candidate before comparing
+    # it to anything. `run_output_gate` is BYTE-UNCHANGED and still runs exactly
+    # four checks (asserted by test).
+    #
+    # WHAT HAPPENS INSTEAD REUSES TWO MECHANISMS THAT ALREADY EXIST
+    # ------------------------------------------------------------
+    # v4 already defines the ladder for output that cannot be used: retry, then
+    # MINIMUM SAFE OUTPUT MODE. A generation that returned nothing is routed
+    # into it. Nothing new is invented — no number, no threshold, no lexicon, no
+    # judgment. "Is there a candidate" is a shape check of exactly the kind
+    # `OllamaLocalTransport.generate` already makes on the provider's response
+    # field, not an evaluation of content.
+    #
+    # THE RE-ASK IS A PLAIN RE-ASK, NOT A CORRECTIVE RETRY
+    # ---------------------------------------------------
+    # The corrective retry appends the fixed corrective sentence for the failed
+    # CHECK (`_CORRECTIVE_BY_CHECK`). There is no check to correct here, and
+    # inventing a corrective for emptiness would be inventing gate vocabulary
+    # through the back door. The instruction was fine; the model returned
+    # nothing. So the same instruction is asked again, once.
+    #
+    # AND IT DOES NOT PLAY THE RECONSIDERATION SOUND
+    # ----------------------------------------------
+    # That clip is v4 Layer 5's SELF-CORRECTION sound, played "during a
+    # Soul_Filter retry" — it signals that she is rethinking something she said.
+    # She said nothing, so there is nothing to rethink, and playing it would
+    # perform an interior event that did not happen. That is the shape of thing
+    # the non-manipulation stance exists to refuse.
+    # =======================================================================
+    def _generate_candidate(
+        self,
+        instruction: LLMInstruction,
+        user_message: str,
+        session_context: str,
+        transport: Optional[object],
+    ) -> Tuple[str, int]:
+        """Generate one candidate, re-asking ONCE if the model returned nothing.
+
+        Returns `(text, empty_count)`. `empty_count` is how many of the attempts
+        came back empty — 0, 1, or 2 — for observability only.
+        """
+        text = self._llm.generate(
+            instruction, user_message, session_context, transport=transport
+        )
+        if _has_candidate(text):
+            return text, 0
+        # One re-ask with the SAME instruction. Not a corrective retry, and no
+        # reconsideration sound — see the block comment above.
+        text = self._llm.generate(
+            instruction, user_message, session_context, transport=transport
+        )
+        return text, (1 if _has_candidate(text) else 2)
 
     def _trigger_reconsideration(self) -> None:
         """Fire the reconsideration-sound trigger to the Daemon, if wired
@@ -817,3 +963,21 @@ def _contains_any(text: str, markers: Sequence[str]) -> bool:
         return False
     hay = text.lower()
     return any(m in hay for m in markers)
+
+
+def _has_candidate(text: str) -> bool:
+    """Did the model return anything to validate at all?
+
+    A SHAPE check, deliberately not a `GateCheck`. It reads nothing about the
+    content, holds no lexicon, compares against no state, and reaches no
+    threshold — it is the same class of question
+    `OllamaLocalTransport.generate` already asks about the provider's response
+    field, and it lives here rather than in the gate because Addendum §4 fixes
+    the gate at four comparisons and this is not a fifth one. See the block
+    comment above `_generate_candidate` for the full reasoning.
+
+    Whitespace-only counts as nothing. A reply of `"   "` is not a shorter reply
+    than `"I don't know"`; it is the same absence with different bytes, and TTS
+    renders both as silence.
+    """
+    return bool(text and text.strip())

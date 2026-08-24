@@ -135,6 +135,52 @@ def test_prompt_mapping_omits_session_context_when_empty():
     assert system + "\n\n" + user == prompt.as_text()
 
 
+def test_initiative_turn_puts_the_instruction_where_ollama_will_answer_it():
+    """REGRESSION. This is the initiative turn: no user message, no session
+    context, five fields only.
+
+    The obvious mapping put the instruction in `system` and left `prompt` empty —
+    and `/api/generate` with an empty `prompt` is Ollama's WARM-THE-MODEL request,
+    the one `load()` in this same adapter uses deliberately. So it returned
+    `{"response": ""}` as a SUCCESS. Measured three identical calls, `''` each
+    time, and an empty reply passes Soul Filter's Output Gate untouched (its four
+    checks are honesty / consistency / manipulation / care; emptiness is none of
+    them). Initiative therefore produced no speech at all, invisibly, because the
+    no-op audio pipeline had nothing to reveal.
+
+    The same bytes still cross, exactly once. Only the field carrying them moves,
+    and only when there is no user turn.
+    """
+    prompt = AssembledPrompt(
+        instruction_text=FIVE_FIELD_TEXT,
+        user_message="",
+        kind="five_field",
+    )
+    system, user = split_prompt(prompt)
+    assert user == FIVE_FIELD_TEXT, "an empty prompt field is a warm request"
+    assert system == ""
+    # Sent once, not twice: duplicating it would change what the model sees.
+    assert (system + user).count(FIVE_FIELD_TEXT) == 1
+    # `as_text()` joins on the empty user message, so its rendering carries a
+    # trailing blank line here. Harmless — it is used for logging and for the
+    # identical-prompt proof, and whitespace changes neither — but it is why this
+    # compares stripped rather than exactly.
+    assert prompt.as_text().strip() == FIVE_FIELD_TEXT
+
+
+def test_a_prompt_with_no_text_at_all_is_refused_rather_than_warming(monkeypatch):
+    """The structural guard behind the mapping fix. If Soul Filter ever assembles a
+    prompt with no text anywhere, that must be an error — not a request that
+    Ollama answers successfully with ""."""
+    calls = _stub(monkeypatch, _replies())
+    transport = OllamaLocalTransport()
+    with pytest.raises(LLMTransportError, match="empty generation request"):
+        transport.generate(
+            AssembledPrompt(instruction_text="", user_message="", kind="five_field")
+        )
+    assert calls == [], "no request should reach the daemon"
+
+
 def test_prompt_mapping_is_identical_for_emergency_instructions():
     """Emergency REPLACES the five fields; the adapter must not notice or care.
     Session context is still appended in emergency mode (§9 amendment)."""

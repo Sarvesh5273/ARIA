@@ -156,6 +156,11 @@ def run_model(
                 "--host", host,
                 "--local-model", model,
                 "--runtime-root", str(workdir),
+                # This measures LOCAL models. A cloud key sitting in the
+                # environment must not silently make a comparison of local
+                # voices send anything to a third party — and a fallback tier
+                # answering a turn would corrupt the measurement as well.
+                "--no-cloud",
             ]
         )
         wiring = Wiring(args)

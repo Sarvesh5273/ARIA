@@ -7,7 +7,7 @@
 PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
 .DEFAULT_GOAL := help
-.PHONY: help bundle check-bundle test check selftest
+.PHONY: help bundle check-bundle test check selftest preflight
 
 help:
 	@echo "make test          run the pytest suite"
@@ -15,8 +15,19 @@ help:
 	@echo "make check-bundle  verify the bundle is in sync (writes nothing)"
 	@echo "make check         test + check-bundle — run this before committing"
 	@echo "make selftest      state_manager smoke check (module form, not by path)"
+	@echo "make preflight     what audio + visual would need on this machine"
+	@echo ""
+	@echo "Diagnostics — need a live backend, take minutes, NOT part of 'check':"
+	@echo "  $(PYTHON) tools/observe_dmn_pass.py         watch a real 8-minute idle pass"
+	@echo "  $(PYTHON) tools/compare_local_models.py     A/B local voices on gate metrics"
 	@echo ""
 	@echo "PYTHON=$(PYTHON)"
+
+# Answers "can she speak / can she see yet" without constructing anything or
+# needing a model backend. Cheap enough to be part of help rather than a doc.
+preflight:
+	$(PYTHON) main.py --audio-preflight
+	$(PYTHON) main.py --visual-preflight
 
 test:
 	$(PYTHON) -m pytest tests/ -q

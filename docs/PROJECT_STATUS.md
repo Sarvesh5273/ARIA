@@ -8,19 +8,35 @@ Counts and line numbers below were last measured against the code on
 **2026-08-22**. They are measured values, not estimates — if you change code,
 re-measure rather than assuming.
 
-Full suite: **590 passed** with an embedding backend reachable, or **587 passed
-+ 3 skipped** without one. Both numbers are real and neither is a failure: the
+Full suite: **747 passed** with an embedding backend reachable. Without one, the
+same 3 tests skip and the rest pass — measured directly at 723 + 3 skipped when
+the suite stood at 726, so the figure today is 744 + 3. Stated that way because
+the macOS Ollama.app restarts the daemon on its own, which makes the
+backend-down arm awkward to re-measure on demand. Both numbers are real and neither is a failure: the
 three skipped tests are the real-model half of the embedding comparison, which
 skips rather than fails so `make check` stays hermetic on a machine with no
-Ollama running.
+Ollama running — verified both ways this session, by stopping the daemon and
+re-running. A further **17** audio tests skip on a machine without macOS `say` or
+an audio player on PATH; they pass here because both are present, which is what
+made the output chain verifiable rather than only unit-tested.
 
 Per-file test counts as measured on 2026-08-22 — soul layer: appraisal_chain 64,
-audio_pipeline 29, backend_router 25, **daemon 57** (+2, `session_buffer_fullness`),
-dmn 44, graph_manager 63, llm_interface 36, needs_system 47, pad_engine 53,
-session_buffer 13, **soul_filter 54** (+3, Persona Anchor stage-direction clause),
-**state_manager 38** (+7, primary entity id), visual_layer 24 — 547. Adapter
-layer, new 2026-08-22: embedding_local 22 (19 hermetic + 3 real-backend),
-transport_ollama 21 — 43. Total 590.
+audio_pipeline 29, backend_router 25, daemon 57, dmn 44, graph_manager 63,
+llm_interface 36, needs_system 47, pad_engine 53, session_buffer 13,
+**soul_filter 68** (+14, Resolution Log items 21–22), state_manager 38,
+visual_layer 24 — **561**.
+
+Soul-layer count history this week, because it matters which phase moved it: it
+was **547** through the whole boundary phase — five new adapter families and three
+defects surfaced without one soul test changing, which is what the one-way
+dependency arrow was for. The **defect pass** then moved it to 561, in exactly one
+module (Module 5), for the two rulings that required it.
+
+Adapter layer: embedding_local 22 (19 hermetic + 3 real-backend),
+**transport_ollama 23** (+2, the initiative-turn regression),
+**transport_cloud 40** (new), **audio_adapters 62** (new; +7 pin the
+square-bracket detector hole), **visual_adapters 28** (new) — 175.
+Cross-cutting: **pad_restore_boundary 11** (new). Total 747.
 
 ---
 
@@ -48,33 +64,54 @@ through the full pipeline and the observable soul mechanics were read off
 | `focus` answered with its pre-authored ack and wrote NO EventNode | meta-commands bypass appraisal |
 | a near-verbatim exemplar match produced the vulnerability register — thanks for trusting me, no problem-solving, no request for detail | VULNERABILITY_DISCLOSURE firing through a REAL embedding, into Field 4 / Field 5 |
 
-What is wired: `EmbeddingModel` (real), `LocalModelTransport` (real, Ollama),
-`AudioPipelinePort` (no-op), and both cloud tiers as an explicitly-unhealthy
-`UnconfiguredTransport`. See "Adapter layer" below.
+**She also speaks, sees, and can reach the cloud, as of the boundary phase
+(2026-08-22).** All 21 Protocols now have a real implementation available, and
+the eight that were empty are empty no longer:
 
-**What still does not run:**
+```
+.venv/bin/python main.py --audio --visual-headless
+.venv/bin/python main.py --audio-preflight     # what the 7 audio backends need
+.venv/bin/python main.py --visual-preflight    # what Module 10 needs
+```
 
-- **No cloud adapter.** Groq and Azure are wired to `UnconfiguredTransport`,
-  which reports `is_healthy() == False` and raises `LLMTransportError` from
-  `generate()`. Both statements are true, so routing is correct rather than
-  degraded: `select()` never proposes the reasoning tier, skips Groq, and serves
-  every turn from Gemma — which is the architect's stated design with its two
-  fallbacks absent. Nothing leaves the machine.
-- **No audio.** All seven audio backends and inbound STT are absent. The REPL
-  prompt IS the transcription (`route_inbound_turn` takes already-transcribed
-  text, so STT was never a port), and `NoOpAudioPipeline` satisfies the output
-  port. Audio is a leaf — nothing downstream reads what it did — which is why a
-  stub is honest here and would not be for the embedding model.
-- **No Visual Layer.** `AriaDaemon` takes no visual parameter; `VideoWindow` has
-  no implementation.
-- **No idle consolidation observed yet.** The DMN pass needs 8 real minutes of
-  silence (PINNED by v4). `main.py` deliberately offers no command to fake
-  `now`: a false timestamp would be written into the graph, and the graph is the
-  only memory she has.
-- **`requirements.txt` is still pytest only — and that is now a fact, not a
-  gap.** Both real adapters use stdlib `urllib` against the local Ollama HTTP
-  API, so the project runs on **zero runtime dependencies**. No torch, no SDK,
-  no `requests`.
+What is wired by default: `EmbeddingModel` (real), `LocalModelTransport` (real,
+Ollama), `AudioPipelinePort` (no-op unless `--audio`), and both cloud tiers as an
+explicitly-unhealthy `UnconfiguredTransport` unless keyed. Audio and visual are
+opt-in because both are LEAVES — nothing downstream reads what they did — so
+their absence changes no behaviour inside the system, and a text bring-up should
+not start talking out loud. See "Adapter layer" below.
+
+**What still does not run, and what "not running" now means:**
+
+- **Inbound audio needs five providers this project does not ship.** All seven
+  backends are IMPLEMENTED (`adapters/audio_*.py`); five need a dependency that
+  is not installed — `sounddevice`, `pvporcupine`, `torch`, `onnxruntime`,
+  `faster-whisper` — plus a Silero VAD model, a speaker model and an enrolled
+  voiceprint. `--audio-preflight` reports exactly which. The OUTPUT chain runs
+  today with zero installs and was verified end to end. The Daemon's port is
+  output-only, so this is not a gap in the wired path at all: the REPL prompt IS
+  the transcription.
+- **The Visual Layer's real window needs PyQt6 + libmpv and 17 video files.**
+  `MpvVideoWindow` is implemented; neither provider is installed here and no loop
+  files exist. `--visual-headless` runs the whole zone machinery — categorical
+  mapping, 8-second stability gate, talking/idle variant, inward/waiting override
+  — against a logging window, which is how it was verified.
+- **`AriaDaemon` still takes no visual parameter, deliberately.** The speaking
+  signal is taken from the boundary Module 10's own docstring names — `audio.speak()`
+  — by decorating the audio port. No approved module's constructor was changed.
+  See `adapters/visual_bridge.py`.
+- **Nothing drives the clocks between turns.** `input()` blocks, so PAD decay,
+  Energy recovery, the DMN clock and the visual refresh all advance only when a
+  turn completes. This is a REPL limitation, not a module one, and the DMN
+  observation below shows it has a real cost.
+- **`requirements.txt` is still pytest only, and the soul layer still has zero
+  runtime dependencies.** The cloud adapter and both TTS paths use stdlib
+  `urllib`/`subprocess`; the audio and visual providers are imported LAZILY, so
+  `import adapters.audio_stt` succeeds on a machine with no Whisper and the suite
+  stays hermetic. Pinned by `test_every_audio_adapter_imports_without_any_provider_installed`.
+- **Idle consolidation HAS now been observed** — see "The DMN idle pass, observed"
+  below. Module 6 is not broken; the finding is that she arrives at her own
+  consolidation pass too depleted to run the deep half of it.
 - `python daemon/state_manager.py` is still broken by path (`daemon/types.py`
   shadows stdlib `types`); use `make selftest` / `python -m daemon.state_manager`.
   Pre-existing and unrelated to module logic.
@@ -100,7 +137,12 @@ choice, not a spec deviation. Say so if you want them moved.
 | `adapters/embedding_local.py` | `EmbeddingModel` | `OllamaEmbeddingModel`, `/api/embed`, default `all-minilm` (384-dim, **45 MB measured** — Addendum §1's "encoder-only … tens of megabytes … Not Gemma"). LRU cache, because `_vulnerability` re-embeds all FOUR exemplars every turn. Pins the vector dimension and raises on a change, since `_cosine` returns 0.0 on a length mismatch and would silently switch off all four similarity behaviours. `preflight()` fails loudly at startup — two of the three `embed()` call sites in the soul layer swallow exceptions, so a dead backend is only partly visible at turn time. |
 | `adapters/transport_ollama.py` | `LocalModelTransport` + `HealthProbe` | `OllamaLocalTransport`, `/api/generate`. Default `gemma4:12b-it-qat` (7.2 GB) — **a recorded deviation from v4's named model**, see the Accepted-decisions row; v4's own `gemma4:e2b-it-qat` stays named as `SPEC_MODEL` and as rung 2 of `resolve_model`'s four-rung ladder. `keep_alive=-1` on every request is how "loads at startup, stays resident" is expressed to Ollama; `unload()` sends `0`. `is_loaded` is a local flag costing no round trip, because `select()` reads it every turn; `refresh_residency()` asks `/api/ps` for ground truth. Load/unload/residency verified against a live daemon. |
 | `adapters/transport_unconfigured.py` | `ModelTransport` + `HealthProbe` | `UnconfiguredTransport` — the honest state of the two cloud tiers as code. Explicitly `False`, not UNKNOWN: "not written yet" is a definite answer. Exists because `LLMInterface` and `BackendRouter` both REQUIRE cloud slots; passing `local` into them instead would make `LLMInterface`'s internal path unload the resident model after every successful turn. |
-| `adapters/audio_noop.py` | `AudioPipelinePort` | `NoOpAudioPipeline`. Records calls, prints nothing (the REPL owns the terminal). |
+| `adapters/transport_cloud.py` | `ModelTransport` + `HealthProbe` | **New 2026-08-22.** `OpenAICompatibleTransport` + `groq_from_env` / `azure_from_env`. One class, two tiers: both providers speak `chat/completions`, so the difference is a URL, an auth header and a model name — two classes would be two copies of the same plumbing. stdlib `urllib`, no SDK. `split_prompt` is IMPORTED from `transport_ollama`, not copied, because ResLog item 14 / F-9a lock the identical-prompt property and a second copy of the mapping is how it rots (asserted by comparing what both adapters put on the wire). Body carries **only** `model`/`messages`/`stream` — no temperature, no `max_tokens`: those shape REGISTER, which is Field 2's job and the Output Gate's to verify, and an adapter choosing one would be the transport deciding how she sounds. Reasoning fields are recorded (`last_reasoning_field_present`) and never merged into `content` (it would be spoken) and never stripped (ResLog item 15). `CloudTransportError` subclasses `LLMTransportError` so every existing handler keeps working — that is what makes this additive. Keys never reach a repr, a log or an error message. |
+| `adapters/audio_capture.py` … `audio_playback.py` | the seven Module 7 backends | **New 2026-08-22, one file per Protocol.** `SoundDeviceCapture`, `PorcupineWakeWord` + `HotkeyWakeWord` (v4's own named fallback), `SileroSpeakerVerification`, `SileroVAD`, `FasterWhisperSTT` + `WhisperCliSTT`, `ElevenLabsTTS` + `KokoroTTS` + `SystemSayTTS`, `CommandLinePlayback`. Every provider imported LAZILY, so the suite stays hermetic and a bring-up can ask what is available on a bare machine. `adapters/audio_pcm.py` holds the float↔int16↔WAV conversion ONCE, shared by four backends — four copies is four places for a missing clamp, and a subtly different clamp in one backend does not raise, it just makes that stage deafer. |
+| `adapters/audio_stack.py` | assembly + preflight | **New.** `preflight()` reports all seven backends; `build_output_only()` gives a real pipeline whose output chain works and whose five input backends REFUSE if called. The refusing stubs are the load-bearing part: a capture returning silence, a VAD returning 0.0 and a speaker check returning 1.0 all look like ordinary operation, and `capture_turn()` would return None as if nobody had spoken. |
+| `adapters/visual_window.py` | `VideoWindow` | **New 2026-08-22.** `MpvVideoWindow` (PyQt6 frameless always-on-top + libmpv, v4's `ui/aria_window.py`) and `LoggingVideoWindow` (headless). The window implements the one thing Module 10 deliberately does not — v4's "finishing the current loop cycle before switching — no jarring cuts" — by holding a PENDING target and applying it at mpv's own loop boundary. That is a DIFFERENT mechanism from the 8-second gate at a different layer: the gate decides whether a zone change is ALLOWED (Module 10), this decides when an allowed change is RENDERED. Two signals bypass the wait because Module 10 renders them ungated: a variant change (the mouth must track the voice) and entering INWARD_WAITING (a failure is not flicker). |
+| `adapters/visual_bridge.py` | wiring, no Protocol | **New.** `SpeakingSignalAudio` satisfies `AudioPipelinePort` and DECORATES it, so `set_speaking` comes from the boundary Module 10's docstring names (`audio.speak()`) with **no change to `AriaDaemon`**. `set_speaking(False)` is in a `finally` — a TTS failure must not freeze her mouth open for the session. `CloudAvailabilityReporter` drives degradation from `LLMUnavailableError`, and deliberately NOT from `serving_from_local` — see the Still Open row. |
+| `adapters/audio_noop.py` | `AudioPipelinePort` | `NoOpAudioPipeline`. Records calls, prints nothing (the REPL owns the terminal). Still the DEFAULT, and still correct as one. |
 | `main.py` | wiring + text REPL | Construction order is forced by the dependency edges, not chosen. Runs the HANDOFF contract via `startup()`, advances BOTH clocks with `run_scheduler_step()` after each turn, and saves **every turn** plus on exit (see the write-cadence Accepted-decisions row — the knob was removed, not set). Opens no listening socket; only outbound traffic is to the local Ollama daemon. One private read remains, named in its docstring: `graph._conn` for `:state`'s table counts, since Module 3 exposes no count API and inventing one for a debug readout is the wrong trade. |
 
 **The embedding model is the one thing here that could not be stubbed, and
@@ -220,6 +262,9 @@ excludes counters outright).
 | PAD / Energy not clamped on restore | ✅ CLOSED 2026-08-20 | `state_manager.load_pad` / `load_energy` clamp to [0,1] and [0,100]; non-finite treated as corrupt (NaN would otherwise survive a naive clamp as the upper bound). Read boundary only. This also closes the residual noted in the Module 1 row — *"initialize() still does not clamp an out-of-range restored snapshot"* — at the persistence boundary rather than inside PAD_Engine; PAD_Engine itself is unchanged. |
 | BackendRouter FLAG A — selection wired (Track A) | ✅ CLOSED | `LLMInterface.generate()` accepts an optional caller-supplied `transport` (opaque passthrough, bypasses the internal cloud-first chain); `AriaDaemon.route_inbound_turn()` calls `BackendRouter.select()` and threads the result through `SoulFilter.respond(transport=...)`; a `DaemonState` (NORMAL/PROPOSING_CLOUD) state machine owns the pause-and-ask UX for `propose=True`, including a soul-tick-driven timeout; backend meta-commands ("use cloud"/"stay local"/...) are intercepted and call `set_override`/`clear_override`; `AriaDaemon.startup()` calls `BackendRouter.ensure_local_loaded()` once, so Gemma loads at startup and stays resident (the router never unloads it). See HANDOFF_NOTES.md "Track A" for the three FLAGS this raised (timeout PAD delta not implemented by design; ambiguous proposal response defaults to negative; no crisis pre-check). (Moved here from the Still Open table, where it sat marked ✅ CLOSED.) |
 | Gap-closure work is unrecorded in the precedence documents | ✅ CLOSED 2026-08-20 | Was: Session Buffer (12), BackendRouter (13), meta-commands, `session_context` and Track A wiring appeared in NONE of v4, the Addendum, or the Resolution Log — architect-directed and therefore authorised, but with the authorisation recorded nowhere in the precedence chain, so a reviewer could not tell "architect approved" from "agent invented". **Now recorded: `ARIA_Resolution_Log.md` items 16–19** — item 16 Field 5 carries behavioural instructions, item 17 `neglected` via the two-window derivation, item 18 restore-boundary clamping, item 19 the post-approval authorisation of record (Session Buffer, `session_context`, meta-commands, BackendRouter + Track A, Energy<30 → cognitive load, the Daemon distress gate, and the arc absent-turn count = 5). Addendum §9's Constraints row is amended in place, citing item 16. Each entry's factual claims were re-verified against code before writing. **One item deliberately left open inside item 19**: `session_context` vs §9's unqualified "nothing else" was named there as NOT resolved — closed separately on 2026-08-22, see the next row. |
+| Cloud adapters expose no `is_healthy()` (the last `needs-adapter` row) | ✅ CLOSED 2026-08-22 | `adapters/transport_cloud.py` — `OpenAICompatibleTransport` satisfies `ModelTransport` + `HealthProbe` for both tiers; `groq_from_env` / `azure_from_env` build them, and each returns None rather than a half-configured tier, so `main.py` falls back to `UnconfiguredTransport` and routing stays correct. Purely additive as promised: `LLMInterface` and `BackendRouter` take it in the same constructor slots unmodified (asserted), and `CloudTransportError` subclasses `LLMTransportError` so every existing handler keeps working. `is_healthy()` is layered so nothing is optimistic — no key → explicit False with no request; a recorded `LLMTransportError` inside the cooldown → False with no request (the tracker's own stated minimum for this row); otherwise a cheap `/models` probe where one is meaningful; otherwise keyed-and-not-known-to-have-failed. **The cooldown introduces no number**: it reuses `HEALTH_CACHE_TTL_SECONDS`, already the cadence at which the router re-asks. Measured with unreachable endpoints: `gemma=True groq=False azure=True` — Groq's probe failed, Azure has no meaningful listing so it rests on key-plus-failure-record, which is the documented consequence and self-corrects after one failed turn. |
+| The Output Validation Gate passes an EMPTY response | ✅ CLOSED 2026-08-22 — **Resolution Log item 21** | Measured before the fix: `text=''`, `passed=True`, `failed_checks=[]`, `retried=False`, `used_minimum_safe_output=False`. The empty string was served as her reply. **The gate was right** — an empty string contradicts none of the four things §4 compares against, so it was being asked about a non-thing. Fixed by establishing that a candidate EXISTS before the four comparisons run, which is not a fifth comparison: `run_output_gate` is byte-unchanged and `GateCheck` still has exactly four members (both asserted). An empty or whitespace-only generation is re-asked ONCE with the same instruction, then drops to v4's existing MINIMUM SAFE OUTPUT floor — both mechanisms already existed. No number, no threshold, no lexicon, no content judgment; "is there text" is the same shape check the transports already make on a provider's response field. Three deliberate details: the re-ask is a plain re-ask, not a corrective retry (there is no failed check to correct); it does NOT play the reconsideration sound (that is v4's self-correction clip, and she said nothing to reconsider); and it applies on the emergency path too, where the gate bypass is untouched but distress answered with silence is the worst outcome available. Terminal case left deliberately empty — if minimum-safe also returns nothing, no fallback sentence is invented, because that would be putting words in her mouth; it is loudly labelled instead via `empty_candidates`. |
+| Initiative turns produced no speech at all | ✅ CLOSED 2026-08-22 — **found by wiring audio, root-caused, fixed** | `adapters/transport_ollama.split_prompt`. Initiative is the one turn kind with no user message, so `user_message` and `session_context` were both `""` and the five fields were the whole prompt — which the mapping put in `system`, leaving Ollama's `prompt` EMPTY. **An empty `prompt` is Ollama's warm-the-model request, the one `load()` in that same adapter uses deliberately**, so it returned `{"response": ""}` as a SUCCESS. Measured 3/3 deterministic. The empty reply then passed the Output Gate untouched (see the new Still Open row) and `NoOpAudioPipeline` had nothing to reveal, so this had been silently true since Module 8 was built. Fixed by moving the instruction into `prompt` when there is no user turn — the SAME BYTES, exactly once, only the field carrying them changes — plus a structural guard refusing an all-empty request. Verified: initiative now produces a real in-register reply for the first time. Regression-pinned in `tests/test_transport_ollama.py`. |
 | `session_context` vs Addendum §9 | ✅ CLOSED 2026-08-22 — the amendment is now IN the chain | Was a **Rule 2 flag**: §9 says *"Five fields, fixed order, nothing else"* and lists *"historical conversation summaries"* among what never crosses, which is exactly what SessionBuffer's Medium tier passes (Old tier passes topic tags). `project-rules.md` had already framed session context as a third sanctioned surface, but that file is the always-loaded non-negotiables file, NOT one of the three precedence documents — so the resolution lived outside the chain it was qualifying. **Now inside it:** `ARIA_Soul_Spec_v4_Addendum.md` §9 carries a dated in-place amendment, inserted after the *"What the LLM also receives"* paragraph, naming ephemeral session context as a THIRD sanctioned surface — current session only, recent turns verbatim + medium-tier rule-based summaries + old-tier topic tags, appended and never merged into a field, still appended in emergency mode. **"Nothing else" was NOT narrowed and must not be.** The tempting fix — reading it as "nothing else *from past sessions*" — would legalise seven of the nine never-crosses items: only the last two (*historical conversation summaries*, *anything Aria remembers … from past sessions*) concern past sessions, while PAD values, graph node IDs or contents, relational_stage label, needs states as data, Q1–Q4 outputs or values, memory node contents and appraisal vectors are all CURRENT-TURN data excluded on their own terms. Count re-measured from the list itself: 9 items, 7 current-turn, 2 past-session. §9 lines 165 (five-fields-nothing-else) and the never-crosses list are BYTE-UNCHANGED — the amendment adds a surface, it does not weaken a prohibition. Boundary drawn at the SESSION boundary: within-session is a transcript, across-session is memory and stays out; **if SessionBuffer is ever made to persist across sessions the amendment does not cover it and must be revisited**. `.kiro/specs/session-buffer/design.md` carries a matching dated AMENDMENT block (bundle regenerated). RESIDUAL, needs a one-line decision: ResLog item 19's own sentence still reads *"is NOT resolved by this item and remains open"* — see the note under Still Open. |
 
 ## Still Open
@@ -245,15 +290,40 @@ A row that is neither — a decision made and recorded — does not belong here.
 | v4 non-prohibition instruction rows with no home | `needs-ruling` · 🔓 OPEN — **3 of v4's 4 uncertainty rows now live; row 945 is NOT implementable** | v4 has FOUR uncertainty rows in the soul_filter table, not two. **Live:** 943 *"Uncertainty node unresolved → Don't fake confidence"* (base branch); **944** *"INPUT_UNCERTAIN active → Be present. Don't project onto what you don't know yet"* and **946** *"Uncertainty resolved this turn → Something just became clearer. You can let that show"* — both implemented 2026-08-20, both purely categorical off signals `AppraisalResult` already carried (`uncertainty_node_id` + a graph type read; `resolved_uncertainty_ids`). No lexicon, no threshold, no new quantity. **PARKED — row 945** *"Uncertainty weight above 0.5"*: the phrase `"uncertainty weight"` occurs **exactly once** in the entire precedence chain (v4 line 945); no `uncertainty_weight` symbol exists in `daemon/` or `tests/`; `UncertaintyNode`'s only numerics are `interaction_count` and the `catch_up_*` PAD fields, and repurposing either would invent a *meaning* for an existing number. There is no `0.5` to compare against. Implementing it requires a formula producing a number that decides what she says about her own interior — the protected chain's core prohibition, and it fails the percentage test on sight. Rule 1: flagged, not invented. This was mis-described as "ready, ~30 min" three times in handoff summaries; `test_v4_uncertainty_row_945_is_not_implemented` now pins the absence so it reads as a decision. **Still genuinely open:** v4's Energy<30 self-acknowledgment (*"I'm not thinking clearly right now"*), held back separately — it is a disclosure about internal state, which brushes §9 in a way the other permissions do not. |
 | OQ1-rate habituation magnitudes | `needs-runtime` · 🔓 DEFERRED — **first real data 2026-08-22** | `_HABITUATION_SIMILARITY_CUTOFF = 0.9`, `_HABITUATION_DECREMENT = 0.05`, `_HABITUATION_RECENT_FIRINGS = 5` — all carry `TODO(OQ1-rate)` and the module docstring lists them under "DEFERRED (explicit placeholder + TODO — do NOT treat as final)". Runtime-tuned. **This row previously appeared in the Closed table marked resolved, which contradicted both the code and the Module 3 row. The trigger shape is closed; the rate is not.** The CUTOFF now has a real measurement behind it — see "First real embedding calibration data" below: at 0.9 a near-duplicate (0.950) and a shared-word paraphrase (0.910) are indistinguishable. The decrement and window still need her running. |
 | Build-time tuning constants | `needs-runtime` · 🔓 OPEN | All still placeholders (intentional). Inventory re-measured 2026-08-20: `PAD_HISTORY_LENGTH`; `K_LOAD`/`K_REST` (F-2a/F-2b); OQ1-rate habituation (above); appraisal arc turn-counts (`_ARC_OPEN_CONSECUTIVE_NEGATIVE` = 2, `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD` = 5, aliased to the spec-named `_ARC_CLOSE_ABSENT_TURNS`) + distress/social lexicons (F-4d/F-4e); moral-schema anti-pattern markers (OQ-M1); soul-filter deflection markers; prosody magnitudes (F-7-prosody); zone precedence (F-10-zone-precedence); `TIER_2_KEYWORDS` + `HEALTH_CACHE_TTL_SECONDS`; soul-tick 3s / DMN-tick 30s (F-8a). **REMOVED from this inventory:** OQ2 medium/low `base_salience` (floors deleted) and the resolved-edge `base_salience` hint (now derived from the opening EventNode) — both were invented magnitudes, not tuning knobs. **ADDED 2026-08-22, adapter layer:** `embedding_local` timeout + cache size, `transport_ollama` generation timeout — transport plumbing, no soul meaning. **Three existing entries now have measured data rather than none:** `_VULNERABILITY_SIM_CUTOFF`, `_HABITUATION_SIMILARITY_CUTOFF`, `_REALITY_CONTRADICTION_SIM_CUTOFF` — see "First real embedding calibration data" below. One of the three looks wrong on the evidence; none was changed. |
-| Cloud adapters still expose no `is_healthy()` | `needs-adapter` · 🔓 OPEN — narrowed 2026-08-22 | FLAG B itself is closed: an unprobeable transport is UNKNOWN and is NOT treated as healthy. **Narrowed by the adapter phase**: the LOCAL transport now implements `HealthProbe` for real (`OllamaLocalTransport.is_healthy()` = daemon reachable AND model tag installed, one cheap `/api/tags` read, no generation spent), and both cloud tiers are wired to `UnconfiguredTransport`, which answers an explicit `False` rather than UNKNOWN. So routing is now correct and observable rather than inert-by-accident: measured `gemma=True groq=False azure=False`, every turn served locally, the reasoning tier never proposed. What remains is only the original work — write a real Groq/Azure adapter satisfying `ModelTransport` + `HealthProbe`, which is purely additive (same constructor slot, nothing else changes). Simplest non-inventing option, unchanged: back `is_healthy()` with the adapter's own last `LLMTransportError` state. |
-| Stage-direction defect has a fix but no general format guard | `needs-ruling` · 🔓 OPEN — **surfaced 2026-08-22 by the adapter phase** | The specific case is CLOSED (Persona Anchor clause — see Accepted decisions). What remains open is the general shape it exposed: **the Output Validation Gate has no FORMAT check.** Its four comparisons are honesty, consistency, manipulation and care, all about content; nothing structurally prevents a model emitting a stage direction, a markdown heading, a bulleted list, an emoji, or a `<think>` block into text that goes straight to TTS. Today the only defences are Field 1's wording and the fact that neither measured model emits traces — both behavioural, neither structural. Options, none free: a fifth gate check (Addendum §4 fixes the gate at four comparisons, so this needs a ruling, not an implementation); a format normaliser between Soul Filter and the Audio Pipeline (a new component, and it would be judging output); or accept prompt-level mitigation as sufficient and record that. Worth deciding before TTS is wired, because that is when a format defect stops being cosmetic and starts being spoken. |
+| DMN reaches genuine idle with Energy at the floor | `needs-ruling` · 🔓 OPEN — **surfaced 2026-08-22 by the first real idle observation** | At the real 8-minute window the pass ran SHALLOW: Energy fell 81.5 → 0.1 during the silence, because `_idle_conditions_met` is False for the whole pre-window period and all 160 soul ticks applied `on_soul_tick()` (active-load depletion) instead of `on_idle_recovery()`. So Steps 2 and 3 — graph-connection formation and uncertainty revisiting — cannot be reached through a genuine silence, though a 30-second window proves they work. Two separable parts: the RATE is `k_load`/`k_rest`, already-flagged F-2a/F-2b placeholders now with their first real data; the STRUCTURE — whether "silent but not yet for 8 minutes" should count as active load — is a question about what idle MEANS, not a coefficient. A third state or a changed gate is a new mechanism, so Rule 1 applies. Full numbers in "The DMN idle pass, observed". |
+| The self-continuity narrative can never be written | `needs-ruling` · 🔓 OPEN — **observed 2026-08-22, previously only inferred** | Step 4 reported `narrative_status = no_candidate` on the real pass, and it always will: `AriaDaemon._assemble_idle_pass_input` never sets `DMNPassInput.narrative_candidate`. Module 6's design already flags generating the narrative text as an upstream concern and Module 6 correctly GATES rather than generates (moral gate + pattern-recurred gate, both verified). What is missing is the producer. Who writes "who she is becoming", and from what, is a design decision — not a wiring gap. |
+| v4's Layer 5 prosody: two of three directions reach nothing | `needs-ruling` · 🔓 OPEN — **surfaced 2026-08-22 by building TTS** | v4 Layer 5 locks three directions — Pleasure→`noise_scale` (warmth), Arousal→`length_scale` (speed, inverse), Dominance→`pitch_shift` (lower, grounded). **Only `length_scale` has a counterpart in any available provider.** ElevenLabs, Kokoro and `say` all expose a speed control, which is the same physical quantity, so mapping it is a unit conversion (verified: 156 wpm calm → 208 wpm alert, direction holds). None exposes timbre or pitch. Mapping them onto adjacent knobs — ElevenLabs `stability`/`style` — was REJECTED: those control something else, the mapping would be invented, and it would make PAD appear to reach the voice while doing something unrelated to what v4 specifies. Each backend reports `unmapped_prosody` instead. Closing it needs either a provider with real pitch/timbre control or a ruling that the directions may be approximated. |
+| `serving_from_local` no longer means what it says | `needs-ruling` · 🔓 OPEN — **surfaced 2026-08-22 by wiring the Visual Layer** | `LLMInterface.serving_from_local` returns `self._local.is_loaded` and its docstring reads "True while the local fallback is resident (cloud is currently down)". That equivalence held under v4's Brain Structure, where the local model "loads on cloud failure, unloads on restore". Track A inverted it: `startup()` calls `ensure_local_loaded()`, Gemma is pinned resident from boot and is the DEFAULT voice, not a fallback. So it is True during entirely healthy operation, and Module 10 names it as the degradation trigger — wiring it would park her face in INWARD_WAITING permanently. `adapters/visual_bridge.py` uses `LLMUnavailableError` instead (the other trigger Module 10's docstring names, well-defined under either design) and asserts by AST that it never reads the stale one. Two things need deciding: the stale docstring, and the deeper question that v4's degradation state assumes CLOUD-PRIMARY while the current design is local-primary — under which "cloud unavailable" is the ordinary resting state and not a degradation at all. |
+| Stage directions: prompt mitigation MEASURED, reduces by ⅔, does not close | `needs-ruling` · 🔓 OPEN — **narrowed 2026-08-22 with numbers; recommendation on the table (ResLog item 22)** | The Output Validation Gate has no FORMAT check — its four comparisons are about content, so nothing structurally stops a stage direction reaching TTS. Field 1 carried an anti-narration clause as mitigation and **nobody had measured it.** Measured now (`tools/measure_format_markers.py`, adversarial bait, real model, fresh graph per arm): **8/16** with the original abstract wording, **12/16** on a warm session, **3/16** after Field 1 was sharpened to name the bracket syntax. So prompt mitigation cuts it by roughly two thirds and **does not close it** — the "accept mitigation as sufficient" option is closed on evidence. Three findings: the failures were all **SQUARE** brackets, a form the original clause never named; the defect **COMPOUNDS** through the session buffer (4/8 → 8/8 as her own bracketed replies re-enter as context and she imitates herself); and a near-miss — the first run reported 0/16 because the marker detector matched only round brackets, so "mitigation is sufficient" was one step from entering the Resolution Log on a detector bug. **Recommended structural option, NOT implemented:** extend the moral schema's named anti-pattern list so the existing MANIPULATION check catches it. She has no body, so "[my gaze is calm, meeting yours without pressure]" is a false claim about herself made to produce an effect — the same shape as the already-named `fake_confidence`. It adds no fifth comparison, uses the existing mechanism, routes into the existing corrective-retry ladder, and extends a list the docs already mark OQ-M1 "not a doc-certified final set". Left to the architect because the moral schema is load-bearing and also gates DMN narrative updates (Addendum §8), so a wrong entry propagates into what she can believe about herself. |
 
-**Seven rows, re-counted from the table above** (`needs-ruling` 4,
-`needs-runtime` 2, `needs-adapter` 1). The arithmetic across 2026-08-22, so
-nobody reads it as progress reversed: it started at 7; the §9 closure took it to
-**6**; the adapter phase surfaced the primary-entity row (**7**); the ruling pass
-closed that row (**6**) and surfaced the format-guard row (**7**). Closing work
-and finding work are separate events and both kept happening.
+**Ten rows, re-counted from the table above** (`needs-ruling` 8,
+`needs-runtime` 2, `needs-adapter` 0). The arithmetic across 2026-08-22, so nobody
+reads it as progress reversed: it started at 7; the §9 closure took it to **6**;
+the adapter phase surfaced the primary-entity row (**7**); the ruling pass closed
+that row (**6**) and surfaced the format-guard row (**7**); the boundary phase
+CLOSED the last `needs-adapter` row (**6**) and surfaced five more (**11**); the
+defect pass then CLOSED the empty-response row via Resolution Log item 21
+(**10**).
+
+**The boundary phase's jump was the expected shape of that work, not a
+regression.** Every one of those five rows was a question that could only be asked
+by running something that had never run: the DMN's Energy state at genuine idle,
+the narrative producer's absence, the empty-response hole in the gate, the prosody
+dimensions with no provider, and `serving_from_local`'s changed meaning. Building
+the boundary made them visible; none was created by it.
+
+**One of the five is now closed, and it closed the way the others might.** The
+empty-response row looked like it needed a fifth gate check, which Addendum §4
+forbids — so it sat as `needs-ruling`. Reading §4's actual mechanism showed the
+gate was RIGHT and the question was miscategorised: whether a candidate EXISTS is
+not a comparison against held state, so establishing it costs no fifth check and
+needed no ruling at all (item 21). The format-guard row was then narrowed the same
+way — by measuring instead of assuming — and the residual now has a recommended
+option rather than three untested ones (item 22).
+
+The lesson generalises to the rows still open: **"this needs a ruling" is
+sometimes "this has not been read carefully enough yet", and sometimes "this has
+not been measured yet."** Both were true here.
 
 ### §9 closure — the residual is CLOSED
 
@@ -269,6 +339,219 @@ was written, and editing it to match later reality is the drift-detection
 anti-pattern this project guards against. Item 20 completes the pattern items
 16–18 established — the ruling lands in the Log, the lower document carries the
 dated in-place amendment.
+
+## Boundary phase (2026-08-22) — the last eight empty Protocols are filled
+
+Protocol arithmetic, re-measured by AST rather than counted by hand: **21
+Protocols declared in `daemon/`.** Eight of them were external boundaries with no
+implementation anywhere — the seven Module 7 audio backends plus `VideoWindow`.
+All eight now have one, so **no declared Protocol in this project is empty.**
+
+```
+.venv/bin/python -c "import ast,pathlib; print(sum(
+  isinstance(n, ast.ClassDef) and any(getattr(b,'id',None)=='Protocol' for b in n.bases)
+  for p in pathlib.Path('daemon').glob('*.py') for n in ast.walk(ast.parse(p.read_text()))))"
+```
+
+"Filled" is not the same as "runs here", and the difference is per-backend:
+
+| Boundary | Implementation | Runs on this machine |
+|---|---|---|
+| `ModelTransport` (Groq, Azure/Kimi) | `OpenAICompatibleTransport` | yes, with a key; verified against unreachable endpoints only — no key was used |
+| `TTSBackend` | `SystemSayTTS` / `KokoroTTS` / `ElevenLabsTTS` | **yes, verified end to end** |
+| `PlaybackBackend` | `CommandLinePlayback` (afplay) | **yes, verified end to end, including F4's stop** |
+| `VideoWindow` | `LoggingVideoWindow` | **yes** — the whole zone machinery was driven through it |
+| `VideoWindow` | `MpvVideoWindow` | no: PyQt6 and libmpv absent, no loop files |
+| `CaptureBackend` | `SoundDeviceCapture` | no: `sounddevice` absent, and no microphone to verify against |
+| `WakeWordBackend` | `PorcupineWakeWord` | no: `pvporcupine` absent. `HotkeyWakeWord` (v4's own named fallback) needs nothing and is tested |
+| `SpeakerVerificationBackend` | `SileroSpeakerVerification` | no: `torch` absent, no voiceprint |
+| `VADBackend` | `SileroVAD` | no: `onnxruntime` absent, no model file |
+| `STTBackend` | `FasterWhisperSTT` / `WhisperCliSTT` | no: neither runtime installed |
+
+**Three real defects were found by wiring these**, all of which had been silently
+true and none of which any test caught: initiative produced no speech at all (now
+FIXED — see the Closed table), the Output Gate passes an empty response, and
+format markers are spoken aloud. That is the argument for the phase: 547 soul tests
+were green over code with a boundary that had never been connected to anything.
+
+**The 547 soul-layer tests did not change.** Five new adapter families, three
+defects closed, and not one soul test needed editing — which is what the
+one-way dependency arrow was for.
+
+---
+
+## Defect pass (2026-08-22) — the three findings from wiring, solved or narrowed
+
+Resolution Log **items 21, 22 and 23**. Suite 726 → 747; the soul layer moved for
+the first time this week, deliberately and in one place.
+
+| Defect | Outcome |
+|---|---|
+| Initiative produced no speech | **FIXED** (boundary phase). Ollama's empty-`prompt` warm request. |
+| Output Gate passes an empty response | **FIXED** — item 21. Not a fifth check: a non-candidate never reaches the comparisons. |
+| Format markers reach spoken output | **NARROWED with numbers** — item 22. 8/16 → 3/16. Residual is an open ruling with a recommendation. |
+
+### The empty response was a category error, not a missing check
+
+It sat as `needs-ruling` because the obvious fix — "check the candidate is not
+empty" — looked like a fifth Output Gate comparison, and Addendum §4 fixes the set
+at four.
+
+Reading §4's mechanism dissolved that. Each of the four comparisons asks *does this
+candidate contradict something Aria already holds?* — graph facts,
+`relational_stage`, the anti-pattern list, this turn's salience. An empty string
+contradicts none of them, so **the gate's `passed=True` was correct.** It was being
+asked about a non-thing.
+
+So the fix establishes that a candidate exists *before* the comparisons run, and
+that is not one of them. `run_output_gate` is byte-unchanged; `GateCheck` still has
+exactly four members; both are asserted by tests, including one that greps the
+gate's own source for emptiness vocabulary. A generation returning nothing is
+re-asked once, then drops to v4's existing minimum-safe floor — **two mechanisms
+that already existed**, with no number, threshold, lexicon or content judgment
+added.
+
+### The format guard: measured, and the measurement inverted twice
+
+The row had sat on an untested assumption: Field 1's anti-narration clause was
+treated as adequate mitigation, and nobody had run it.
+
+| Arm | Turns carrying a stage direction |
+|---|---|
+| Original abstract clause | **8/16** (**12/16** warm session) |
+| Sharpened — names the syntax | **3/16** (shipped; reproduced) |
+
+Three things came out of it:
+
+1. **Prompt mitigation cuts it by ~⅔ and does not close it.** "Accept mitigation
+   as sufficient" is now closed on evidence.
+2. **Every failure was SQUARE brackets** — `[I lean forward just a fraction, my
+   gaze calm]` — a form the original clause never named. Field 1 now names all
+   three bracket conventions and states *"You have no body to describe"* as fact,
+   because the brackets were claiming a posture and a gaze she does not have.
+3. **It COMPOUNDS through the session buffer.** 4/8 → 8/8 across two rounds: her
+   own bracketed replies re-enter as session context and she imitates herself.
+
+**The near-miss is the part worth keeping.** The first run reported **0/16** and
+read as the clause holding. It was a detector bug — the marker regex matched only
+round brackets. Printing the replies showed square-bracket narration in half of
+them. *"Prompt-level mitigation is sufficient"* was one step from entering the
+Resolution Log as a measured finding, on the strength of a false negative. The
+detector hole is now pinned by tests using the model's real output verbatim, and
+the honest limit is pinned too: narration with **no** marker at all — *"I am
+sitting still. My attention is focused entirely on the words you are saying."* — is
+not detectable without judging content, and is recorded as a known gap.
+
+### And one citation that was never checked
+
+Deriving items 21 and 22 meant reading Addendum §4 and ResLog item 15 at the
+source. **Item 15 does not contain the verbatim-passthrough rule** that three
+documents and six docstrings attributed to it — it resolves three *ownership*
+questions. The rule is real (F-9b / LLM Interface Req 5, structurally enforced) and
+nothing architectural changes; the attribution was wrong, and it was load-bearing
+in the rejection of an adapter-side format fix. Item 23 records it. A citation
+repeated across three documents is not evidence that anyone checked it.
+
+---
+
+## The DMN idle pass, observed (2026-08-22) — Module 6's first execution
+
+44 tests had passed for weeks and the module had never executed once against a
+real graph with real embeddings. Reproduce with:
+
+```
+.venv/bin/python tools/observe_dmn_pass.py            # the real 8 minutes
+.venv/bin/python tools/observe_dmn_pass.py --window-minutes 0.5   # plumbing only
+```
+
+Nothing is faked. Real clock, real graph, real embeddings, real local voice, real
+turns; `main.Wiring` itself rather than a reconstruction of it. It writes to a
+SEPARATE runtime root by default, because the harness turns are not things anyone
+said to her.
+
+### The finding: she arrives at her own consolidation pass too tired to finish it
+
+At the real, spec-pinned 8-minute window the pass ran **SHALLOW** —
+`step2_ran=False`, `step3_ran=False`. Graph-connection formation and uncertainty
+revisiting did not run.
+
+Not a bug in Module 6. **Energy fell 81.5 → 0.1 during the eight minutes of
+silence that were supposed to earn the pass:**
+
+| elapsed | soul ticks | Energy |
+|---:|---:|---:|
+| 0 s | 0 | 81.5 |
+| 60 s | 20 | 29.2 |
+| 120 s | 40 | 10.5 |
+| 241 s | 80 | 1.3 |
+| 479 s (idle opens) | 160 | 0.1 |
+
+`_idle_conditions_met` is False for the whole PRE-window period, so every one of
+those 160 soul ticks called `on_soul_tick()` — active-load depletion — and
+`on_idle_recovery()` was never reached. Energy recovery begins at the same instant
+idle is declared, which is the same instant the DMN fires. Then `run_idle_pass`
+reads Energy < 20 and chooses SHALLOW.
+
+**The deep half demonstrably works.** With a 30-second window the same harness
+produced `pass_type=full`, both steps ran, 3 edges were written and 3 nodes newly
+connected. It cannot be reached through a genuine 8-minute silence.
+
+Two separable questions, and only one is tuning:
+
+1. **RATE** — `k_load`/`k_rest` are flagged `TODO(build-time)` placeholders
+   (F-2a/F-2b) and have never had data. At a 3-second tick the load coefficient
+   drains ~95 Energy in under four minutes. This is the first real measurement for
+   them.
+2. **STRUCTURE** — whether "silent, but not yet for 8 minutes" should count as
+   active load at all. That is not a coefficient, it is a question about what idle
+   means, and answering it needs a third state or a changed gate. **Rule 1:
+   flagged, not invented.** New `needs-ruling` row.
+
+### Also observed, first time each
+
+| Observed | Means |
+|---|---|
+| Step 1 promoted 2 meta-observation nodes; `event_nodes` 5 → 7 | Step 1 works against real appraised turns |
+| `quality_appended = ['poorly', 'responded_well']` | the anti-flattery grade really is read from the OBSERVED next turn |
+| Step 4 `narrative_status = no_candidate` | **the self-continuity narrative can never be written as wired** — `_assemble_idle_pass_input` never sets `narrative_candidate`. Module 6's design already flags generating the text as an upstream concern; this is that flag, observed rather than inferred |
+| no `NotImplementedError` across 160 real soul ticks | the PAD OQ4 residual stayed unreached, because the HANDOFF contract restored a valence. See the OQ4 section below |
+| Energy idle-recovery path exercised for the first time | nothing had ever driven the clocks through a real silence |
+
+---
+
+## PAD Engine OQ4 residual — counted and characterised (2026-08-22)
+
+Carried on the readiness list as "5 NotImplementedError in pad_engine.py,
+re-counted. Code flag, never tracker-tracked." Both halves of that needed
+correcting, and neither is resolved here — closing OQ4 is an architect decision
+and inventing a decay coefficient is exactly what Rule 1 forbids.
+
+**5 is the occurrence count. There are exactly TWO raise statements**, both in
+`on_soul_tick`; the other three occurrences are the docstring explaining those
+two. Measured by AST, not grep, and pinned by
+`tests/test_pad_restore_boundary.py` (11 tests). No other module in `daemon/`
+raises `NotImplementedError` at all.
+
+**The two are not equally real:**
+
+| Raise | Status |
+|---|---|
+| NEUTRAL valence (line 334) | **Live code, unreachable from the wired path.** Seven neutral turns through the real Appraisal Chain and real graph leave `_last_applied_valence` as None every time: a purely-neutral appraisal builds an all-zero `PADDelta` that `_apply_delta` never applies, so the branch has no route in from `appraise()`. Forcing the state directly does raise, so it is not dead. This is also why 160 consecutive real soul ticks never hit it. |
+| Restore boundary, `None` + non-baseline PAD (line 343) | **Reachable, and reproduced end to end.** Write a state file with PAD off baseline and no `last_applied_valence`, and `startup()` succeeds while the FIRST `soul_tick()` raises — in the REPL, a traceback several frames from the cause. |
+
+**Why it is nonetheless narrow.** The HANDOFF contract has `startup()` restore the
+persisted valence and hand it to `initialize()`, and the write cadence is every
+turn, so the field is one turn behind at worst. A first-ever run cannot hit it
+either — it starts at baseline, and the baseline case is a documented no-op rather
+than a raise. The residual is a crash between an appraisal delta and the next
+save: a one-turn window.
+
+**What changed in code: a warning, not a fix.** `main.py` now detects the
+condition at startup and names it, the operator remedy, and the fact that neither
+remedy is a fix. No coefficient is chosen, the raise is not caught, and
+`pad_engine.py` is byte-unchanged.
+
+---
 
 ## First real embedding calibration data (2026-08-22)
 
@@ -497,6 +780,10 @@ filing it as a bug.
 | `all-minilm` is the embedding model | ✅ ACCEPTED 2026-08-22 — selected by elimination, not preference | Addendum §1 requires "encoder-only, no text-generation capability, on the order of tens of megabytes. Not Gemma." `all-minilm` is **45 MB measured**, 384-dim, encoder-only. The alternatives fail the stated size constraint outright: `nomic-embed-text` 274 MB, `embeddinggemma` ~620 MB. So §1 selects this model rather than anyone choosing it. **The caveat that follows from the calibration data:** 384-dim MiniLM cannot separate "tired about a thing" from "tired of carrying something alone", which is why the vulnerability bands overlap. If clean separation is wanted, the lever is a bigger embedding — and that means relaxing §1's size constraint, which is a ruling, not a swap. Note also that changing this model invalidates every stored vector in `node_embeddings` and `edge_firing_contexts`; regenerate rather than mix. |
 | Graph DB at `~/.local/aria/graph.db` | ✅ ACCEPTED 2026-08-22 — no source document names a path | v4's runtime listing gives `~/.local/aria/` as the data root and `state/` as StateManager's directory, with `models/` beside it — but names no file for the graph at all. Sitting beside `state/` respects both halves of what v4 does lock. Keeping it OUT of `state/` is the load-bearing part: StateManager owns that directory, the graph is not StateManager's, and `tests/test_state_manager.py` encodes exactly that boundary by asserting the state dir holds precisely its two JSON files. Revisit only if SQLite WAL is enabled, which would add `-wal` / `-shm` siblings at the root. `.gitignore` already excludes `*.db`. |
 | StateManager write cadence is every turn | ✅ ACCEPTED 2026-08-22 — the knob was removed rather than set | Resolution Log item 4 calls the write cadence a build-time tuning flag, so a value had to be chosen. Every turn is the choice that needs no defending: two small atomic JSON writes at conversational pace is a handful of writes a minute, and nothing is ever pending when a crash happens. Batching would buy nothing measurable and would leave a number to justify — so `main.py` carries no `SAVE_EVERY_TURNS` constant at all. Worth knowing: a crash never loses MEMORY regardless, because every `MemoryGraph` write commits inside its own method. The cadence protects PAD, Energy and `last_applied_valence` only. |
+| Audio and visual are OPT-IN; the no-op stays the default | ✅ ACCEPTED 2026-08-22 | `--audio` and `--visual` / `--visual-headless`. Both layers are LEAVES — nothing downstream reads what they did, `speak()` and `play_loop()` return None, and no soul state depends on the result — which is the reasoning `audio_noop.py` already sets out, so substituting them changes no behaviour inside the system. Making either the default would mean every text bring-up starts talking out loud and opening a window. It also matters that `--audio` is the switch that turns the format-guard row from cosmetic into audible, so it should be a decision someone makes rather than a default they inherit. |
+| macOS `say` + `afplay` substitute for Kokoro and `pw-play` | ✅ ACCEPTED 2026-08-22 — recorded substitution | v4 names Kokoro for the local TTS slot and `pw-play` for playback. Neither exists on the dev machine and both substitutes are legitimate: v4 states directly that "The TTS is a hot-swappable tool. Aria is not," `pw-play` is itself a command-line player so a subprocess is the shape v4 describes rather than a shortcut around one, and nothing downstream reads which renderer or player was used. What the substitution BUYS is the only thing no other backend here has — it works with zero installs, so the output chain was verified end to end rather than only unit-tested. What it COSTS is voice quality and two prosody dimensions, which is why it holds the FALLBACK slot and not the primary. `CommandLinePlayback.describe()` names the player actually chosen and flags it when it is not `pw-play`, so the substitution is visible at startup rather than inferable. |
+| The Visual Layer is wired by decorating the audio port, not by changing the Daemon | ✅ ACCEPTED 2026-08-22 | `AriaDaemon` takes no visual parameter and still does not (asserted by a test on its constructor signature). Module 10's own flag disposition calls the driver-loop and signal wiring "top-of-tree BUILD-TIME wiring, not this module's concern", and names the seam: "the output-pending boundary around `audio.speak()` -> set_speaking". So `SpeakingSignalAudio` satisfies `AudioPipelinePort`, wraps whatever real port is in use, and reports the boundary onward — the Daemon cannot tell the difference and no approved constructor moved. `set_speaking(False)` sits in a `finally`, which is load-bearing: a TTS failure would otherwise freeze her mouth open for the rest of the session, and the observed empty-text crash was exactly that shape. Thinking sounds deliberately do NOT raise the talking variant — a thinking sound plays while she is not talking. |
+| Empty TTS text renders silence and is counted, rather than raising | ✅ ACCEPTED 2026-08-22 — the first answer was wrong and is recorded | Raising `TTSUnavailable` on empty text was the initial implementation. Observed consequence: `AudioPipeline._synthesize_with_fallback` caught the primary's failure, tried the fallback, the fallback raised for the same reason — the INPUT, not the provider — and the exception propagated out of `speak()` → `_route_initiative` → `soul_tick()`. A no-content turn became a crashed soul tick. `TTSUnavailable` was also the wrong signal: it means "try the other renderer", and no renderer helps with empty input. So a zero-frame WAV is returned (the honest rendering of no words: no sound) and `empty_text_requests` records it — the counter is the point, because the alternative to a crash must not be a silence nobody can see. The underlying empty response is a separate `needs-ruling` row. |
 | Cognitive-load triggers stack | ✅ ACCEPTED 2026-08-20 — architect ruling | With buffer pressure AND Energy&lt;30 in the same turn, `submit_cognitive_load` fires twice — measured: `['submit_cognitive_load:critical', 'submit_cognitive_load:heavy', 'appraise']` — so two PAD deltas land in one turn. Defensible (two independent load sources, each emitting its own second-order byproduct) but it is also a double-count. Collapsing them would mean inventing a precedence rule, so both were left firing and the behaviour recorded here rather than decided silently. |
 
 ## Verification provenance (2026-08-20)
@@ -528,6 +815,33 @@ This file mixes two kinds of claim. Know which you are reading.
 | Rupture floored at observing | `_evaluate_stage` returns OBSERVING as the floor |
 | No `apply_appraisal_delta` CALL SITE in the Daemon | `grep -E "\.apply_appraisal_delta\s*\(" daemon/aria_daemon.py` returns nothing. NOTE: a grep for the bare name returns 2 — both in the module docstring, describing this constraint. Match the call pattern, not the name. |
 | Graph tables | 7: `event_nodes`, `entity_nodes`, `emotion_nodes`, `uncertainty_nodes`, `edges`, `node_embeddings`, `edge_firing_contexts` |
+
+**Added 2026-08-22 (boundary phase)** — every one re-checkable:
+
+| Claim | Verified |
+|---|---|
+| Full suite 747 passed; soul layer 561 (547 through the boundary phase, +14 in Module 5 for items 21–22) | `make check` (suite + bundle sync); per-file `pytest --collect-only` |
+| Suite is hermetic; only 3 tests need a backend | measured directly at 723 + 3 skipped when the suite stood at 726. Not re-measured after the defect pass: Ollama.app restarts the daemon by itself |
+| The Output Gate still runs exactly four comparisons after item 21 | `GateCheck` has 4 members; `run_output_gate` source contains no emptiness vocabulary — both asserted |
+| Stage directions: 8/16 → 3/16 on adversarial bait | `tools/measure_format_markers.py`, fresh graph per arm, two rounds each; 3/16 reproduced on the shipped wording |
+| The detector's square-bracket hole is closed | tests use the model's real output verbatim; the no-marker prose case is pinned as a known gap |
+| ResLog item 15 does not contain the verbatim-passthrough rule | read the source; "verbatim" appears once in the whole precedence chain, in Addendum §9 on session context |
+| 21 Protocols in `daemon/`, none empty | the AST one-liner in "Boundary phase" above |
+| `daemon/` imports nothing from `adapters/` | `test_daemon_still_imports_nothing_from_adapters` reads every file in `daemon/` |
+| Every audio adapter imports with no provider installed | `test_every_audio_adapter_imports_without_any_provider_installed` — this is what keeps the suite hermetic |
+| Cloud and local transports send byte-identical prompt text | `test_cloud_and_local_send_the_same_text` compares what both put on the wire |
+| No generation parameters in the cloud request body | `test_request_body_carries_no_generation_parameters` asserts the body keys are exactly `{model, messages, stream}` |
+| DMN pass at the real 8-minute window is SHALLOW; FULL at 30 s | `tools/observe_dmn_pass.py`, log at the top of that section; Energy table measured per 60 s |
+| Initiative now produces a real reply | `_route_initiative("growth")` against the live model — was `''` 3/3 before the `split_prompt` fix |
+| The Output Gate passes `''` | measured `passed=True failed_checks=[] retried=False used_minimum_safe_output=False` on the pre-fix initiative turn |
+| A stage direction is spoken: 0.81 s → 3.11 s | `SystemSayTTS.synthesize` WAV durations, read with stdlib `wave` |
+| Arousal→speed keeps v4's inverse direction | 156 wpm at arousal 0.2 vs 208 wpm at 0.9 (`_wpm_from`) |
+| The whole output chain leaves PAD byte-identical | `test_the_whole_output_chain_leaves_pad_byte_identical` — speak + stop + reconsideration sound |
+| `pad_engine.py` holds 5 occurrences but 2 raises | `tests/test_pad_restore_boundary.py`, by AST; no other `daemon/` module raises `NotImplementedError` |
+| The NEUTRAL raise is unreachable via `appraise()` | 7 neutral turns through the real chain + real graph leave the valence None; forcing the state does raise |
+| The restore-boundary raise is reachable | a state file with non-baseline PAD and no valence: `startup()` succeeds, first `soul_tick()` raises |
+| `AriaDaemon.__init__` still has no visual parameter | `test_the_daemon_is_not_modified_to_carry_a_visual_handle` |
+| `visual_bridge` never reads `serving_from_local` | AST scan over its attribute accesses |
 
 **Historical process narrative** — NOT re-verifiable from the code, kept as a
 record of how each module was reviewed: defect counts and D1–D5 labels, auditor

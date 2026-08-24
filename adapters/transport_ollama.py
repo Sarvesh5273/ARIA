@@ -199,11 +199,27 @@ class OllamaLocalTransport:
     def generate(self, prompt: AssembledPrompt) -> str:
         """Serve one assembled prompt and return the model's text VERBATIM.
 
-        No judgment, no filtering, no retry, no reformatting — Resolution Log
-        item 15. Validation belongs to Soul Filter's Output Gate, which runs on
-        whatever this returns.
+        No judgment, no filtering, no retry, no reformatting — F-9b / LLM
+        Interface Req 5. (Formerly cited as "Resolution Log item 15"; that item
+        resolves gate OWNERSHIP and does not state the passthrough rule. See
+        Resolution Log item 23 — the rule is real, the citation was not.)
+        Validation belongs to Soul Filter's Output Gate, which runs on whatever
+        this returns.
         """
         system, user = split_prompt(prompt)
+        if not user:
+            # Structural guard, not judgment. An all-empty request is Ollama's
+            # warm-the-model call (see `load()` and `split_prompt`), so sending
+            # one here would return "" as a SUCCESS and hand an empty reply to the
+            # Output Gate, which has no emptiness check. `split_prompt` already
+            # prevents this by moving the instruction into `prompt`; reaching here
+            # means Soul Filter assembled a prompt with no text at all, and that
+            # is worth an error rather than a silent no-op turn.
+            raise LLMTransportError(
+                "refusing to send an empty generation request: with no prompt "
+                "text this is Ollama's warm-the-model call and would return an "
+                "empty reply as a success"
+            )
         body = self._post_generate(
             prompt=user, system=system, keep_alive=KEEP_RESIDENT
         )
@@ -333,12 +349,39 @@ def split_prompt(prompt: AssembledPrompt) -> Tuple[str, str]:
     context, then the user's message — while using the system/user role split
     that `LLMInterface`'s docstring names for a local adapter. Drops nothing and
     adds nothing.
+
+    THE EMPTY-USER-TURN CASE, AND WHY IT IS NOT THE OBVIOUS MAPPING
+    --------------------------------------------------------------
+    There is one turn kind with NO user message: initiative. `AriaDaemon`'s
+    `_route_initiative` builds an appraisal from a note and asks Soul Filter to
+    respond with nothing from the user, because she is reaching out unprompted —
+    so `user_message` and `session_context` are both `""` and the five fields ARE
+    the whole prompt.
+
+    The obvious mapping breaks exactly there. `/api/generate` with an empty
+    `prompt` is Ollama's WARM-THE-MODEL request — it is what `load()` in this very
+    file uses to bring a model up without producing output — so it returns
+    `{"response": ""}` successfully. Measured: three identical calls, `''` every
+    time. And an empty reply passes Soul Filter's Output Gate untouched, because
+    its four checks are honesty / consistency / manipulation / care and an empty
+    string violates none of them. So initiative silently produced no speech, and
+    with a no-op audio pipeline that was invisible.
+
+    So when there is no user turn, the instruction goes in `prompt` instead of
+    `system`. The SAME BYTES still cross, exactly once — only the field carrying
+    them changes, and only for this case. Sending it in both fields was rejected:
+    that would put the five fields in front of the model twice, which is a change
+    to what it sees rather than to how the request is framed.
     """
     parts = []
     if prompt.session_context:
         parts.append(prompt.session_context)
-    parts.append(prompt.user_message)
-    return prompt.instruction_text, "\n\n".join(parts)
+    if prompt.user_message:
+        parts.append(prompt.user_message)
+    user_portion = "\n\n".join(parts)
+    if not user_portion:
+        return "", prompt.instruction_text
+    return prompt.instruction_text, user_portion
 
 
 def resolve_model(

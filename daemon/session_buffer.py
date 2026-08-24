@@ -9,7 +9,9 @@ Three tiers:
   MEDIUM:   Compressed summaries of older chunks (~6K tokens)  
   OLD:      One-line topic tags of oldest material (~4K tokens)
 
-Total budget: ~20K tokens (speed cap on Mac M4, not window cap).
+Total budget: 18K tokens (8K+6K+4K). A SPEED cap on Mac M4, not a window cap —
+so a local model's context size is not a reason to move it. All four budgets are
+placeholders (see .kiro/specs/session-buffer/design.md).
 """
 
 from __future__ import annotations

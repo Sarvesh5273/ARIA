@@ -345,8 +345,10 @@ class LLMInterface:
            unchanged: the caller chose that transport, so the caller owns
            the failure. This module does NOT silently fall back to the
            internal cloud/local chain on that error — doing so would make a
-           routing decision here, which is not this module's job (Resolution
-           Log item 15: no judgment, no validation, verbatim passthrough).
+           routing decision here, which is not this module's job (F-9b / Req 5:
+           no judgment, no validation, verbatim passthrough. NOT Resolution Log
+           item 15, which resolves gate OWNERSHIP and does not state the
+           passthrough rule — see Resolution Log item 23).
 
         2. `transport` is None (BACKWARD-COMPATIBLE internal path): the
            EXISTING logic runs completely unchanged — cloud is primary; on

@@ -1092,3 +1092,491 @@ observed fact that neither measured model emits traces. Both behavioural, neithe
 structural. Addendum §4 fixes the gate at four comparisons, so a fifth check needs
 a ruling rather than an implementation. New `needs-ruling` row. Worth settling
 before TTS is wired, because that is when a format defect stops being cosmetic.
+
+---
+
+## Boundary phase (2026-08-22) — the last eight Protocols, and what running them found
+
+Cloud transport, the seven audio backends, `VideoWindow`, a real DMN idle
+observation, and the PAD OQ4 residual counted properly. Suite **590 → 726**, and
+**723 + 3 skipped with the model backend stopped** (verified by stopping it); the
+**547 soul-layer tests did not change**, which is the whole argument for the
+one-way dependency arrow. `PROJECT_STATUS.md` carries the per-item reasoning and
+the re-checkable claims table; this records only what a future implementer needs
+that the tracker does not say.
+
+**The headline is not the code. It is that wiring a boundary that had never been
+connected found three real defects in code with 547 green tests over it.** One is
+fixed, two need rulings. None of them was a mistake in the modules; all three were
+things no test could see because nothing downstream existed to reveal them.
+
+### 1. Initiative had never produced a single word, and the cause is worth knowing
+
+`_route_initiative` returned `text=''`. Every time, deterministically, since
+Module 8 was built.
+
+The chain, because each link is individually reasonable:
+
+1. Initiative is the ONE turn kind with no user message — she is reaching out
+   unprompted — so `AssembledPrompt` has `user_message=""` and
+   `session_context=""`, and the five fields are the whole prompt. Correct.
+2. `split_prompt` mapped `instruction_text` → Ollama's `system` and the (empty)
+   user portion → `prompt`. That is the mapping `LLMInterface`'s own docstring
+   describes, and it is right for every other turn.
+3. **`/api/generate` with an empty `prompt` is Ollama's WARM-THE-MODEL request.**
+   `OllamaLocalTransport.load()` in the same file uses exactly that, deliberately,
+   to bring a model up without producing output. So the request succeeded and
+   returned `{"response": ""}`.
+4. `generate()` returned `""` verbatim — correct, ResLog item 15.
+5. The Output Gate passed it (finding 2 below).
+6. `NoOpAudioPipeline.speak("")` appended `""` to a list, and the REPL printed
+   `aria> ` with nothing after it.
+
+Fixed in `split_prompt`: when there is no user turn, the instruction goes in
+`prompt` instead of `system`. **The same bytes still cross, exactly once** — only
+the field carrying them moves, and only for this case. Sending it in both fields
+was rejected: that puts the five fields in front of the model twice, which changes
+what it sees rather than how the request is framed. A structural guard in
+`generate()` now refuses an all-empty request outright, because that shape means
+"warm" and must never be mistaken for a turn.
+
+The same edge is handled in `transport_cloud` by omitting empty-content messages
+rather than sending `content: ""`.
+
+**Lesson worth carrying:** a provider API where the same call means two different
+things depending on emptiness is a trap, and this adapter was already using BOTH
+meanings — one on purpose in `load()`, one by accident in `generate()`. If you add
+a transport, check what an empty field means to the provider.
+
+### 2. The Output Gate passes an empty response — needs a ruling, not a patch
+
+Measured on that same pre-fix turn: `text=''`, `passed=True`, `failed_checks=[]`,
+`retried=False`, `used_minimum_safe_output=False`.
+
+The four checks are honesty, consistency, manipulation, care. An empty string
+violates none of them — it makes no dishonest claim, contradicts nothing,
+manipulates nobody, and expresses no lack of care. So a model that returns nothing
+is served as her reply, and Soul Filter does not even retry.
+
+**Not implemented.** Addendum §4 fixes the gate at four comparisons, so a fifth
+"did she actually say something" check is a ruling. New `needs-ruling` row.
+
+Worth noticing that this is the SAME SHAPE as the format-guard row, and now also
+as the prosody row: the gate validates CONTENT and says nothing about form, about
+emptiness, or about whether anything reached the voice at all. Four of the five new
+Still Open rows are that one question wearing different clothes, so they may well
+be one ruling rather than five.
+
+### 3. The format guard stopped being theoretical, and the numbers are worse than expected
+
+The row said "worth deciding before TTS is wired". TTS is wired. Measured with real
+`say`, WAV durations read with stdlib `wave`:
+
+    "Just the words."                                          0.81 s
+    "(Aria listens, her presence steady.) Just the words."     3.11 s
+    "<think>internal reasoning</think>Just the words."         1.77 s
+
+The stage direction is read aloud in full. **The `<think>` case is the worse one:**
+`say` silently drops the TAGS and speaks the CONTENT as ordinary prose, so a
+reasoning trace does not sound like a malfunction — it sounds like her thinking out
+loud in the middle of a reply.
+
+**The adapters strip nothing, and this is deliberate.** "Strip it in the adapter"
+was already rejected on the record: that is the transport judging content, and
+ResLog item 15 puts verbatim passthrough there. A test asserts no
+`strip`/`sanitize`/`clean`/`normalize` helper exists in `audio_tts.py`, because
+this is precisely the thing a later reader adds meaning well.
+
+What the adapters DO is record: `last_text_had_format_markers`. A flag is not a
+guard — it changes nothing about what is spoken. It exists so the ruling can be
+made on evidence.
+
+Detector scope is deliberate and measured against the observed defect: a
+parenthetical BEGINNING a line matches (the recorded shape was a reply opening with
+narration), a mid-sentence one does not — "it costs 5 dollars (roughly) which is
+fine" is ordinary speech, and flagging it would make the signal useless. The first
+version of the pattern required the parenthetical to be the whole line and MISSED
+the mixed case; the test that caught that is now parametrised over both.
+
+### 4. The DMN's first real pass: she arrives too tired to finish it
+
+`tools/observe_dmn_pass.py`. Real clock, real graph, real embeddings, real turns,
+`main.Wiring` itself. Nothing faked — no `now` is ever passed.
+
+At the real 8-minute PINNED window: `pass_type=shallow`, `step2_ran=False`,
+`step3_ran=False`. **Energy fell 81.5 → 0.1 during the silence.**
+
+The mechanism, which is the part to carry forward: `_idle_conditions_met` is False
+for the whole PRE-window period, so all 160 soul ticks called `on_soul_tick()`
+(active-load depletion) and `on_idle_recovery()` was never reached. Energy recovery
+begins at the same instant idle is declared — which is the same instant the DMN
+fires and reads Energy < 20.
+
+A 30-second window gives `pass_type=full` with both steps running, 3 edges written
+and 3 nodes connected. **The deep half works. It cannot be reached through a
+genuine silence.**
+
+Two separable things, and only one is tuning: the RATE (`k_load`/`k_rest`, already
+F-2a/F-2b placeholders, now with their first data) and the STRUCTURE (whether
+"silent but not yet 8 minutes" is load at all). The second is a question about what
+idle MEANS and needs a third state or a changed gate — a new mechanism, so Rule 1.
+Flagged, not invented.
+
+**Why the harness drives the clocks itself.** `run_scheduler_step()` returns which
+clocks fired and DISCARDS the `DMNPassResult` — right for a scheduler, useless for
+an observation. The harness reproduces its two independent interval comparisons and
+keeps the result. `soul_tick()`/`dmn_tick()` are the documented primary interface.
+
+**It writes to a SEPARATE runtime root by default** (`~/.local/aria-observation`).
+The scripted turns are a harness script, not things anyone said to her, and putting
+them in her real graph would make her remember a conversation that did not happen.
+Every timestamp is real either way, which is the part that matters.
+
+Two more things nobody had seen: Energy's idle-recovery path ran for the first time
+(nothing had ever driven the clocks through a real silence), and Step 4 reported
+`narrative_status = no_candidate` — which it always will, because
+`_assemble_idle_pass_input` never sets `narrative_candidate`. Module 6 correctly
+GATES the narrative rather than generating it; the producer does not exist. That was
+already flagged in its design as an upstream concern; now it is observed.
+
+### 5. The Visual Layer is wired without touching the Daemon — and one readout is stale
+
+`AriaDaemon` takes no visual parameter and still does not. Module 10's own flag
+disposition calls this wiring "top-of-tree BUILD-TIME wiring, not this module's
+concern" AND names the seam: "the output-pending boundary around `audio.speak()`".
+
+So `SpeakingSignalAudio` satisfies `AudioPipelinePort` and DECORATES whatever real
+port is in use. The Daemon already calls `speak()` on every path — ordinary turns,
+initiative, the cloud proposal prompt — so the signal comes from exactly the
+boundary the spec names, for free, with no approved constructor changed. A test
+asserts `AriaDaemon.__init__` has no `visual` parameter, so if one ever appears it
+is a deliberate decision rather than a drift.
+
+`set_speaking(False)` is in a `finally`. Load-bearing: a TTS failure would
+otherwise freeze her mouth open for the rest of the session, and the empty-text
+crash was exactly that shape.
+
+**Do NOT wire `LLMInterface.serving_from_local`, which Module 10's docstring names
+as the degradation trigger.** It returns `self._local.is_loaded`, and its docstring
+says "cloud is currently down". That equivalence held under v4's Brain Structure
+("loads on cloud failure, unloads on restore"). **Track A inverted it**:
+`startup()` calls `ensure_local_loaded()`, Gemma is pinned resident from boot, and
+it is the DEFAULT voice rather than a fallback. So it is True during entirely
+healthy operation, and `set_cloud_available(not serving_from_local)` would park her
+face in INWARD_WAITING permanently. An AST test asserts the bridge never reads it.
+
+Wired instead: `LLMUnavailableError`, the other trigger Module 10's docstring names
+and the one still well-defined under either design. `main.py`'s REPL already caught
+exactly those exceptions.
+
+**The deeper question is flagged, not answered:** v4's degradation state assumes
+CLOUD-PRIMARY, and the current design is local-primary with cloud proposed. Under
+that design "cloud unavailable" is the ordinary resting state and not a degradation
+at all. What should trigger the inward/waiting loop is a design question.
+
+### 6. PAD OQ4: five occurrences, two raises, and only one is reachable
+
+The readiness list had it as "5 NotImplementedError in pad_engine.py, re-counted."
+Five is the OCCURRENCE count; three of them are the docstring explaining the other
+two. **Two raise statements**, both in `on_soul_tick`, measured by AST. No other
+module in `daemon/` raises it at all.
+
+  * **NEUTRAL valence — live code, unreachable from the wired path.** Seven neutral
+    turns through the real Appraisal Chain and real graph leave
+    `_last_applied_valence` as None every time, because a purely-neutral appraisal
+    builds an all-zero `PADDelta` that `_apply_delta` never applies. Forcing the
+    state directly DOES raise, so the branch is not dead. This is also why 160
+    consecutive real soul ticks during the DMN observation never hit it.
+  * **Restore boundary — reachable, and reproduced.** A state file with PAD off
+    baseline and no `last_applied_valence`: `startup()` succeeds and the FIRST
+    `soul_tick()` raises, which in the REPL is a traceback several frames from the
+    cause. Narrow, though — the HANDOFF contract restores the valence and the write
+    cadence is every turn, so the window is a crash between a delta and the next
+    save. A first-ever run cannot hit it: it starts at baseline, and the baseline
+    case is a documented no-op.
+
+**`pad_engine.py` is byte-unchanged.** What was added is a startup WARNING in
+`main.py` naming the condition, the operator remedy, and the fact that neither
+remedy is a fix. No coefficient is chosen and no raise is caught — closing OQ4 is
+an architect decision, and inventing a decay coefficient is the one thing Rule 1
+forbids most directly.
+
+### Judgment calls, for the record
+
+- **`transport_cloud` IMPORTS `split_prompt` from `transport_ollama`** rather than
+  copying it. An adapter→adapter dependency is mildly awkward; two copies of the
+  mapping is how ResLog item 14 / F-9a's identical-prompt property rots, since one
+  gets a fix and the other does not. A test compares what both adapters actually
+  put on the wire, so the coupling is checked rather than trusted. Note that fixing
+  the initiative bug touched only that one function and BOTH tiers got the fix —
+  which is the argument, demonstrated.
+- **No `temperature`, `top_p` or `max_tokens` in the cloud request body**, asserted
+  as an absence. Those shape REGISTER — how warm, how terse, how hedged — and
+  register is Field 2's job and the Output Gate's to verify. An adapter picking a
+  temperature is the transport deciding how she comes across, the same class of
+  mistake as stripping a stage direction. Also an invented number with a
+  behavioural meaning.
+- **The cloud failure cooldown reuses `HEALTH_CACHE_TTL_SECONDS`** rather than
+  introducing a second interval. It is already the cadence at which the router
+  re-asks, and a different number here would need justifying against it.
+- **A keyed tier with no cheap probe reads healthy before its first request**, so a
+  misconfigured Azure costs exactly one failed turn before the cooldown routes back
+  to Gemma. Being stricter is a DEADLOCK: the router only asks about transports it
+  might select, so a tier that must succeed once to become selectable never becomes
+  selectable. One visible failed turn beats permanent silent unreachability.
+- **`audio_pcm.py` holds the float↔int16 conversion once**, shared by four
+  backends. Four copies is four places for a missing clamp — and a subtly different
+  clamp in one backend does not raise, it just makes that stage deafer than the
+  others. Scale is 32767, not 32768: at 32768 a legitimate +1.0 wraps to -32768, a
+  full-scale sign flip that is audible and that reads to an energy-based spotter as
+  a transient.
+- **`audio_stack._Absent` RAISES for every input backend method.** The tempting
+  alternative is a neutral return, and it is the dangerous one: a capture returning
+  silence, a VAD returning 0.0 and a speaker check returning 1.0 all look like
+  ordinary operation, and `capture_turn()` would return None as if nobody had
+  spoken. An absent backend must only ever be a visible error.
+- **No "always awake" wake-word backend is offered**, and a test asserts the module
+  exports exactly `HotkeyWakeWord` and `PorcupineWakeWord`. The wake word is the
+  only thing between a live microphone and a transcription; an adapter that always
+  returns True must not be something a wiring layer can pick by accident.
+  `HotkeyWakeWord` is v4's own named fallback and is one-shot — a latched flag would
+  keep every later cycle awake, which is the open-mic failure the gate prevents.
+- **`PorcupineWakeWord` tracks a consumed-sample cursor.** The pipeline passes the
+  whole 20-second ring snapshot every cycle, so without one, a single spoken wake
+  word would wake her on every cycle for the twenty seconds it stayed in the buffer.
+- **`SileroVAD.reset()` exists and NOTHING CALLS IT.** Silero VAD is recurrent, so
+  the tail of one utterance biases the head of the next, and `AudioPipeline`
+  re-scores the whole snapshot with whatever state the previous cycle left. Whether
+  the pipeline should reset per snapshot is a Module 7 question; the capability is
+  exposed and the decision is left alone.
+- **Speaker verification has `enrol()` but cannot bind an identity.** It holds no
+  StateManager handle, which makes "an audio backend decided who you are"
+  structurally impossible. The tracker's ruling is that enrolment should SET
+  `save_primary_entity_id`, and that is the wiring layer's call. `build_full`
+  REFUSES without a voiceprint rather than running: without one the real backend
+  returns -1.0 for everyone and no turn passes the 0.75 gate, so she would appear
+  to have stopped listening rather than to be misconfigured.
+- **The cited thresholds stay in the pipeline.** `SPEAKER_THRESHOLD = 0.75` and
+  `VAD_THRESHOLD = 0.5` are v4 values and `AudioPipeline` owns both comparisons; an
+  AST test asserts no adapter imports or defines either, because a backend applying
+  a spec'd threshold would mean swapping the backend silently moves the gate. The
+  test is AST-based on purpose: those adapters DISCUSS the thresholds in their
+  docstrings to explain that they do not apply them, and a text grep cannot tell an
+  explanation from a use. Two earlier versions of that test failed for exactly that
+  reason, as did the `stop()` body scan — its docstring names PAD, appraisal and the
+  graph precisely to say it touches none of them.
+- **`MpvVideoWindow` defers a switch to the loop boundary, and two signals bypass
+  it.** v4's "finishing the current loop cycle before switching" is the WINDOW's
+  job, and Module 10 has no notion of playback position. A variant change and
+  entering INWARD_WAITING are applied immediately, because Module 10 renders both
+  ungated — waiting for a boundary would leave her mouth still while she talks.
+  Pending depth is ONE: if PAD moved twice before a boundary, showing the
+  intermediate zone displays a state she is no longer in.
+- **`--audio` / `--visual` are opt-in and the no-op stays the default.** Both are
+  leaves. Also `--audio` is the switch that turns the format-guard row from cosmetic
+  into audible, so it should be a decision someone makes, not a default they
+  inherit.
+- **`--no-cloud` exists as a flag, not just as the absence of a key.** Unsetting an
+  environment variable is easy to forget and the cost of forgetting is prompts
+  leaving the machine. `tools/compare_local_models.py` passes it unconditionally: a
+  comparison of LOCAL models must not send anything to a third party as a side
+  effect, and a fallback tier answering a turn would corrupt the measurement too.
+
+### Traps met while building this
+
+- **`monkeypatch.setattr("adapters.X.urllib.request.urlopen", ...)` patches ONE
+  shared attribute.** `urllib.request` is the same module object in every adapter,
+  so a second stub silently replaces the first. The identical-prompt test dispatches
+  on URL inside a single handler instead. Cost an hour of a confusing failure where
+  the cloud adapter received an Ollama-shaped response body.
+- **Do not put a triple-quoted code sample inside a module docstring.** Quoting
+  `serving_from_local`'s docstring inside `visual_bridge.py`'s module docstring
+  terminated it early and produced a `SyntaxError` at the quoted line, which reads
+  as a syntax error in code that is actually prose.
+- **`AssembledPrompt.as_text()` leaves a trailing blank line when `user_message` is
+  empty**, because it joins unconditionally. Harmless — it is used for logging and
+  the identical-prompt proof, and whitespace changes neither — but it is why the
+  initiative regression test compares stripped.
+- **`PADEngine.initialize()` takes `restored` POSITIONALLY and it is required.**
+  `initialize()` with no argument is a `TypeError`, not a default-to-baseline.
+- **`StateManager.load_self_model()` returns a `SelfModel` dataclass, not a dict.**
+  `.get()` fails. The narrative is deliberately not on it (ResLog §2).
+- **A zero-frame WAV is 44 bytes, not empty**, so `afplay` accepts it and exits 0.
+  That is what makes "render silence" a real answer rather than a special case —
+  but `CommandLinePlayback.play()` still refuses empty BYTES, and the two are
+  different things.
+
+---
+
+## Defect pass (2026-08-22) — solving the three findings, and what reading the source turned up
+
+Resolution Log **items 21, 22, 23**. Suite 726 → 747. Soul layer 547 → 561, in
+exactly one module. `PROJECT_STATUS.md` has the numbers and the tables; this
+records the reasoning a future implementer needs.
+
+**The headline: two of the three "needs a ruling" items did not need a ruling.**
+They needed someone to read the source document carefully, and to measure instead
+of assume. That is worth internalising before opening any other row on that list.
+
+### Item 21 — the empty response was a category error
+
+It sat blocked because the obvious fix looked like a fifth Output Gate check, and
+Addendum §4 fixes the set at four. That framing was wrong, and reading §4's actual
+mechanism is what dissolved it:
+
+> four structural comparisons, each checked against something Aria's own state
+> already holds
+
+Every one asks *does this candidate contradict X?* — graph facts,
+`relational_stage`, the anti-pattern list, this turn's salience. **An empty string
+contradicts none of them.** So `passed=True` was not a bug in the gate; the gate
+was being handed a non-thing and asked to judge it.
+
+Once seen that way the fix is obvious and needs no ruling: establish that a
+candidate EXISTS before the comparisons run. That is not a comparison, so §4 is
+untouched — `run_output_gate` is byte-unchanged, `GateCheck` still has four
+members, and a test greps the gate's own source for emptiness vocabulary so it
+stays that way.
+
+What happens instead reuses two mechanisms that already existed: one re-ask, then
+v4's MINIMUM SAFE OUTPUT floor. No number, no threshold, no lexicon, no content
+judgment. `_has_candidate` is `bool(text and text.strip())` and lives at module
+level, deliberately NOT as a `GateCheck` member.
+
+Three details that are decisions, not incidentals:
+
+- **The re-ask is a plain re-ask.** The corrective retry appends the fixed
+  corrective for the failed CHECK (`_CORRECTIVE_BY_CHECK`). There is no check to
+  correct, and writing a corrective for emptiness would be adding gate vocabulary
+  through the back door.
+- **No reconsideration sound.** That clip is v4 Layer 5's SELF-CORRECTION sound.
+  She said nothing, so there is nothing to reconsider, and playing it would
+  perform an interior event that did not happen.
+- **It applies on the emergency path.** The gate BYPASS there is untouched —
+  emergency output is still unvalidated — but "did the model answer" is not one of
+  the checks being bypassed, and distress answered with silence is the worst thing
+  that path can produce.
+
+**Left deliberately unfixed:** if minimum-safe ALSO returns nothing, the text is
+empty. No fallback sentence is invented — writing one puts words in her mouth. The
+turn is loudly labelled instead (`used_minimum_safe_output=True`,
+`empty_candidates` counting every empty generation). Verified against the live
+model by forcing every generation empty: served text `''`, `empty_candidates=4`,
+`min_safe=True`, `gates=0`. The gate no longer PASSES it; it is reported as the
+total generation failure it is.
+
+### Item 22 — the format guard, and a measurement that lied twice
+
+The row had been weighing structural fixes against a mitigation nobody had tested.
+Field 1's anti-narration clause was added in the ruling pass and **its effect was
+never measured.** That is the wrong order: a structural backstop is a new
+mechanism, and Rule 1 says do not build one until it is needed.
+
+`tools/measure_format_markers.py` measures it. Adversarial bait on purpose — heavy
+disclosure, an explicit request for a numbered list, an explicit request to narrate
+herself, an explicit request for screenplay-style brackets. A low rate on bait is
+much stronger evidence than a low rate on ordinary turns.
+
+**First run: 0/16. It looked like the clause holding perfectly.**
+
+It was a detector bug. `_FORMAT_MARKER_RE` matched only ROUND brackets, because
+that was the shape recorded in the tracker. Printing the replies showed:
+
+    [I lean forward just a fraction, settling into the space between us.
+     My gaze is steady, not searching, just held.]
+
+**Square** brackets, in half the replies. *"Prompt-level mitigation is
+sufficient"* was one step from entering the Resolution Log as a measured finding,
+on the strength of a false negative.
+
+Closed the hole, re-measured, then A/B'd the wording on fresh graphs:
+
+| Arm | Stage directions |
+|---|---|
+| Original abstract clause | 8/16 (12/16 warm session) |
+| Names the syntax + "You have no body to describe" | 3/16 |
+
+So mitigation cuts it ~⅔ and does not close it. Field 1 now carries the sharper
+wording (free, same mechanism, measured), and the residual is an open ruling.
+
+Two mechanisms worth carrying forward:
+
+- **It COMPOUNDS through the session buffer.** 4/8 in round one, 8/8 in round two.
+  Her own bracketed replies re-enter as session context and she imitates herself.
+  There is no fix on that side that does not involve judging her own words —
+  session context is a faithful record of what was said.
+- **Naming the SYNTAX is what moved the number**, not the strength of the
+  prohibition. The abstract clause and the concrete one prohibit the same thing.
+
+**The recommended structural fix, deliberately NOT implemented.** Extend the moral
+schema's named anti-pattern list so the existing MANIPULATION check catches it. The
+argument is that the defect was miscategorised from the start: Aria has no body, so
+`[my gaze is calm, meeting yours without pressure]` is a false claim about herself
+made to produce an emotional effect — it *simulates* presence rather than being
+present, which is the same shape as the already-named `fake_confidence`. It adds no
+fifth comparison, uses the existing mechanism as designed, routes a caught
+candidate into the existing corrective-retry ladder, and extends a list the docs
+already mark `OQ-M1`, "not a doc-certified final set".
+
+**Why I stopped short of doing it.** The moral schema is the most protected
+artifact here, and Addendum §8 makes it gate DMN Step 4 narrative updates too — so
+a wrong entry does not just filter output, it propagates into what she is allowed
+to believe about herself. Deciding that a stage direction is a MORAL failure rather
+than a formatting one is a judgment about who she is. That is an architect's call
+even under an instruction to fix the defect, and OQ-M1 being open means the list
+awaits a ruling rather than being open for editing.
+
+**Known gap, recorded so the detector is not mistaken for a guard:** narration with
+no marker at all gets through. Measured on the same run — *"I am sitting still. My
+attention is focused entirely on the words you are saying."* No lexical pattern
+catches that without judging content, and a test pins it as expected-undetected.
+
+### Item 23 — a citation three documents repeated and nobody checked
+
+Deriving the two items above meant reading Addendum §4 and ResLog item 15 at the
+source rather than through the tracker. **Item 15 does not contain the
+verbatim-passthrough rule.** It is titled "Non-issues — no action needed" and
+resolves three OWNERSHIP questions (gate → Soul Filter, Audio Pipeline → one
+module, PAD→video → Visual Layer). The word "verbatim" appears in the entire
+precedence chain exactly once, in Addendum §9 on session-context recent turns.
+
+Be precise about the scope: **most item-15 citations are correct and stay.** F-5a,
+F-7a, F-9b and F-10a all cite it properly. What was wrong is the additional gloss
+"verbatim passthrough / no judgment", attributed to item 15 in
+`daemon/llm_interface.py`, `adapters/transport_ollama.py`, four docstrings written
+during the boundary phase, `main.py` and both trackers.
+
+The rule is real and nothing architectural changes — it is the LLM Interface's own
+Req 5 and flag F-9b, and it is structurally enforced because that module holds no
+graph, PAD or appraisal handle. Verbatim passthrough is a *consequence* of item
+15's ownership ruling, not a clause in it.
+
+It mattered because the format-guard row rejected "strip it in the adapter" by
+citing item 15, so the rejection of a real design option was resting on a clause
+that does not exist. The reasoning survives on its own; the citations now point at
+F-9b / Req 5.
+
+**Worth generalising: a citation repeated across three documents is not evidence
+that anyone read it.** I propagated this one myself during the boundary phase by
+copying it from the tracker into four new docstrings.
+
+### Traps met in this pass
+
+- **`monkeypatch`-free A/B needs a fresh graph per arm.** The first A/B reused one
+  runtime root and the second arm inherited the first arm's bracketed replies as
+  session context — which is exactly the compounding effect being measured, so it
+  contaminated the comparison. `tools/` A/B work should build a temp root per arm,
+  the way `compare_local_models.py` already does.
+- **A "clean" measurement can mean she refused to answer.** Worth printing replies
+  before trusting a zero. Here it meant the detector was blind, but the other
+  failure mode — a clean rate because she stopped engaging — would look identical
+  in the summary line.
+- **`SoulFilterResponse` gained a field with a default**, so all eight existing
+  construction sites (three in `soul_filter.py`, five in `aria_daemon.py`) keep
+  working untouched. Check that before adding one: they all use keyword arguments,
+  which is what makes it safe.
+- **`gate_results` can now be shorter than the retry count suggests.** If the
+  corrective retry returns empty, no gate2 runs, so the tuple carries one result
+  instead of two. That is accurate rather than lossy — only one comparison
+  happened — but a consumer counting gate runs to infer retries (like
+  `tools/compare_local_models.py`) should count `retried` instead.

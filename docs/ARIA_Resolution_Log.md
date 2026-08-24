@@ -323,6 +323,181 @@ written.
 
 ---
 
+## 21. An empty candidate is a NON-CANDIDATE, not a passing response
+
+*(2026-08-22)*
+
+**Supersedes:** the implicit assumption that anything the LLM returns is a
+candidate for the Output Validation Gate to judge.
+
+Wiring real TTS surfaced this. On the initiative path the local model
+returned `""`, and the gate reported `passed=True`, `failed_checks=[]`,
+`retried=False`, `used_minimum_safe_output=False`. The empty string was
+served as her reply.
+
+**The gate was right.** Addendum §4's mechanism is four structural
+comparisons, each against something Aria's own state already holds. An
+empty string contradicts none of them: it makes no dishonest claim,
+mismatches no relational_stage, matches no anti-pattern, and deflects from
+nothing. The gate was being asked about a non-thing.
+
+Resolved: **whether a candidate EXISTS is established before the four
+comparisons run, and is not one of them.** Addendum §4 is untouched — the
+gate still runs exactly four checks and `GateCheck` still has exactly four
+members.
+
+A generation that returns nothing (empty or whitespace-only) is re-asked
+ONCE with the same instruction, and if that also returns nothing the turn
+drops to v4's existing MINIMUM SAFE OUTPUT floor. Both mechanisms already
+existed; the newly-recognised case is routed into them. No number, no
+threshold, no lexicon, and no judgment about content is introduced —
+"is there text" is a shape check of the same kind the transport adapters
+already make on a provider's response field.
+
+Three consequences are deliberate:
+
+- **The re-ask is a plain re-ask, not a corrective retry.** There is no
+  failed check to correct, and inventing a corrective for emptiness would
+  add gate vocabulary through the back door.
+- **It does not play the reconsideration sound.** That clip is v4 Layer 5's
+  SELF-CORRECTION sound. She said nothing, so there is nothing to
+  reconsider, and playing it would perform an interior event that did not
+  happen.
+- **It applies on the emergency path too.** The gate BYPASS there is
+  untouched — emergency output is still unvalidated — but "did the model
+  answer" is not one of the checks being bypassed, and distress answered
+  with silence is the worst outcome that path can produce.
+
+**Not resolved, and left deliberately empty:** if the minimum-safe
+instruction ALSO returns nothing, the response text is empty. No fallback
+sentence is invented, because writing one would be putting words in her
+mouth. The turn is instead loudly labelled — `used_minimum_safe_output=True`
+with `empty_candidates` counting every empty generation — so a total
+generation failure is visible rather than silent.
+
+---
+
+## 22. Stage directions — prompt mitigation MEASURED, and it is not sufficient
+
+*(2026-08-22)*
+
+**Supersedes:** the assumption, recorded when the Persona Anchor clause was
+added, that Field 1 wording was an adequate answer to the format defect.
+
+The tracker's format-guard row noted that the Output Validation Gate has no
+FORMAT check — its four comparisons are about content, so nothing
+structurally prevents a stage direction, heading or reasoning trace reaching
+TTS and being spoken. Field 1 gained an anti-narration clause as mitigation.
+**That clause was never measured.**
+
+Measured now (`tools/measure_format_markers.py` — adversarial bait, real
+model, real pipeline, fresh graph per arm, two rounds each):
+
+| Mitigation | Turns carrying a stage direction |
+|---|---|
+| Original abstract clause | **8/16** — and **12/16** on a warm session |
+| Wording that NAMES the syntax | **3/16** (reproduced on the shipped wording) |
+
+Three findings, all load-bearing:
+
+1. **Prompt-level mitigation reduces this by roughly two thirds and does
+   NOT close it.** Option "accept prompt mitigation as sufficient" is
+   therefore closed on evidence, not opinion.
+2. **The failures were in SQUARE brackets** — "[I lean forward just a
+   fraction, my gaze calm]" — a form the original clause never named. Field 1
+   now names all three bracket conventions and states "You have no body to
+   describe" as fact rather than prohibition, because the brackets were
+   claiming a posture and a gaze she does not have.
+3. **The defect COMPOUNDS through the session buffer.** 4/8 in round one
+   became 8/8 in round two: her own bracketed replies re-enter as session
+   context and she imitates herself. Session context is a faithful record of
+   what was said, so there is no fix on that side that does not involve
+   judging her own words.
+
+**A near-miss worth recording.** The first measurement reported 0/16 and
+looked like the clause holding — because the marker detector matched only
+ROUND brackets. Printing the replies showed square-bracket narration in half
+of them. "Prompt-level mitigation is sufficient" was one step from entering
+this Log as a measured finding on the strength of a detector bug.
+
+**STILL OPEN — the residual 3/16 needs a ruling, and it is NOT taken here.**
+Options, with the reasoning that survives measurement:
+
+- **A fifth gate check.** Rejected on two independent grounds: Addendum §4
+  fixes the comparison set at four, and a format defect is not a comparison
+  against held state, so it would not fit the mechanism even if the cap were
+  lifted.
+- **Extend the moral schema's named anti-pattern list**, so the existing
+  MANIPULATION check catches it. This is the RECOMMENDED option and the
+  argument is that the defect has been miscategorised from the start: Aria
+  has no body, so "[my gaze is calm, meeting yours without pressure]" is a
+  false claim about herself made to produce an emotional effect — it
+  simulates presence rather than being present, which is the same shape as
+  the already-named `fake_confidence`. It adds no fifth comparison, uses the
+  existing mechanism as designed, routes a caught candidate into the existing
+  corrective-retry ladder, and extends a list the docs already mark as
+  OQ-M1, "not a doc-certified final set". **It is not implemented, because
+  the moral schema is load-bearing, it also gates DMN narrative updates
+  (Addendum §8), and a wrong entry would propagate into what she can believe
+  about herself. That is an architect's call, not an implementer's.**
+- **A format normaliser between Soul Filter and the Audio Pipeline.** A new
+  component, and it would be judging output.
+- **Accept the residual and record it.** Now a real option, given 3/16 —
+  but it means roughly one turn in five is spoken with narration attached.
+
+Until a ruling, the TTS adapters RECORD markers
+(`last_text_had_format_markers`) and strip nothing. A recorder is not a
+guard and is not presented as one. Known gap, measured on the same run:
+narration with no marker at all ("I am sitting still. My attention is
+focused entirely on the words you are saying.") is not detected, because no
+lexical pattern catches it without judging content.
+
+---
+
+## 23. Correction — "Resolution Log item 15" was miscited for verbatim passthrough
+
+*(2026-08-22)*
+
+A documentation correction, not an architectural change. Recorded because
+the miscitation was load-bearing in a rejected design option.
+
+**Item 15 is cited correctly in most places and incorrectly in a few, and the
+difference is worth being exact about.**
+
+Item 15 is titled "Non-issues — no action needed" and resolves three
+OWNERSHIP questions: that the Output Validation Gate belongs to Soul Filter
+(F-5a / F-9b), that the Audio Pipeline is a single module (F-7a), and that
+PAD→video zone mapping lives in the Visual Layer (F-10a). **Every citation of
+item 15 for those three things is right and stays.**
+
+What item 15 does NOT say is that model output crosses the transport layer
+VERBATIM with no judgment. That rule was attributed to it in
+`daemon/llm_interface.py`, `adapters/transport_ollama.py`, several adapter
+docstrings written on 2026-08-22, `main.py`, and both trackers. The word
+"verbatim" appears in the entire precedence chain exactly once — in Addendum
+§9's amendment about session-context recent turns, which is unrelated.
+
+**The substance is real; only the attribution was wrong.** Verbatim
+passthrough is a CONSEQUENCE of item 15's ownership ruling rather than a
+clause in it: if the gate lives in Soul Filter, then the LLM Interface has no
+gate to run, so it returns what it received. It is stated directly as the LLM
+Interface's own Requirement 5 and as flag F-9b, and it is structurally
+enforced — that module holds no graph, PAD or appraisal handle. So nothing
+about the architecture changes.
+
+Why the distinction mattered enough to record: the format-guard row rejected
+"strip it in the adapter" by citing item 15, and anyone checking that source
+would have found nothing supporting it. The reasoning for the rejection
+stands on its own — an adapter that edits her words is deciding what she said
+— but it should rest on F-9b and on that reasoning, not on a clause that does
+not exist. The affected citations now point at F-9b / Req 5.
+
+Reading the source rather than the citation is what surfaced this, while
+deriving items 21 and 22. It is a reminder that a citation repeated across
+three documents is not evidence that anyone checked it.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4

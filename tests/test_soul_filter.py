@@ -975,3 +975,238 @@ def test_persona_anchor_stage_direction_clause_survives_into_the_prompt():
     prompt = assemble_prompt(instr, "hello")
     assert "stage directions" in prompt.instruction_text.lower()
     assert "narrate yourself from the outside" in prompt.instruction_text.lower()
+
+
+# ===========================================================================
+# An EMPTY candidate is a NON-CANDIDATE (Resolution Log item 21).
+#
+# Measured before the fix, on the real initiative path: the model returned "",
+# the gate reported `passed=True failed_checks=[] retried=False
+# used_minimum_safe_output=False`, and the empty string was served as her reply.
+#
+# The gate was RIGHT. An empty string makes no dishonest claim, mismatches no
+# relational stage, matches no anti-pattern and deflects from nothing — it
+# contradicts none of the four things §4 compares against. It was being asked
+# about a non-thing.
+#
+# So the fix is not a fifth comparison. `run_output_gate` is byte-unchanged and
+# still runs exactly four checks (asserted by the pre-existing
+# `test_gate_has_exactly_four_checks_no_fifth`, which these tests deliberately
+# do not touch).
+# ===========================================================================
+
+def test_empty_candidate_triggers_a_plain_re_ask_with_the_same_instruction():
+    """Not a corrective retry: there is no failed check to correct, and
+    inventing a corrective for emptiness would be adding gate vocabulary through
+    the back door. The instruction was fine; the model returned nothing."""
+    llm = FakeLLM(scripted=["", "A real reply, second time."])
+    filt, *_ = make_filter(llm=llm)
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hello")
+
+    assert resp.text == "A real reply, second time."
+    assert resp.empty_candidates == 1
+    # Two generations, and the SECOND used the same instruction object as the
+    # first — no corrective was appended.
+    assert len(llm.calls) == 2
+    assert type(llm.calls[1][0]) is type(llm.calls[0][0])
+    assert not isinstance(llm.calls[1][0], RetryInstruction)
+
+
+def test_empty_candidate_does_not_play_the_reconsideration_sound():
+    """That clip is v4 Layer 5's SELF-CORRECTION sound. She said nothing, so
+    there is nothing to reconsider, and playing it would perform an interior
+    event that did not happen."""
+    fired = {"n": 0}
+    llm = FakeLLM(scripted=["", "A real reply."])
+    filt, *_ = make_filter(
+        llm=llm, on_reconsideration=lambda: fired.__setitem__("n", fired["n"] + 1)
+    )
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hello")
+
+    assert resp.reconsideration_sound_triggered is False
+    assert fired["n"] == 0
+
+
+def test_two_empty_generations_drop_to_the_existing_minimum_safe_floor():
+    """v4 already defines the floor for output that cannot be used. Nothing new
+    is invented — the newly-recognised case is routed into it."""
+    llm = FakeLLM(scripted=["", "   ", "I don't have words for this yet."])
+    filt, *_ = make_filter(llm=llm)
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hello")
+
+    assert resp.used_minimum_safe_output is True
+    assert resp.text == "I don't have words for this yet."
+    assert resp.empty_candidates == 2
+    assert isinstance(llm.calls[-1][0], MinimumSafeInstruction)
+
+
+def test_the_four_comparisons_are_skipped_not_failed_on_a_non_candidate():
+    """`gate_results` is empty rather than carrying a fabricated failure. No
+    comparison happened, so reporting one would be a lie about what ran — and it
+    would put emptiness into the gate's vocabulary, which is the thing §4
+    forbids."""
+    llm = FakeLLM(scripted=["", "", "safe words"])
+    filt, *_ = make_filter(llm=llm)
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hello")
+
+    assert resp.gate_results == ()
+    assert resp.empty_candidates == 2
+
+
+def test_whitespace_only_counts_as_empty():
+    """`"   "` is not a shorter reply than `"I don't know"`; it is the same
+    absence with different bytes, and TTS renders both as silence."""
+    llm = FakeLLM(scripted=["   \n\t  ", "A real reply."])
+    filt, *_ = make_filter(llm=llm)
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hello")
+
+    assert resp.text == "A real reply."
+    assert resp.empty_candidates == 1
+
+
+def test_a_normal_turn_is_completely_unaffected():
+    """Non-vacuity: the fix must cost nothing on the ordinary path. One
+    generation, no re-ask, counter at zero."""
+    llm = FakeLLM(scripted=["That sounds hard. I'm here."])
+    filt, *_ = make_filter(llm=llm)
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hello")
+
+    assert resp.text == "That sounds hard. I'm here."
+    assert resp.empty_candidates == 0
+    assert resp.retried is False
+    assert len(llm.calls) == 1
+    assert len(resp.gate_results) == 1
+
+
+def test_an_empty_corrective_retry_also_reaches_the_floor():
+    """The other place an empty candidate can appear: the gate rejected the
+    first reply, and the corrective retry came back with nothing. Before the
+    fix, gate2 would have passed on "" and served it."""
+    llm = FakeLLM(scripted=[
+        "After everything I've done for you, you owe me.",  # manipulation
+        "",                                                # retry empty
+        "",                                                # re-ask empty
+        "I don't have words for this yet.",                # minimum safe
+    ])
+    filt, *_ = make_filter(llm=llm)
+
+    resp = filt.respond(appraisal_result=make_appraisal(), user_message="hi")
+
+    assert resp.used_minimum_safe_output is True
+    assert resp.empty_candidates == 2
+    # Only ONE real comparison happened, so only one is reported.
+    assert len(resp.gate_results) == 1
+    assert resp.gate_results[0].passed is False
+
+
+def test_emergency_output_is_re_asked_too_while_the_gate_bypass_stands():
+    """The gate BYPASS is untouched (v4) — emergency output is not validated.
+    But "did the model answer" is not one of the checks being bypassed, and this
+    is the turn where silence is least acceptable: someone in distress getting
+    nothing back is the worst outcome this path can produce."""
+    llm = FakeLLM(scripted=["", "I'm here. Are you safe right now?"])
+    filt, *_ = make_filter(llm=llm)
+    appr = make_appraisal(
+        emergency=True, emergency_type=EmergencyType.PHYSICAL_THREAT
+    )
+
+    resp = filt.respond(appraisal_result=appr, user_message="help")
+
+    assert resp.text == "I'm here. Are you safe right now?"
+    assert resp.instruction_kind == "emergency"
+    assert resp.empty_candidates == 1
+    assert resp.gate_results == ()          # bypass intact
+    assert isinstance(llm.calls[0][0], EmergencyInstruction)
+    assert isinstance(llm.calls[1][0], EmergencyInstruction)
+
+
+def test_emptiness_is_not_in_the_gates_vocabulary():
+    """The structural proof that Addendum §4 survived this fix. If a fifth
+    `GateCheck` ever appears, or `run_output_gate` learns to ask about
+    emptiness, that is a change to the gate's fixed comparison set and needs a
+    ruling of its own."""
+    assert len(list(GateCheck)) == 4
+    source = textwrap.dedent(inspect.getsource(SoulFilter.run_output_gate)).lower()
+    for forbidden in ("_has_candidate", "empty", "strip()", "blank"):
+        assert forbidden not in source, forbidden
+
+
+def test_has_candidate_is_a_shape_check_and_holds_no_lexicon():
+    """It must not grow into content judgment. No word list, no threshold, no
+    comparison against held state — just "is there text"."""
+    assert sf._has_candidate("a") is True
+    assert sf._has_candidate("") is False
+    assert sf._has_candidate("   ") is False
+    assert sf._has_candidate("\n\t") is False
+    # Content is irrelevant to it: text the gate would REJECT still counts as a
+    # candidate, because rejecting is the gate's job and not this function's.
+    assert sf._has_candidate("You owe me after everything I've done.") is True
+    source = textwrap.dedent(inspect.getsource(sf._has_candidate))
+    assert "MARKER" not in source and "LEXICON" not in source
+
+
+# ===========================================================================
+# Field 1's anti-narration clause (Resolution Log item 22).
+#
+# The clause is prompt-level mitigation with a MEASURED effect, not a guarantee:
+# adversarial bait against the real model gave 8/16 stage directions with the
+# original abstract wording and 3/16 with wording that names the syntax. These
+# tests pin the wording that was measured, so a future edit cannot silently
+# revert to the version that scored worse.
+# ===========================================================================
+
+def test_persona_anchor_names_the_syntax_that_was_actually_produced():
+    """The original clause said "stage directions" abstractly and the model kept
+    emitting SQUARE-bracket narration. Naming the forms is what moved the number,
+    so the forms stay named."""
+    anchor = PERSONA_ANCHOR.lower()
+    assert "square bracket" in anchor
+    assert "parentheses" in anchor
+    assert "asterisk" in anchor
+    assert "stage direction" in anchor
+
+
+def test_persona_anchor_states_the_absence_of_a_body_as_fact():
+    """"You have no body to describe" is a statement about what is true, not a
+    prohibition. The brackets were claiming a posture and a gaze she does not
+    have, which is why the factual form is the right one — and it keeps the
+    clause inside §9's "who Aria is, her values, her voice"."""
+    assert "you have no body to describe" in PERSONA_ANCHOR.lower()
+
+
+def test_persona_anchor_carries_no_state_or_numbers():
+    """Unchanged §9 property, re-asserted because the clause grew. Field 1 is
+    "hardcoded once, never generated, never varies turn to turn" — so nothing
+    personal, no numbers, no state may have crept in with the new sentences."""
+    assert not any(ch.isdigit() for ch in PERSONA_ANCHOR)
+    for leaked in ("pleasure", "arousal", "dominance", "energy",
+                   "relational_stage", "salience", "poignancy"):
+        assert leaked not in PERSONA_ANCHOR.lower()
+
+
+def test_field5_was_not_spent_on_formatting():
+    """The reasoning for putting this in Field 1 was that Field 5 caps at MAX 3
+    and every slot is contested by the Energy gate and the uncertainty rows.
+    Spending one permanently on formatting would crowd out a moral constraint on
+    exactly the turns that need one — so no constraint mentions formatting."""
+    filt, *_ = make_filter()
+    for signals in (
+        make_social(vulnerability_disclosure=True),
+        make_social(distress_marker=True),
+        make_social(reality_contradiction=True),
+        make_social(),
+    ):
+        constraints = filt._derive_constraints(
+            make_appraisal(social_signals=signals), None
+        )
+        assert len(constraints) <= 3
+        joined = " ".join(constraints).lower()
+        for formatting in ("bracket", "stage direction", "asterisk",
+                           "markdown", "narrate"):
+            assert formatting not in joined, (formatting, constraints)

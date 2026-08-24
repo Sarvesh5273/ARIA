@@ -25,13 +25,31 @@ no need state and no appraisal output to any transport — it has no path to. Th
 `:state` command below prints internal state to YOUR terminal; that is a
 diagnostic readout for the operator and crosses no model boundary.
 
-NETWORK POSTURE
----------------
-No listening socket is opened. The only outbound traffic is to the Ollama daemon
-at `--host` (localhost by default) for embeddings and local generation. The two
-cloud tiers are wired to `UnconfiguredTransport`, which is explicitly unhealthy
-and never generates, so nothing leaves the machine until a real cloud adapter is
-written and passed in deliberately.
+NETWORK POSTURE — READ THIS BEFORE SETTING AN API KEY
+-----------------------------------------------------
+No listening socket is opened, ever.
+
+By DEFAULT the only outbound traffic is to the Ollama daemon at `--host`
+(localhost) for embeddings and local generation. Both cloud tiers are wired to
+`UnconfiguredTransport`, which is explicitly unhealthy and never generates, so
+nothing leaves the machine.
+
+That changes the moment a cloud key is present in the environment. A real adapter
+now exists (`adapters/transport_cloud.py`), and if `GROQ_API_KEY` (+ a model) or
+`AZURE_AI_API_KEY` (+ endpoint and deployment) are set, the matching tier becomes
+real and the assembled prompt for a turn it serves — five natural-language fields,
+the ephemeral session transcript, the user's current message — is sent to a third
+party. `--no-cloud` refuses to build either tier regardless of the environment.
+
+What still never crosses is structural rather than a promise: nothing in this file
+hands a transport anything but an `AssembledPrompt`, and `LLMInterface` holds no
+graph, PAD, needs, appraisal or state handle to put anything else in one. So no
+PAD value, no graph content, no `relational_stage` label, no need state and no
+appraisal output can reach a provider (Addendum §9).
+
+Gemma stays the default voice either way. Groq is a fallback, and the reasoning
+tier is PROPOSED and never taken silently — so keying a tier does not quietly
+reroute ordinary conversation off the machine.
 
 RUNTIME LAYOUT (v4 "Directory Structure")
 -----------------------------------------
@@ -61,15 +79,25 @@ from daemon.llm_interface import (
     LLMUnavailableError,
 )
 from daemon.needs_system import NeedsSystem
-from daemon.pad_engine import PADEngine
+from daemon.pad_engine import PAD_BASELINE, PADEngine
 from daemon.soul_filter import SoulFilter
 from daemon.state_manager import StateManager
 
+from daemon.visual_layer import VisualLayer, VisualLayerPort
+
+from adapters import audio_stack, visual_window
+from adapters._provider import AudioBackendUnavailable
 from adapters.audio_noop import NoOpAudioPipeline
+from adapters.visual_bridge import CloudAvailabilityReporter, SpeakingSignalAudio
 from adapters.embedding_local import (
     DEFAULT_MODEL as DEFAULT_EMBEDDING_MODEL,
     EmbeddingUnavailableError,
     OllamaEmbeddingModel,
+)
+from adapters.transport_cloud import (
+    azure_from_env,
+    env_summary as cloud_env_summary,
+    groq_from_env,
 )
 from adapters.transport_ollama import (
     DEFAULT_MODEL as DEFAULT_LOCAL_MODEL,
@@ -155,11 +183,20 @@ class Wiring:
             pad_engine=self.pad, graph=self.graph, embedding_model=self.embedding
         )
 
-        # 6-8. Transports. The local voice is real; both cloud tiers are
-        # explicitly unavailable because no adapter for them exists yet.
+        # 6-8. Transports. The local voice is always real. Each cloud tier is
+        # real IF its environment is fully configured, and explicitly
+        # unconfigured otherwise — never half-real, because a tier that exists
+        # but cannot work is worse than one that says it is absent.
         self.local = OllamaLocalTransport(host=args.host, model=args.local_model)
-        self.groq = UnconfiguredTransport(tier_name="tier_1 (groq)")
-        self.azure = UnconfiguredTransport(tier_name="tier_2 (azure/kimi)")
+        self.groq = self._resolve_cloud_tier(
+            "tier_1 (groq)",
+            None if args.no_cloud else groq_from_env(model=args.groq_model),
+        )
+        self.azure = self._resolve_cloud_tier(
+            "tier_2 (azure/kimi)",
+            None if args.no_cloud else azure_from_env(),
+        )
+        self.cloud_disabled_by_flag = args.no_cloud
 
         # 9. LLM Interface. Note the cloud slot gets the UNCONFIGURED transport,
         # never `self.local`: `LLMInterface`'s internal path unloads `local`
@@ -170,7 +207,18 @@ class Wiring:
         )
 
         # 10-11. Output side + the boundary.
-        self.audio = NoOpAudioPipeline()
+        #
+        # The visual layer is built BEFORE the audio port, because the port is
+        # what carries the speaking signal to it (see `_build_visual`). The
+        # Daemon is not modified: `SpeakingSignalAudio` satisfies
+        # `AudioPipelinePort` and goes in the same slot.
+        self.visual, self.visual_window = self._build_visual(args)
+        self.audio = self._build_audio(args)
+        if self.visual is not None:
+            self.audio = SpeakingSignalAudio(audio=self.audio, visual=self.visual)
+            self.cloud_reporter = CloudAvailabilityReporter(visual=self.visual)
+        else:
+            self.cloud_reporter = None
         self.soul_filter = SoulFilter(
             pad_engine=self.pad,
             graph=self.graph,
@@ -220,6 +268,104 @@ class Wiring:
             backend_router=self.router,
         )
 
+    # -- visual --------------------------------------------------------------
+
+    def _build_visual(self, args: argparse.Namespace):
+        """Module 10, or nothing. Returns `(visual_layer, window)`.
+
+        WHY THE DAEMON IS NOT TOUCHED. `AriaDaemon` takes no visual parameter, and
+        Module 10's own flag disposition calls the driver-loop and signal wiring
+        "top-of-tree BUILD-TIME wiring, not this module's concern." Adding a
+        `visual=` parameter to an approved module's constructor to wire a leaf
+        would need a ruling. The signals are taken from where Module 10 says they
+        live instead — see `adapters/visual_bridge.py`.
+
+        `--visual` gives the real PyQt6 + libmpv window; `--visual-headless` gives
+        the logging window, which is the only way to watch the zone machinery on a
+        machine without those providers. Neither is on by default: the layer is a
+        leaf, so its absence changes nothing inside the system.
+
+        WHO CALLS `refresh()`. Nobody, until someone does — Module 10 has no timer
+        and deliberately does not: "the independent timer/thread that calls
+        refresh() ... is top-of-tree wiring." The REPL drives it beside
+        `run_scheduler_step()`, which makes the visual loop as input-driven as the
+        soul clocks currently are. That is a real limitation of a REPL host rather
+        than of Module 10, and it is the same limitation the DMN observation
+        surfaced for the two clocks.
+        """
+        if not (args.visual or args.visual_headless):
+            return None, None
+        if args.visual_headless or not args.loop_dir:
+            window = visual_window.LoggingVideoWindow()
+        else:
+            window = visual_window.MpvVideoWindow(loop_dir=args.loop_dir)
+        return VisualLayer(pad_source=self.pad, window=window), window
+
+    # -- audio ---------------------------------------------------------------
+
+    def _build_audio(self, args: argparse.Namespace):
+        """The `AudioPipelinePort`: the no-op by default, real audio on `--audio`.
+
+        The default stays the no-op deliberately. Audio is a LEAF — nothing
+        downstream reads what it did, `speak()` returns None, and no soul state
+        depends on the result — so substituting it changes no behaviour inside the
+        system, which is the reasoning `adapters/audio_noop.py` sets out. Making
+        real audio the default would instead mean every text bring-up starts
+        talking out loud.
+
+        `--audio` builds the OUTPUT chain only. That is not a compromise: the
+        Daemon's port is output-only (`speak`, `stop_playback`,
+        `play_thinking_sound`, `play_reconsideration_sound`), and transcribed text
+        arrives as `route_inbound_turn(user_text=...)`, so the REPL prompt IS the
+        transcription and no inbound backend is missing from the wired path. She
+        can speak before she can hear, and that is a real intermediate state.
+
+        BE AWARE OF WHAT THIS TURNS ON. With `--audio`, whatever passes the Output
+        Gate is spoken — including a stage direction, a markdown heading or a
+        reasoning block, because the gate's four checks are about content and none
+        is about form. That is the tracker's open `needs-ruling` row, and the TTS
+        adapters record such markers without stripping them (F-9b / Req 5 keep
+        verbatim passthrough at that layer). Measured: macOS `say` reads a leading
+        "(Aria listens...)" aloud, 0.81 s of speech becoming 3.11 s — and
+        adversarial bait produces a stage direction on 3/16 turns even after
+        Field 1 was sharpened (Resolution Log item 22).
+        """
+        if not args.audio:
+            return NoOpAudioPipeline()
+        return audio_stack.build_output_only(
+            pad_source=self.pad,
+            voice=args.voice,
+            clip_dir=args.clip_dir,
+            player=args.audio_player,
+        )
+
+    # -- cloud tiers --------------------------------------------------------
+
+    @staticmethod
+    def _resolve_cloud_tier(tier_name: str, transport):
+        """Take a configured cloud transport, or hold the slot honestly.
+
+        `UnconfiguredTransport` is NOT retired now that a real adapter exists —
+        it is still the right object for an unkeyed tier. It answers
+        `is_healthy()` with an explicit False and raises from `generate()`, both
+        of which are true, so `BackendRouter.select()` skips the tier and never
+        proposes the reasoning escalation. Passing `self.local` into a cloud slot
+        remains the one thing not to do: `LLMInterface`'s internal path unloads
+        `local` whenever `cloud` succeeds.
+        """
+        if transport is not None:
+            return transport
+        return UnconfiguredTransport(tier_name=tier_name)
+
+    @property
+    def cloud_tiers_live(self) -> list:
+        """Which cloud tiers are real this run. Used by the startup report to
+        state the network posture out loud rather than leaving it inferable."""
+        return [
+            t for t in (self.groq, self.azure)
+            if not isinstance(t, UnconfiguredTransport)
+        ]
+
     # -- the primary (user) entity -----------------------------------------
 
     def ensure_primary_entity(self) -> None:
@@ -263,7 +409,26 @@ class Wiring:
         self.created_primary_entity = True
 
     def close(self) -> None:
-        self.graph.close()
+        # Playback owns a subprocess and temp WAVs, so it has to be told to let
+        # go. Closed BEFORE the graph so an interrupted reply stops talking while
+        # the rest of shutdown runs, rather than after it.
+        #
+        # `.wrapped` unwraps the SpeakingSignalAudio decorator when the visual
+        # layer is on; without it the reach for `_playback` would find nothing and
+        # a subprocess would outlive the process that started it.
+        # `getattr` with a default throughout: if construction failed partway,
+        # close() still has to release whatever DID get built, and an
+        # AttributeError here would mask the original failure.
+        port = getattr(self.audio, "wrapped", getattr(self, "audio", None))
+        playback = getattr(port, "_playback", None)
+        if playback is not None and hasattr(playback, "close"):
+            playback.close()
+        window = getattr(self, "visual_window", None)
+        if window is not None and hasattr(window, "close"):
+            window.close()
+        graph = getattr(self, "graph", None)
+        if graph is not None:
+            graph.close()
 
 
 # ===========================================================================
@@ -283,14 +448,70 @@ def report_startup(w: Wiring) -> None:
         f"  backends     gemma={health['gemma']}  groq={health['groq']}  "
         f"azure={health['azure']}"
     )
-    print(
-        "               both cloud tiers are explicitly unhealthy: no adapter "
-        "is written yet,"
-    )
-    print(
-        "               so every turn is served locally and the reasoning tier "
-        "is never proposed."
-    )
+    live = w.cloud_tiers_live
+    if not live:
+        if w.cloud_disabled_by_flag:
+            print("               --no-cloud: both cloud tiers refused "
+                  "regardless of the environment.")
+        else:
+            print("               both cloud tiers are unconfigured, so they "
+                  "are explicitly unhealthy:")
+            print(f"               {'  '.join(cloud_env_summary())}")
+        print(
+            "               every turn is served locally, the reasoning tier is "
+            "never proposed,"
+        )
+        print("               and nothing leaves this machine.")
+    else:
+        # Say it plainly, every run. An operator who set a key a week ago should
+        # not have to remember that in order to know where their words are going.
+        print("               NETWORK POSTURE: prompts CAN now leave this "
+              "machine. Live cloud tiers:")
+        for tier in live:
+            print(f"                 {tier.describe()}")
+        print("               Gemma is still the default voice; Groq is a "
+              "fallback and the reasoning")
+        print("               tier is proposed, never taken silently. "
+              "--no-cloud turns both off.")
+    # Unwrap the SpeakingSignalAudio decorator before reaching for the pipeline's
+    # parts. Without this the report reads "SPEAKING — NoneType -> ?" whenever the
+    # visual layer is on, which is exactly when someone is checking it.
+    port = getattr(w.audio, "wrapped", w.audio)
+    if isinstance(port, NoOpAudioPipeline):
+        print("  audio        no-op (text only). --audio to speak, "
+              "--audio-preflight to see backends.")
+    else:
+        primary = getattr(port, "_tts_primary", None)
+        playback = getattr(port, "_playback", None)
+        print(f"  audio        SPEAKING — {type(primary).__name__}"
+              f" -> {playback.describe() if playback is not None else '?'}")
+        unmapped = list(getattr(primary, "unmapped_prosody", []))
+        if unmapped:
+            # Said out loud because it is a real gap in v4's Layer 5 voice
+            # expression, not a detail: two of the three locked PAD->prosody
+            # directions reach nothing with any available provider.
+            print(f"               prosody: only length_scale (Arousal) reaches "
+                  f"the voice; unmapped {unmapped}")
+        print("               format guard is OPEN (needs-ruling): a stage "
+              "direction or heading that")
+        print("               passes the Output Gate is spoken — the gate's four "
+              "checks are about content.")
+    warn_pad_restore_boundary(w)
+    if w.visual is None:
+        print("  visual       off. --visual (PyQt6 + libmpv) or --visual-headless.")
+    else:
+        kind = type(w.visual_window).__name__
+        print(f"  visual       Module 10 live — {kind}")
+        if hasattr(w.visual_window, "describe"):
+            print(f"               {w.visual_window.describe()}")
+        print("               speaking signal comes from the audio port "
+              "(AriaDaemon unmodified);")
+        print("               degradation is driven by LLMUnavailableError, NOT "
+              "by serving_from_local")
+        print("               — that readout says 'cloud is down' but returns "
+              "local.is_loaded, which")
+        print("               Track A made permanently True. See "
+              "adapters/visual_bridge.py.")
     if w.created_primary_entity:
         print(f"  speaking to  {w.primary_entity_id}")
         print("               FIRST RUN — created and persisted. Every later run "
@@ -302,6 +523,52 @@ def report_startup(w: Wiring) -> None:
     else:
         print(f"  speaking to  {w.primary_entity_id}  (given on the command line)")
     print()
+
+
+def warn_pad_restore_boundary(w: Wiring) -> None:
+    """Say so at STARTUP if the next soul tick is going to raise.
+
+    PAD Engine's Open Question 4 residual: `on_soul_tick` raises
+    `NotImplementedError` when PAD was restored to a NON-BASELINE value and no
+    valence came back with it, because there is then no basis for choosing an
+    EMA decay coefficient and inventing one is exactly what Rule 1 forbids.
+
+    The HANDOFF contract normally prevents this — `AriaDaemon.startup()` restores
+    `last_applied_valence` and passes it to `initialize()`, and the write cadence
+    is every turn, so the field is one turn behind at worst. The residual case is
+    a crash BETWEEN an appraisal delta and the next save, which leaves PAD off
+    baseline with the valence key never written.
+
+    Demonstrated reproducibly: with that state file, `startup()` succeeds and the
+    FIRST `soul_tick()` raises — which in this REPL means the first turn dies with
+    a traceback several frames from the cause.
+
+    So this prints the cause up front. It does NOT resolve it: no coefficient is
+    chosen, the raise is not caught, and `pad_engine.py` is untouched. Closing OQ4
+    is an architect decision.
+    """
+    pad = w.pad.get_current_pad()
+    at_baseline = (
+        pad.pleasure == PAD_BASELINE.pleasure
+        and pad.arousal == PAD_BASELINE.arousal
+        and pad.dominance == PAD_BASELINE.dominance
+    )
+    if at_baseline or w.state.load_last_applied_valence() is not None:
+        return
+    print("  PAD          WARNING — restored off baseline "
+          f"(P={pad.pleasure:.3f}) with NO persisted valence.")
+    print("               The next soul tick will raise NotImplementedError: this "
+          "is PAD Engine's")
+    print("               Open Question 4 residual, and no decay coefficient may "
+          "be invented for it")
+    print("               (Rule 1). Usual cause: a crash between an appraisal "
+          "delta and the next save.")
+    print(f"               Operator remedy: set last_applied_valence in "
+          f"{w.state_dir}/aria_state.json")
+    print("               to one of positive/negative/neutral/valence_uncertain, "
+          "or reset PAD to")
+    print("               baseline by removing the pad key. Neither is a fix — "
+          "OQ4 needs a ruling.")
 
 
 def report_state(w: Wiring) -> None:
@@ -338,6 +605,13 @@ def report_state(w: Wiring) -> None:
     )
     print(f"  buffer       {w.daemon.session_buffer_fullness}")
     print(f"  daemon state {w.daemon.state.value}")
+    if w.visual is not None:
+        loop = w.visual.current_loop
+        print(
+            f"  visual       zone={w.visual.current_zone.value if w.visual.current_zone else '-'}"
+            f"  loop={loop.loop_id if loop else '-'}"
+            f"  degraded={w.visual.is_degraded}"
+        )
     print(f"  ticks        soul={w.daemon.soul_tick_count} "
           f"dmn={w.daemon.dmn_tick_count}")
     print(f"  backends     {health}")
@@ -349,6 +623,41 @@ def report_state(w: Wiring) -> None:
 # ===========================================================================
 # The REPL
 # ===========================================================================
+
+def report_turn_outcome(w: Wiring, *, served: bool) -> None:
+    """Relay "a backend answered / did not" to the Visual Layer.
+
+    Edge-triggered inside `CloudAvailabilityReporter`, so calling it on every turn
+    costs nothing and needs no state here.
+    """
+    if w.cloud_reporter is None:
+        return
+    if served:
+        w.cloud_reporter.report_turn_served()
+    else:
+        w.cloud_reporter.report_turn_failed()
+
+
+def step_visual(w: Wiring) -> None:
+    """One step of Module 10's independent loop.
+
+    A REPL is the wrong host for this and it is worth being honest about why:
+    `input()` blocks, so between turns nothing advances — the same limitation the
+    DMN observation found for the two soul clocks (see
+    `tools/observe_dmn_pass.py`). The 8-second stability gate therefore only ever
+    sees turn-to-turn intervals here, which in practice are longer than 8 seconds,
+    so the anti-flicker rule is satisfied trivially rather than exercised. A real
+    host wants a timer.
+    """
+    if w.visual is None:
+        return
+    w.visual.refresh()
+    # The real window owns a Qt event loop that someone has to turn over. The
+    # driver must NOT call QApplication.exec(), which would never return and would
+    # stop the soul clocks entirely.
+    if hasattr(w.visual_window, "pump"):
+        w.visual_window.pump()
+
 
 def run_repl(w: Wiring) -> int:
     turns = 0
@@ -391,13 +700,20 @@ def run_repl(w: Wiring) -> int:
             )
         except LLMUnavailableError as exc:
             print(f"\n  [no backend could answer this turn] {exc}\n")
+            # Module 10's degradation trigger: withdrawn, not sleeping. This is
+            # the signal its docstring names alongside serving_from_local, and the
+            # one that still means something under Track A.
+            report_turn_outcome(w, served=False)
             continue
         except LLMTransportError as exc:
             print(f"\n  [the local model failed on this turn] {exc}\n")
+            report_turn_outcome(w, served=False)
             continue
         except EmbeddingUnavailableError as exc:
             print(f"\n  [the embedding backend went away mid-turn] {exc}\n")
             continue
+
+        report_turn_outcome(w, served=True)
 
         print(f"\naria> {response.text}\n")
 
@@ -419,6 +735,10 @@ def run_repl(w: Wiring) -> int:
         # runs: the two clocks are driven by the caller, and in a REPL the
         # caller is this loop.
         w.daemon.run_scheduler_step()
+        # Third loop, and it is genuinely independent of the other two (v4: the
+        # visual layer "runs locally, independently, in parallel with language
+        # generation"). Module 10 owns no timer by design, so the host drives it.
+        step_visual(w)
         # Flush after every turn — see the WRITE CADENCE note at the top.
         w.daemon.save_periodic()
 
@@ -467,7 +787,106 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("ARIA_RUNTIME_ROOT", str(DEFAULT_RUNTIME_ROOT)),
         help=f"graph + state location (default {DEFAULT_RUNTIME_ROOT})",
     )
+    parser.add_argument(
+        "--groq-model",
+        default=os.environ.get("ARIA_GROQ_MODEL"),
+        help=(
+            "model tag for the tier-1 Groq backend. No default is invented — "
+            "without this (or ARIA_GROQ_MODEL) the tier stays unconfigured even "
+            "if GROQ_API_KEY is set."
+        ),
+    )
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help=(
+            "speak her replies out loud (the OUTPUT chain: PAD -> prosody -> TTS "
+            "-> playback). Off by default: audio is a leaf, so the no-op changes "
+            "nothing inside the system, and a text bring-up should not start "
+            "talking. NOTE this is where the open format-guard question bites — "
+            "a stage direction or a markdown heading that passes the Output Gate "
+            "WILL be spoken, because the gate's four checks are about content."
+        ),
+    )
+    parser.add_argument(
+        "--audio-preflight",
+        action="store_true",
+        help="report which of the seven audio backends are available, then exit",
+    )
+    parser.add_argument(
+        "--visual",
+        action="store_true",
+        help=(
+            "run Module 10 with the real PyQt6 + libmpv window (needs --loop-dir "
+            "and the 17 loop files v4 names). Off by default: the visual layer is "
+            "a leaf, so its absence changes nothing inside the system."
+        ),
+    )
+    parser.add_argument(
+        "--visual-headless",
+        action="store_true",
+        help=(
+            "run Module 10 with a logging window instead of a display. The zone "
+            "mapping, the 8-second stability gate, the talking/idle variant and "
+            "the inward/waiting override all run for real and are reported by "
+            ":state — this is how to watch them without PyQt6 or libmpv."
+        ),
+    )
+    parser.add_argument(
+        "--loop-dir",
+        default=os.environ.get("ARIA_LOOP_DIR"),
+        help=(
+            "directory of video loop files. v4 names 16 (8 zones x idle/talking) "
+            "plus the inward/waiting loop; each file is named for its loop key, "
+            "e.g. engaged_talking.mp4."
+        ),
+    )
+    parser.add_argument(
+        "--visual-preflight",
+        action="store_true",
+        help="report the visual providers and loop-file catalogue, then exit",
+    )
+    parser.add_argument(
+        "--voice",
+        default=os.environ.get("ARIA_VOICE"),
+        help="system TTS voice name (macOS `say -v`). No default is chosen here.",
+    )
+    parser.add_argument(
+        "--clip-dir",
+        default=os.environ.get("ARIA_CLIP_DIR"),
+        help=(
+            "directory of pre-cached WAV clips for the thinking and "
+            "reconsideration sounds (v4 Layer 5). Each file's stem is its key. "
+            "Missing clips are a recorded no-op, never a failed turn."
+        ),
+    )
+    parser.add_argument(
+        "--audio-player",
+        default=os.environ.get("ARIA_AUDIO_PLAYER"),
+        help=(
+            "playback binary. Defaults to the first of "
+            f"{list(audio_stack.audio_playback.PLAYER_CANDIDATES)} found on PATH."
+        ),
+    )
+    parser.add_argument(
+        "--no-cloud",
+        action="store_true",
+        default=_env_flag("ARIA_NO_CLOUD"),
+        help=(
+            "refuse to build either cloud tier even when keys are present. The "
+            "off switch is a flag rather than the absence of one because "
+            "unsetting an environment variable is easy to forget and the cost of "
+            "forgetting is prompts leaving the machine."
+        ),
+    )
     return parser
+
+
+def _env_flag(name: str) -> bool:
+    """An env var read as a boolean. Anything set and not obviously falsey is
+    True — the safe direction for a switch whose ON position means "send less"."""
+    raw = (os.environ.get(name) or "").strip().lower()
+    return raw not in ("", "0", "false", "no", "off")
 
 
 def resolve_local_model(args: argparse.Namespace) -> Optional[str]:
@@ -502,6 +921,31 @@ def main(argv: Optional[list] = None) -> int:
     # a startup diagnostic that reads out of order is worse than useless.
     print(BANNER, flush=True)
 
+    if args.audio_preflight:
+        # Answered before anything is constructed, because "can she talk yet" must
+        # not require a reachable model backend to ask.
+        print("Audio backends (Module 7 — seven injected Protocols):\n")
+        print(audio_stack.preflight_report())
+        print()
+        print(f"  output chain (what AudioPipelinePort drives): "
+              f"{'READY' if audio_stack.output_chain_ready() else 'not ready'}")
+        print(f"  input chain  (capture -> VAD -> STT):         "
+              f"{'READY' if audio_stack.input_chain_ready() else 'not ready'}")
+        print()
+        print("  The Daemon's port is OUTPUT ONLY — transcribed text arrives as")
+        print("  route_inbound_turn(user_text=...), so the REPL prompt is the")
+        print("  transcription and the input chain is not needed to run --audio.")
+        return 0
+
+    if args.visual_preflight:
+        print("Visual Layer (Module 10 — one injected VideoWindow Protocol):\n")
+        print(visual_window.preflight_report(args.loop_dir))
+        print()
+        print("  --visual-headless runs the zone machinery with no display, which")
+        print("  is how to watch the categorical mapping and the 8-second gate")
+        print("  without PyQt6 or libmpv installed.")
+        return 0
+
     local_model = resolve_local_model(args)
     if local_model is None:
         return 2
@@ -511,6 +955,14 @@ def main(argv: Optional[list] = None) -> int:
         wiring = Wiring(args)
     except EmbeddingUnavailableError as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
+        return 2
+    except AudioBackendUnavailable as exc:
+        # A missing audio or video provider is a CONFIGURATION problem with a
+        # one-line remedy, which the adapter already put in the message. A
+        # traceback here would bury it under eight frames of import machinery.
+        print(f"cannot start: {exc}", file=sys.stderr)
+        print("  --audio-preflight and --visual-preflight report what is missing "
+              "without starting anything.", file=sys.stderr)
         return 2
 
     try:
