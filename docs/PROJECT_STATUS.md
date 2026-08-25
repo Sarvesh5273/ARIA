@@ -5,14 +5,29 @@ the docs/ folder, is everything a fresh review session needs — it does
 not depend on any specific chat's history.
 
 Counts and line numbers below were last measured against the code on
-**2026-08-25**. They are measured values, not estimates — if you change code,
+**2026-08-26**. They are measured values, not estimates — if you change code,
 re-measure rather than assuming.
 
-Full suite: **812 passed** with an embedding backend reachable. Without one, the
+Full suite: **827 passed** with an embedding backend reachable — soul layer
+**611**, adapter layer **199**, cross-cutting **17**. Re-measured per file on
+2026-08-26, and the arithmetic is split two ways deliberately, because the figure
+had drifted for a reason worth recording: this file read **812** while the suite
+actually ran **821** before the OQ4 commit. The 9-test gap was **ResLog 29's own
+commit** (`6582795`), which added 9 tests — daemon 66→71, audio_pipeline 29→32,
+session_buffer 40→41 — and never updated the tracker. The OQ4 commit
+(`096c618`, Resolution Log item 30) added the other **6**, all in
+`pad_restore_boundary` (11→17). So 812 → 827 is +9 owed to the previous commit
+and +6 to this one; recording it as one jump would credit the OQ4 fix with tests
+it did not write. Adapter layer did not move.
+
+Without an embedding backend reachable, the
 same 3 tests skip and the rest pass — measured directly at 723 + 3 skipped when
-the suite stood at 726, so the figure today is 755 + 3. Stated that way because
+the suite stood at 726, so the figure today is **824 + 3**. Stated that way because
 the macOS Ollama.app restarts the daemon on its own, which makes the
-backend-down arm awkward to re-measure on demand. Both numbers are real and neither is a failure: the
+backend-down arm awkward to re-measure on demand. *(This read "755 + 3" until
+2026-08-26 — stale by a different amount again, since 755 + 3 describes a
+758-test suite and was never updated after the boundary phase. Corrected here
+because a derived figure nobody re-derives is how a tracker starts lying quietly.)* Both numbers are real and neither is a failure: the
 three skipped tests are the real-model half of the embedding comparison, which
 skips rather than fails so `make check` stays hermetic on a machine with no
 Ollama running — verified both ways this session, by stopping the daemon and
@@ -20,13 +35,18 @@ re-running. A further **17** audio tests skip on a machine without macOS `say` o
 an audio player on PATH; they pass here because both are present, which is what
 made the output chain verifiable rather than only unit-tested.
 
-Per-file test counts as measured on 2026-08-25 — soul layer: appraisal_chain 64,
-audio_pipeline 29, backend_router 25, **daemon 66** (+9, item 28),
+Per-file test counts as measured on 2026-08-26 — soul layer: appraisal_chain 64,
+**audio_pipeline 32** (+3, ResLog 29C's VAD reset),
+backend_router 25, **daemon 71** (+5, ResLog 29A's third Energy state),
 dmn 44, graph_manager 63, llm_interface 41, needs_system 47, pad_engine 53,
-**session_buffer 40** (+27, item 28),
-**soul_filter 68** (+14, Resolution Log items 21–22), state_manager 38,
-visual_layer 24 — **602**. Plus `pad_restore_boundary` 11, which is a
-cross-module boundary file rather than one module's suite.
+**session_buffer 41** (+1, ResLog 29B's latch re-arm),
+**soul_filter 68**, state_manager 38,
+visual_layer 24 — **611**. Plus **`pad_restore_boundary` 17** (+6, item 30),
+which is a cross-module boundary file rather than one module's suite.
+
+`pad_engine` stays at **53** and `daemon/pad_engine.py` is byte-unchanged by item
+30 — the OQ4 fix is entirely in the wiring layer, and both facts are asserted by
+tests rather than claimed here.
 
 Soul-layer count history: it was **547** through the whole boundary phase — five
 new adapter families and three defects surfaced without one soul test changing,
@@ -42,8 +62,8 @@ the Qwen family rung),
 **audio_adapters 67** (+5 on 08-24 for ResLog 25/27:
 the strip, the all-narration case, the probe, dormancy, and the refusal of an
 unrecognised direction), **visual_adapters 28** — 199. Cross-cutting:
-**pad_restore_boundary 11**. Soul layer 602 (llm_interface 41 included; +5 on
-08-24 for ResLog 26's routing values). Total 812.
+**pad_restore_boundary 17**. Soul layer 611 (llm_interface 41 included; +5 on
+08-24 for ResLog 26's routing values). Total 827.
 
 The 08-24 pass also fixed a latent FLAKY test rather than only adding: macOS
 `say` is not byte-deterministic — 39,898 bytes on 53 of 60 identical invocations
@@ -179,7 +199,7 @@ model (`retrieve`, `reality_contradiction_check`, `_vulnerability`,
 | # | Module | Status | Notes |
 |---|--------|--------|-------|
 | 11 | State Manager | ✅ Approved | Restored to daemon/state_manager.py after project reset. Reviewed line-by-line against spec — atomic writes, sibling-key preservation, superseded-key drop, PAD baseline fallback all confirmed correct. Extended additively for Module 1 (last_applied_valence field/methods, load_all/save_all widened) — not logically reopened. **Test gap CLOSED 2026-08-20**: `tests/test_state_manager.py` now exists (31 tests, `tmp_path`-based — the module's job IS the filesystem, so fakes would test nothing). Covers the `__main__` block's ground plus what it skipped: default-on-missing-file for every loader, restore from a hand-written snapshot, corrupt-JSON and non-numeric fallback, partial pad entries, mkdir-on-demand, sibling-key preservation vs superseded-key drop, the quality_record 20-window on both read and write sides, load independence, and the "owns no meaning" API-surface boundary. Atomicity is tested by making the temp-file write fail: the previous `aria_state.json` must stay byte-identical, the old value must still load, and no `.tmp` may survive. **Restore now CLAMPS** (2026-08-20): PAD axes to the locked [0.0, 1.0] (v4 Layer 1), Energy to [0.0, 100.0] (values mirroring Module 2's ENERGY_MIN/ENERGY_BASELINE by value, deliberately not by import — Module 11 depends on no other module). Non-finite input is treated as CORRUPT, not clamped: `json.loads` accepts a literal `NaN`/`Infinity`, and NaN silently survives a naive `max(low, min(high, v))` as `high`, so a corrupt Energy entry would have quietly restored as "fully rested". Clamp is a READ boundary only; save still records what the owning module hands over. Note the clamp is more informative than the reject it pre-empts — a file saying `energy=-50` restores as 0.0 ("empty"), where Module 2's own guard would have discarded it and booted at full. Still no `.kiro/specs/state-manager/` folder — **added 2026-08-20**, though DERIVED FROM CODE rather than authored ahead of it (see the spec-folder row in Still Open). |
-| 1 | PAD Engine | ✅ Approved | daemon/pad_engine.py, 53/53 tests passing. (Task bookkeeping CLOSED 2026-08-20: `.kiro/specs/pad-engine/tasks.md` holds 22 items — 1–21 plus an inserted 7b — and all 22 were unchecked despite complete code, as were appraisal-chain 0/21 and memory-graph 0/24, all three built outside the Kiro task loop. Every task's named artifact was verified present in code before ticking — 47 checks across the three modules, one initial miss which turned out to be a wrong grep string, not a gap. All 170 tasks across all 13 folders now read `[x]`, 0 open — measured, not estimated.) OQ1 (soul-tick cadence) carried forward as a documented build-time gap, per Resolution Log. OQ2 (PAD bounds) RESOLVED — [0,1] clamp in apply_appraisal_delta confirmed intentional (physiological homeostasis; Mehrabian/Russell bounded scales; EMA decay is the recovery path), now documented in the module docstring and the pad-engine spec and covered by test_apply_appraisal_delta_clamps_to_bounds. Residual flagged: initialize() still does not clamp an out-of-range restored snapshot. OQ3 (VALENCE_UNCERTAIN coefficient) resolved — reuses EMA_COEFFICIENT_NEGATIVE, Emergency Type Detection "default to caution" precedent. OQ4 (restore-boundary coefficient) narrowed, not resolved — initialize()'s new restored_valence param + State Manager's last_applied_valence field cover the routine restart case; residual NotImplementedError raise (rare case: first-ever run, corrupted field, or crash before save) left unchanged. Known limitation logged: initialize() is not idempotent across repeated calls — see HANDOFF_NOTES.md, owed to Module 8. |
+| 1 | PAD Engine | ✅ Approved | daemon/pad_engine.py, 53/53 tests passing. (Task bookkeeping CLOSED 2026-08-20: `.kiro/specs/pad-engine/tasks.md` holds 22 items — 1–21 plus an inserted 7b — and all 22 were unchecked despite complete code, as were appraisal-chain 0/21 and memory-graph 0/24, all three built outside the Kiro task loop. Every task's named artifact was verified present in code before ticking — 47 checks across the three modules, one initial miss which turned out to be a wrong grep string, not a gap. All 170 tasks across all 13 folders now read `[x]`, 0 open — measured, not estimated.) OQ1 (soul-tick cadence) carried forward as a documented build-time gap, per Resolution Log. OQ2 (PAD bounds) RESOLVED — [0,1] clamp in apply_appraisal_delta confirmed intentional (physiological homeostasis; Mehrabian/Russell bounded scales; EMA decay is the recovery path), now documented in the module docstring and the pad-engine spec and covered by test_apply_appraisal_delta_clamps_to_bounds. Residual flagged: initialize() still does not clamp an out-of-range restored snapshot. OQ3 (VALENCE_UNCERTAIN coefficient) resolved — reuses EMA_COEFFICIENT_NEGATIVE, Emergency Type Detection "default to caution" precedent. **OQ4 (restore-boundary coefficient) CLOSED 2026-08-26 — Resolution Log item 30, commit `096c618`.** This read *"narrowed, not resolved"* until then: `initialize()`'s `restored_valence` param + State Manager's `last_applied_valence` field covered the routine restart, and the residual `NotImplementedError` raise was left live. It is now unreachable from any state FILE, and **no coefficient was invented — `daemon/pad_engine.py` is byte-unchanged (asserted).** Two wiring-layer changes: `AriaDaemon._save_state` writes ONE atomic record via `StateManager.save_all` instead of three separate writes (measured 3→1), closing the crash gap that produced the half-written record; and `AriaDaemon.startup()` treats a non-baseline PAD with no valence as a half-written record and restores baseline, on item 18's precedent that an entry which cannot be trusted falls back to the spec default. PAD and valence ARE one record — PAD only leaves baseline through `apply_appraisal_delta`, which always sets a valence. **RESIDUAL, stated precisely because the obvious phrasing is backwards:** the raise is NOT the safety net for hand-edited or truncated files — those are exactly what the check handles, since `valence_from_str` returns None for an unrecognised string and item 18's clamp still yields a non-baseline PAD, so both routes hit the reset. What remains is (a) the NEUTRAL-valence raise, live code but unreachable from the wired path, and (b) the protection is **Daemon-scoped**: because `pad_engine.py` was deliberately not touched, any caller that constructs `PADEngine` and calls `initialize()` WITHOUT going through `AriaDaemon.startup()` still gets the raise. The cost is recorded rather than hidden: a reset discards the turn-before-the-crash's emotional residue, so she resumes even rather than still warm — her MEMORY is intact (every `MemoryGraph` write commits inside its own method), so she remembers the conversation without still feeling it. `AriaDaemon.pad_restore_was_reset` + a `main.py` report make the reset visible, because a silent fallback makes "resting at baseline" indistinguishable from "a corrupt file erased what she felt". Known limitation still logged: initialize() is not idempotent across repeated calls — see HANDOFF_NOTES.md, owed to Module 8; `startup()` guards it with a hard raise. |
 | 2 | Needs System | ✅ Implemented + tested (subagent build→audit, APPROVED 1st pass) | `daemon/needs_system.py` (EnergyTracker substrate + NeedsEvaluator categorical + facade) + `tests/test_needs_system.py` (47 tests) + `.kiro/specs/needs-system/{requirements,design,tasks}.md`. 4 needs strictly CATEGORICAL (enum satisfied/due/neglected, no numeric score — enum-identity at 1h vs 70h in-window proves no gradation, passes percentage test); Energy is PAD-isolated SUBSTRATE (no PADEngine import; mutator tripwire never fires; real PADEngine byte-identical before/after; k_load/k_rest flagged TODO(build-time)); windows 72h/14d/14d/60d (ResLog 7) via graph_manager evidence queries; reverts satisfied→due purely by clock; output IS the shared NeedStates contract (now in `daemon/types.py`, OQ-4 closed). F-2a/b/c/d resolved. **OQ-1 CLOSED 2026-08-20 — `neglected` is now emitted, via the TWO-WINDOW model.** The counter-based option was rejected: Addendum §3 rules it out in the same paragraph that establishes the three states (*"the state reverts on its own; nothing actively subtracts anything … not a running clock"*). Instead two windows over the SAME evidence query — `satisfied` if evidence in the need's own window, else `due` if in the next rung up, else `neglected` — which is the shape §3 uses for the one need it defines fully (*"neglected when updates have gapped for a long stretch"*: a long stretch is a wider window, not a counter). Connection 72h→14d, Growth 14d→60d, Purpose 14d→60d. Both windows are already-locked ladder values, so no window, constant, counter or storage is introduced; `graph_manager` needed no change because all four `*_evidence` methods already accept `window`. State stays a pure function of (now, graph) and NeedsEvaluator stays stateless (Req 11.2). Continuity remains TWO-valued — see Still Open. |
 | 3 | Memory Graph | ✅ Implemented + tested; OQ resolutions applied + RE-AUDITED (criteria a–e PASS) | Full spec at `.kiro/specs/memory-graph/{requirements,design,tasks}.md`; code `daemon/graph_manager.py` + `tests/test_graph_manager.py` (63 tests). Coded directly (not via Kiro) at architect instruction. SQLite backend; injected embedding model. Implementation audit fixed 5 defects (D1 continuity recency, D2 retrieve edge-dedup, D3 first-of-kind = Addendum §6 Q2×Q3 profile, D4 EmotionNode-stays-vivid, D5 resolution_path→null). Architect OQ resolutions RESOLVED+implemented: OQ3 (node-embedding side-table), OQ5 (total-elapsed decay), OQ4 (retrieval pure reorder, mood PRIMARY/need SECONDARY, no coefficient), OQ1-trigger (habituation via `register_edge_firing`, edge-salience-only guard). DEFERRED (TODO-flagged): OQ1-rate. **OQ2 CLOSED 2026-08-20 — the invented medium/low `base_salience` floors are REMOVED**, per ResLog item 9's literal *"Medium/Low → no floor, decays/discards as already locked"*; `_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER` is deleted and `_compute_base_salience` falls through to 0.0 for those tiers, with the Critical 0.85 / High 0.55 floors untouched. The v4 Baumeister +0.15 negative bonus still stacks "on top of whichever floor applies", which for medium/low is nothing. NOT this module: OQ6 Purpose→M2; max-5-no-evictable = raise. **Final re-audit (criteria a–e) PASS**: retrieval is stable-sort ordering only (no weighted score — proven by hard-partition test); salience/habituation never wired to PAD/appraisal (no PADEngine import); deferrals all explicitly stubbed; no numeric beyond stated placeholders. F-3b/F-3c resolved (ResLog 8/10). |
 | 4 | Appraisal Chain | ✅ Implemented + tested (subagent build→audit loop) | `daemon/appraisal_chain.py` + `tests/test_appraisal_chain.py` (64 tests) + `.kiro/specs/appraisal-chain/{requirements,design,tasks}.md`. Full suite **514 passed**, verified independently. Built by subagent, independently audited (found+looped 1 medium defect — vacuous test masking a neutral-turn PAD crash — fixed so purely-neutral appraisal emits NO PAD event). Auditor APPROVED via mutation-testing: ×1.5 negativity-inflation FAILS the symmetric test (proves no weighted formula); PAD purity = 3 apply_appraisal_delta sites, no direct PAD writes, no graph._conn reach-ins. PAD delta = categorical direction {−1,0,+1} × categorical Q1 tier; coping_potential transient/emergency-gate-only. F-4a/F-4b/F-4f RESOLVED (ResLog 12/10); F-4d/F-4e = flagged build-time placeholders. **Conflict-arc 2nd close condition CLOSED 2026-08-20**: `_conflict_arc_absence_close()` runs once per turn, increments the absent counter for every open arc whose entity did not recur (including turns with no entity at all), and closes those at the threshold — categorical, the turns have passed or they have not. Absence closures write the same single `"resolved"` edge as a Q2 flip. `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD` is aliased to the spec-named `_ARC_CLOSE_ABSENT_TURNS` so the threshold and its `AppraisalConfig` override cannot drift; its value moved 3→5 by architect direction (both are TODO(build-time) placeholders, so no locked value was overridden). **Resolved-edge `base_salience` now DERIVED, not invented** (2026-08-20): the deleted `poignancy_base_hint()` returned 0.35 for medium/low — the same class of invented number removed from Module 3's OQ2. v4 "Argument Buffer Mode" names the multiplicand (*the resolution is "weighted 3× higher than **the conflict itself**"*), so the edge now takes the OPENING EventNode's own `base_salience`. An arc only opens on a Q2=negative EventNode, so the Baumeister +0.15 guarantees a non-zero multiplicand at every poignancy tier (critical 1.00→3.00, high 0.70→2.10, medium/low 0.15→0.45) and ResLog item 5's 3× always has something real to act on. **VALENCE_UNCERTAIN no longer closes arcs** (2026-08-20): only POSITIVE/NEUTRAL closes, per Addendum §1's literal wording — see the Closed table for why this was not a one-line change. **New public predicate `has_distress_markers()`**: the disjunction of `_distress_marker` and `_emergency_cue_kind`, exposed for the Daemon's STEP 4b distress gate; read-only, lexical, invents no lexicon. **Connection need-pref narrowed** (2026-08-20): `_need_prefs` keys Connection on `neglected` ALONE per Addendum §3 (*"When Connection is **neglected**, Stage 1 surfaces 'We'-perspective and Connection-positive edges first"*); it previously fired on `due` too — unavoidable while Needs System could not emit `neglected`, but it applied the strong preference at the weak state. Growth/Purpose/Continuity prefs are untouched; §3 exemplifies only Connection's profile. |
@@ -561,18 +581,35 @@ that sends the depletion signal).
 
 ---
 
-## PAD Engine OQ4 residual — counted and characterised (2026-08-22)
+## PAD Engine OQ4 residual — counted and characterised (2026-08-22), CLOSED (2026-08-26)
+
+> **CLOSED 2026-08-26 — Resolution Log item 30, commit `096c618`.** The section
+> below is the 2026-08-22 characterisation and is kept as the dated record of
+> what was measured before the fix; it is no longer the current state. What
+> changed: the reachable raise is no longer reachable from any state FILE,
+> because `AriaDaemon._save_state` now writes ONE atomic record instead of three
+> (closing the crash gap) and `AriaDaemon.startup()` treats a non-baseline PAD
+> with no valence as a half-written record and restores baseline (item 18's
+> precedent). **No coefficient was invented and `pad_engine.py` is
+> byte-unchanged** — both raises are still in the file, still exactly two, still
+> asserted. What the raise now protects against is narrower than the obvious
+> phrasing suggests: NOT hand-edited or truncated files, which the check handles,
+> but the NEUTRAL branch plus any caller that reaches `PADEngine.initialize()`
+> without going through `AriaDaemon.startup()`. The fix is Daemon-scoped by
+> design. See the Module 1 row for the full disposition, and note the test count
+> below has moved 11 → 17.
 
 Carried on the readiness list as "5 NotImplementedError in pad_engine.py,
 re-counted. Code flag, never tracker-tracked." Both halves of that needed
-correcting, and neither is resolved here — closing OQ4 is an architect decision
-and inventing a decay coefficient is exactly what Rule 1 forbids.
+correcting, and neither was resolved in that pass — closing OQ4 was an architect
+decision and inventing a decay coefficient is exactly what Rule 1 forbids. Item
+30 closed it without inventing one.
 
 **5 is the occurrence count. There are exactly TWO raise statements**, both in
 `on_soul_tick`; the other three occurrences are the docstring explaining those
 two. Measured by AST, not grep, and pinned by
-`tests/test_pad_restore_boundary.py` (11 tests). No other module in `daemon/`
-raises `NotImplementedError` at all.
+`tests/test_pad_restore_boundary.py` (11 tests at the time, **17** since item
+30). No other module in `daemon/` raises `NotImplementedError` at all.
 
 **The two are not equally real:**
 
@@ -863,7 +900,9 @@ This file mixes two kinds of claim. Know which you are reading.
 
 | Claim | Verified |
 |---|---|
-| Full suite 812 passed; soul layer 602 (547 through the boundary phase, +14 in Module 5 for items 21–22, +41 for item 28's SessionBuffer/Daemon work) | `make check` (suite + bundle sync); per-file `pytest --collect-only` |
+| Full suite **827** passed; soul layer **611**, adapters 199, cross-cutting **17** (was 812 / 602 / 11 — +9 owed to ResLog 29's own commit, which never updated this file, +6 to item 30) | `make check` (suite + bundle sync); per-file `pytest --collect-only -q` on 2026-08-26 |
+| `daemon/pad_engine.py` byte-unchanged by item 30 | `git diff --exit-code daemon/pad_engine.py` clean at commit `096c618`; plus `test_pad_engine_is_still_byte_unchanged_by_this_fix` |
+| `_save_state` writes aria_state.json exactly ONCE (was 3×) | `test_save_state_writes_pad_and_valence_in_one_atomic_write` counts `_write_json_atomic` calls; measured 3 before the change, 1 after |
 | `qwen3.5:9b-mlx` is installed, 8.9 GB, 262144 context, reports `vision` + `tools` + `thinking` | `ollama list` and `ollama show gemma4:e2b-it-qat` / `ollama show qwen3.5:9b-mlx` — note E2B reports `audio` and Qwen does not |
 | The ~13–14 tok/s figure behind ResLog 24 is NOT project-measured | no harness run exists against that tag; `tools/compare_local_models.py qwen3.5:9b-mlx gemma4:e2b-it-qat` is what would produce one |
 | A stage direction is no longer spoken | `_for_speech("(Aria listens…) Just the words.") == "Just the words."`, exact; plus rendered audio within a tenth of the narration's own length. NOT exact byte equality — `say` wobbles 94 bytes on ~12% of calls |

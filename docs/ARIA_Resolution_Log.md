@@ -895,6 +895,94 @@ worth having the moment a caller actually exists.
 
 ---
 
+## 30. PAD OQ4 restore-boundary crash — CLOSED
+
+*(2026-08-26)* — architect-directed. Commit `096c618`. **Item 30** closes PAD
+Engine's Open Question 4 residual, carried as "narrowed, not resolved" since
+Module 1 was approved.
+
+**Problem.** `on_soul_tick()` raised `NotImplementedError` when
+`_last_applied_valence` was `None` and current PAD was not at baseline, because
+there is then no basis for choosing an EMA decay coefficient and inventing one is
+what Rule 1 forbids most directly. Reachable and reproduced: `startup()`
+succeeded and the FIRST soul tick died, several REPL frames from the cause. Three
+routes in — a crash between the three separate writes in `_save_state()` (pad,
+energy, valence), a hand-edited or truncated state file, and `initialize()`
+non-idempotency (HANDOFF_NOTES).
+
+**Fix — wiring layer only. `daemon/pad_engine.py` is byte-unchanged (asserted by
+test and by `git diff --exit-code`).**
+
+1. **`AriaDaemon._save_state()` writes ONE atomic record.** It called `save_pad`,
+   `save_energy` and `save_last_applied_valence` separately — three atomic writes
+   with two crash gaps between them. Now routed through
+   `StateManager.save_all()`, whose own docstring already reads *"The Daemon calls
+   this on cadence and on shutdown"* — so this adopts the API Module 11 was
+   written to be called through rather than adding one. Measured: 3 writes to
+   `aria_state.json` before, 1 after.
+2. **`AriaDaemon.startup()` checks the restored record for consistency.** PAD and
+   `last_applied_valence` are ONE RECORD: PAD can only leave baseline through
+   `apply_appraisal_delta`, which always sets a valence, so a non-baseline PAD
+   with no valence is half-written — not a state she was ever in. **Item 18
+   already ruled this class of case at this exact boundary**: an entry that cannot
+   be trusted falls back to the spec default rather than being repaired. Half a
+   record gets the same answer, so baseline is restored.
+3. **The reset is REPORTED, not silent.** `AriaDaemon.pad_restore_was_reset`
+   (read-only; no soul module reads it, it crosses no model boundary, nothing
+   branches on it) records that it fired, and `main.py`'s
+   `warn_pad_restore_boundary()` reports it. This is load-bearing rather than
+   cosmetic: `main.py` calls `daemon.startup()` BEFORE `report_startup()`, so the
+   pre-existing warning would have found PAD already at baseline and gone
+   permanently quiet — and its three existing tests would not have caught that,
+   because they build a wiring by hand and never call `startup()`. Without a
+   report, "she is resting at baseline" and "a corrupt file erased what she felt"
+   are the same observation. Precedent for recording rather than inferring:
+   `empty_candidates` (item 21) and item 25's reasoning that reading a flag after
+   the fact pins it False and destroys the evidence.
+
+**No coefficient invented. No `pad_engine.py` touched. PAD still has exactly two
+write paths (appraisal delta + EMA decay), and both `NotImplementedError` raises
+are still present and still exactly two.**
+
+**What it costs, recorded because it is real.** A reset discards the emotional
+residue of the turn before the crash: she resumes even rather than still warm. Her
+MEMORY is untouched — every `MemoryGraph` write commits inside its own method — so
+she remembers the conversation without still feeling it, which is the human shape
+rather than a machine reset. The rejected alternative was carrying a PAD whose
+origin is unknown, which would be performing a state instead of having one.
+Change 1 is what makes this a backstop rather than a habit.
+
+**RESIDUAL — stated precisely, because the obvious phrasing is backwards.** The
+raise is NOT a safety net for hand-edited or truncated state files: those are
+exactly what the check handles, since `valence_from_str` returns `None` for an
+unrecognised string and item 18's clamp still yields a non-baseline PAD, so both
+routes reach the reset. What actually remains is:
+
+* the **NEUTRAL-valence** raise — live code, unreachable from the wired path (a
+  purely-neutral appraisal builds an all-zero `PADDelta` that is never applied),
+  pinned by test;
+* the protection is **Daemon-scoped**. Because `pad_engine.py` was deliberately
+  not touched, any caller that constructs `PADEngine` and calls `initialize()`
+  without going through `AriaDaemon.startup()` still gets the raise. That is the
+  cost of keeping the soul layer clean, and it is the right trade — but it means
+  a future host must run the HANDOFF contract, not just the engine.
+
+**FLAGGED, not fixed.** `_save_state` round-trips `self_model` through disk
+because `save_all` requires it and the Daemon holds no live copy. Under a THREADED
+host, a `save_self_model` landing between that read and the write would be
+clobbered. Not reachable in the synchronous REPL, where `run_scheduler_step()`
+never overlaps a turn.
+
+**Tests: 6 added in `tests/test_pad_restore_boundary.py`** (11 → 17) — the atomic
+write count, an intact record surviving untouched (the non-vacuous guard: a check
+that was too broad would blank her every restart), the half-written record
+restoring baseline and ticking without raising, the reset flag, silence when the
+record is clean, and `pad_engine.py` staying clean of any of it. Full suite: **827
+passed**. Both changes verified NON-VACUOUS by reverting each and confirming the
+right tests fail.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4
