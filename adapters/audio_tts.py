@@ -149,6 +149,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from daemon.audio_pipeline import Prosody, TTSUnavailable
+from daemon.format_markers import (
+    FORMAT_MARKER_RE,
+    has_format_markers,
+    strip_format_markers,
+)
 
 from adapters._provider import (
     AudioBackendUnavailable,
@@ -193,49 +198,24 @@ SAY_SAMPLE_RATE = 22_050
 _KOKORO = "kokoro"
 _KOKORO_INSTALL = "pip install kokoro   (v4's named local TTS fallback)"
 
-#: Markers that mean the text is FORMATTED rather than spoken prose. Used ONLY to
-#: set an observability flag — never to strip. See the module docstring.
+#: Markers that mean the text is FORMATTED rather than spoken prose.
 #:
-#: SCOPE IS DELIBERATE, AND IT WAS MEASURED — AFTER GETTING IT WRONG ONCE.
+#: MOVED to `daemon/format_markers.py` and re-exported here under the names this
+#: module has always used, so every existing caller and test is untouched.
 #:
-#: The first version matched only PARENTHESES, because the case recorded in the
-#: tracker was "(Aria listens, her presence steady and calm...)". Then
-#: `tools/measure_format_markers.py` reported 0/16 markers on deliberately
-#: adversarial bait, which looked like Field 1's anti-narration clause holding.
+#: The pattern is now needed at a SECOND surface — the Session Buffer's
+#: LLM-context rendering, which is what breaks item 22's compounding loop — and
+#: `daemon/` may not import from `adapters/`. Duplicating it was the alternative
+#: and it is the worst option available here: item 22's near-miss was a
+#: detector/defect MISMATCH, so two copies of this specific regex drifting apart
+#: is the precise failure the measurement already survived once. Moving it down to
+#: the layer both consumers may import from keeps ONE pattern, and keeps the
+#: one-way arrow (`adapters/` -> `daemon/`) intact — this module already takes
+#: `Prosody` and `TTSUnavailable` from `daemon.audio_pipeline`.
 #:
-#: It was not. Printing the replies showed four of eight opening with:
-#:
-#:     [I lean forward just a fraction, settling into the space between us.]
-#:     [I pause, letting the silence stretch out just a moment longer...]
-#:     [My posture doesn't change. I simply hold the silence...]
-#:
-#: SQUARE brackets. The detector's false negative had turned a clear failure into
-#: an apparent pass, and would have put "prompt-level mitigation is sufficient"
-#: into the Resolution Log as a measured finding. So all three bracket
-#: conventions are covered now: (), [], and *action* — the three ways an
-#: instruct-tuned model writes a stage direction.
-#:
-#: Still LINE-START only for the bracket forms, and that limit is deliberate:
-#: "it costs 5 dollars (roughly) which is fine" is ordinary speech, and flagging
-#: mid-sentence parentheticals would make the signal useless.
-#:
-#: KNOWN GAP, recorded rather than papered over: narration with no marker at all
-#: gets through. Measured on the same run — "I am sitting still. My attention is
-#: focused entirely on the words you are saying." is a stage direction in plain
-#: prose, and no lexical pattern catches it without judging content. A regex
-#: cannot close that, and pretending otherwise would make this look like a guard
-#: rather than the recorder it is.
-_FORMAT_MARKER_RE = re.compile(
-    r"(^\s*\([^)]*\))"            # narration opening a line — round brackets
-    r"|(^\s*\[[^\]]*\])"          # narration opening a line — SQUARE brackets
-    r"|(^\s*\*[^*\n]+\*\s*$)"     # *action* on its own line
-    r"|(^\s{0,3}#{1,6}\s)"        # markdown heading
-    r"|(^\s{0,3}[-*+]\s)"         # bullet
-    r"|(^\s{0,3}\d+\.\s)"         # numbered list
-    r"|(</?think(ing)?>)"         # reasoning trace
-    r"|(\*\*)",                   # bold emphasis
-    re.MULTILINE,
-)
+#: The scope reasoning, the 0/16 near-miss that produced it, and the known gap for
+#: unmarked prose narration all live with the pattern at its new home.
+_FORMAT_MARKER_RE = FORMAT_MARKER_RE
 
 
 # ===========================================================================
@@ -253,38 +233,13 @@ PROSODY_DIRECTIONS: Dict[str, str] = {
 }
 
 
-def _has_format_markers(text: str) -> bool:
-    return bool(_FORMAT_MARKER_RE.search(text or ""))
-
-
-def strip_format_markers(text: str) -> str:
-    """Remove what `_FORMAT_MARKER_RE` matches, for SPEECH ONLY.
-
-    Deliberately the SAME pattern as the detector rather than a second, broader
-    one. Item 22's measurements are expressed in terms of that pattern, so a strip
-    that removed more than it reports would make the 3/16 figure describe
-    something that no longer exists — and a mismatch between what is counted and
-    what is acted on is how the original 0/16 near-miss happened.
-
-    Consequences of reusing it, both intended:
-
-      * The narration alternatives are LINE-ANCHORED (`^\\s*\\(...\\)`), so a
-        mid-sentence parenthetical in ordinary prose — "it was (mostly) fine" — is
-        left alone. Only narration occupying the start of a line goes, which is
-        the form every measured failure took.
-      * `**` is unanchored, because bold markers are not speech anywhere they
-        appear. They are removed in place, leaving the emphasised words.
-
-    Whitespace is then collapsed so removing a leading direction does not leave
-    the sentence starting with a blank line or a stray gap.
-    """
-    if not text:
-        return ""
-    stripped = _FORMAT_MARKER_RE.sub("", text)
-    # Collapse the holes the removal left: blank runs between lines, and leading
-    # or trailing space on each surviving line.
-    lines = [ln.strip() for ln in stripped.splitlines()]
-    return "\n".join(ln for ln in lines if ln).strip()
+#: Both re-exported from `daemon/format_markers.py` — see `_FORMAT_MARKER_RE`
+#: above for why they moved. `strip_format_markers` is still the item-25 SPEECH
+#: strip as far as this module is concerned; the same function now also serves the
+#: Session Buffer's context rendering, which is a different surface with the same
+#: question ("what here is not words she said?") and must not answer it
+#: differently.
+_has_format_markers = has_format_markers
 
 
 class _ProsodyRecorder:

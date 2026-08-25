@@ -371,3 +371,175 @@ def test_get_context_format_has_sections():
     ctx = buf.get_context()
     # Should have at least one section header
     assert "[Recent]" in ctx or "[Earlier" in ctx
+
+
+
+# ===========================================================================
+# Item 22's compounding loop: her own markers are stripped from the RENDERING,
+# never from the stored record. Same shape as item 25's speech-surface ruling.
+# ===========================================================================
+
+def test_get_context_strips_format_markers_from_aria_replies():
+    """Stage directions in her stored replies are stripped from the context
+    string, so they do not re-enter and teach her the syntax. Item 22 measured
+    that loop: 4/8 -> 8/8 across two rounds."""
+    buf = SessionBuffer()
+    buf.append_turn("How are you?", "[I pause briefly.]\nI am well. And you?")
+    buf.append_turn("Good.", "(A small smile.)\nThat is good to hear.")
+    context = buf.get_context()
+
+    assert "[I pause briefly.]" not in context
+    assert "(A small smile.)" not in context
+    assert "I am well. And you?" in context
+    assert "That is good to hear." in context
+
+
+def test_the_stored_record_is_still_verbatim_after_rendering():
+    """The load-bearing half. `get_context` edits a RENDERING; `append_turn` keeps
+    her reply byte-for-byte, because the graph, the printed transcript, the Visual
+    Layer and the TTS path all read the stored text. Editing the record would be
+    deciding what she said — the option items 22 and 25 both refuse."""
+    buf = SessionBuffer()
+    original = "[I lean forward.]\nI hear you."
+    buf.append_turn("hi", original)
+
+    buf.get_context()   # rendering must not mutate anything
+    assert buf._recent[0].aria_text == original
+    assert buf.get_context().count("[I lean forward.]") == 0
+    assert buf._recent[0].aria_text == original   # still verbatim after a 2nd render
+
+
+def test_get_context_does_not_strip_user_text():
+    """User text is never filtered — it is not hers to edit, she is not learning
+    her voice from it, and a parenthetical the user wrote is information."""
+    buf = SessionBuffer()
+    buf.append_turn("I went to the store (the big one)", "Interesting.")
+    context = buf.get_context()
+    assert "(the big one)" in context
+
+
+def test_her_own_mid_sentence_parentheticals_survive():
+    """The anchoring is load-bearing AT THIS SURFACE SPECIFICALLY, more than it was
+    at the speech surface. An unanchored strip would delete real content she had
+    already said, and the buffer is the record she reasons from on the NEXT turn —
+    so she could contradict herself from her own edited transcript. Removing a
+    marker is a rendering decision; removing a fact is not."""
+    buf = SessionBuffer()
+    buf.append_turn(
+        "when is it?",
+        "The meeting is at three (Tuesday, not Monday) so you have time.",
+    )
+    context = buf.get_context()
+    assert "(Tuesday, not Monday)" in context
+
+
+def test_list_content_survives_only_the_bullet_marker_goes():
+    """Same reason: "- call the bank" must keep "call the bank". A strip that
+    deleted whole bullet LINES would lose things she had already told him."""
+    buf = SessionBuffer()
+    buf.append_turn("what next?", "Two things:\n- call the bank\n- send the form")
+    context = buf.get_context()
+    assert "call the bank" in context
+    assert "send the form" in context
+
+
+def test_reasoning_trace_TAGS_go_but_their_content_stays_a_recorded_residual():
+    """MEASURED, and it is a residual rather than a fix — recorded here because the
+    obvious assumption is wrong.
+
+    The shared pattern removes `<think>` / `</think>` as MARKERS; it does not
+    remove the text between them. That is the same behaviour already recorded on
+    the speech path, where macOS `say` "silently drops the TAGS and speaks the
+    CONTENT as ordinary prose" — the trace does not sound like a malfunction, it
+    sounds like her thinking out loud.
+
+    So at THIS surface a reasoning trace still re-enters as context. ResLog 24
+    flags that as live, because `qwen3.5:9b-mlx` reports a `thinking` capability.
+
+    NOT fixed by widening the regex, deliberately. Item 22's measurements are
+    expressed in terms of this exact pattern, and a strip that removed more than
+    the detector reports would make the 3/16 figure describe something that no
+    longer exists — the same detector/defect mismatch that nearly put "prompt
+    mitigation is sufficient" into the Resolution Log. Removing trace CONTENT is a
+    separate decision with its own reasoning, so it is flagged, not invented.
+    """
+    buf = SessionBuffer()
+    buf.append_turn("hi", "<think>they seem tired</think>\nHow was your day?")
+    context = buf.get_context()
+
+    assert "<think>" not in context          # the tags go
+    assert "they seem tired" in context      # the content does NOT — residual
+    assert "How was your day?" in context
+
+
+def test_an_all_narration_reply_renders_empty_and_is_counted():
+    """No substitute sentence is invented (item 21's terminal case: writing one
+    would be putting words in her mouth). So the case must be VISIBLE, or an empty
+    `Aria:` line reads as her having said nothing when she said only narration."""
+    buf = SessionBuffer()
+    buf.append_turn("hi", "[I hold the silence, my gaze steady.]")
+    context = buf.get_context()
+
+    assert "Aria:" in context
+    assert "gaze steady" not in context
+    assert buf.all_narration_replies == 1
+    # Derived, not accumulated: rendering twice must not double it.
+    buf.get_context()
+    assert buf.all_narration_replies == 1
+
+
+def test_ordinary_replies_are_not_counted_as_narration():
+    """Non-vacuous guard on the property above."""
+    buf = SessionBuffer()
+    buf.append_turn("hi", "Hello. How are you?")
+    buf.get_context()
+    assert buf.all_narration_replies == 0
+
+
+def test_the_tier_scaffolding_survives_the_strip():
+    """"[Earlier today]" and "- tag" are bracket and bullet syntax the pattern
+    WOULD match. They are the buffer's own framing, added after the strip. Anyone
+    stripping the assembled string instead of the per-reply text deletes them."""
+    buf = SessionBuffer()
+    # Enough volume to actually cross the 12K recent budget and promote, so the
+    # medium-tier header is really present rather than assumed. (80 short turns
+    # did not — the first version of this test passed its `[Recent]` assertion and
+    # proved nothing about the tier headers.)
+    filler = "and some additional length so the recent budget is genuinely crossed"
+    for i in range(600):
+        buf.append_turn(f"message number {i} {filler}", f"reply number {i} {filler}")
+    context = buf.get_context()
+    assert "[Recent]" in context
+    assert "[Earlier in this conversation]" in context
+
+
+def test_the_buffer_and_the_speech_path_share_ONE_pattern():
+    """The whole reason the pattern moved into `daemon/`. Item 22's near-miss was a
+    detector/defect MISMATCH, so two copies drifting apart is the precise failure
+    the measurement already survived once. Object identity, not equal behaviour."""
+    from daemon.format_markers import strip_format_markers as shared
+    from daemon import session_buffer as sb
+    import adapters.audio_tts as tts
+
+    assert sb.strip_format_markers is shared
+    assert tts.strip_format_markers is shared
+    assert tts._FORMAT_MARKER_RE is __import__(
+        "daemon.format_markers", fromlist=["FORMAT_MARKER_RE"]
+    ).FORMAT_MARKER_RE
+
+
+def test_daemon_still_imports_nothing_from_adapters_after_the_move():
+    """The one-way arrow is the reason this went DOWN into `daemon/` rather than
+    being imported UP from `adapters/`. Restated here because this change is the
+    one that would have broken it."""
+    import ast
+    import pathlib
+
+    for path in sorted(pathlib.Path("daemon").glob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                assert not (node.module or "").startswith("adapters"), path.name
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("adapters"), path.name

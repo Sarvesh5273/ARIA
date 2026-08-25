@@ -50,6 +50,8 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
+from daemon.format_markers import strip_format_markers
+
 
 # Token budget constants. Build-time tuning values; no source document states
 # them (see .kiro/specs/session-buffer/design.md).
@@ -97,6 +99,10 @@ _UNFOCUS_TRIGGERS = ("unfocus", "full memory", "remember everything", "the whole
 
 @dataclass
 class _Turn:
+    """One exchange, stored VERBATIM. `aria_text` is her reply byte-for-byte —
+    the faithful record items 22 and 25 both insist on. Format markers are removed
+    only when `get_context` renders this for the model; the graph, the printed
+    transcript, the Visual Layer and the TTS path all read the stored text."""
     user_text: str
     aria_text: str
 
@@ -124,6 +130,8 @@ class SessionBuffer:
         self._old: List[str] = []
         self._focus_mode = False
 
+
+
         # --- measured, not estimated. Set by record_actual_tokens() from the
         # provider's own count for the LAST served turn; None until a turn has
         # been served by a transport that reports one. ----------------------
@@ -145,26 +153,88 @@ class SessionBuffer:
 
     def get_context(self) -> str:
         """Render the session context for the LLM prompt.
-        In focus_mode, only RECENT is returned."""
+        In focus_mode, only RECENT is returned.
+
+        HER OWN FORMAT MARKERS ARE STRIPPED FROM THIS RENDERING (Resolution Log
+        item 22's compounding loop). Item 22 measured the loop directly: 4/8
+        became 8/8 across two rounds, because her own bracketed replies re-entered
+        as session context and she imitated herself. Item 25 then stripped markers
+        at the SPEECH surface and named this loop as one of the two things it did
+        NOT fix — the buffer holds the unstripped text by design, so she stopped
+        being HEARD narrating without stopping learning to narrate.
+
+        This is the same shape as item 25's ruling applied to a second boundary.
+        The STORED RECORD is untouched — `append_turn` keeps her reply
+        byte-for-byte, and the printed transcript, the graph, the Visual Layer and
+        the TTS path all read that. What changes is a RENDERING: the surface that
+        crosses to the model stops teaching her the syntax. Editing a rendering is
+        a presentation decision; editing the record would be deciding what she
+        said, which is the option items 22 and 25 both refuse.
+
+        WHAT IT DOES NOT DO: close the defect. Item 22's 3/16 was measured on a
+        FRESH graph — an empty buffer — so it is the no-context base rate and this
+        cannot move it by construction. The loop is what gets capped: a warm
+        session no longer climbs above the base rate. Unmarked prose narration is
+        still untouched and still needs the moral-schema ruling item 22
+        recommended.
+
+        USER TEXT IS NEVER STRIPPED. It is not hers to edit, she is not learning
+        her voice from it, and a parenthetical the user wrote is information.
+
+        Note the tier scaffolding below ("[Earlier today]", "- tag") is bracket and
+        bullet syntax that the pattern WOULD match. It is added after the strip, on
+        purpose — it is the buffer's own framing, not something she wrote. Anyone
+        tempted to strip the assembled string instead of the per-reply text would
+        delete it.
+        """
         parts: List[str] = []
-        
+
         if self._old and not self._focus_mode:
             parts.append("[Earlier today]")
             for tag in self._old:
                 parts.append(f"- {tag}")
-        
+
         if self._medium and not self._focus_mode:
             parts.append("\n[Earlier in this conversation]")
             for summary in self._medium:
+                # Medium/old tiers carry no verbatim reply text — `_summarize_turns`
+                # builds its topic from the USER turn and emits only matched words
+                # from a fixed emotional-word list — so her syntax cannot reach the
+                # prompt through them. The recent tier is the only verbatim surface,
+                # which is why the strip is applied there and only there.
                 parts.append(summary.text)
-        
+
         if self._recent:
             parts.append("\n[Recent]")
             for turn in self._recent:
                 parts.append(f"User: {turn.user_text}")
-                parts.append(f"Aria: {turn.aria_text}")
-        
+                parts.append(f"Aria: {strip_format_markers(turn.aria_text)}")
+
         return "\n".join(parts)
+
+    @property
+    def all_narration_replies(self) -> int:
+        """How many replies currently in RECENT were stage direction and NOTHING
+        else, so `get_context` renders them as an empty `Aria:` line.
+
+        DERIVED, not counted — a pure function of the buffer's current contents.
+        An accumulating counter would have had to live inside `get_context`, which
+        is called an arbitrary number of times per turn, so it would have measured
+        renders rather than replies.
+
+        No substitute sentence is invented for the empty case (item 21's
+        terminal-case reasoning: writing one would be putting words in her mouth).
+        That is exactly why this exists — an empty `Aria:` line otherwise reads as
+        her having said nothing, when in fact she said only narration, and those
+        are different failures. Same distinction item 25 draws with
+        `last_text_was_only_format_markers` on the speech path.
+
+        Read-only observability. No soul module reads it, it crosses no model
+        boundary, and nothing branches on it."""
+        return sum(
+            1 for turn in self._recent
+            if turn.aria_text.strip() and not strip_format_markers(turn.aria_text)
+        )
 
     def clear(self) -> None:
         """Wipe all tiers. Called on 'rest'.
