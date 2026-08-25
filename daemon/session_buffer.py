@@ -132,6 +132,7 @@ class SessionBuffer:
         self._last_gen_speed_tok_s: Optional[float] = None
 
         # One-shot latch: heaviness is worth SAYING once, not every turn.
+        # RE-ARMED by clear() — i.e. by "rest" (Resolution Log item 29).
         self._heavy_pressure_expressed = False
 
     # -- public API ---------------------------------------------------------
@@ -173,11 +174,16 @@ class SessionBuffer:
         report "critical" for an empty buffer until the next turn overwrote it —
         the buffer answering about a conversation it has just forgotten.
 
-        The heavy-pressure LATCH deliberately does NOT reset here. It is scoped to
-        the session (this instance), and "rest" does not start a new session. That
-        is the literal reading of "first heavy this session"; the alternative
-        (re-arm on rest, so a second arrival at heaviness may be mentioned again)
-        is a live choice for the architect, not one this module should make.
+        THE HEAVY-PRESSURE LATCH RE-ARMS HERE (Resolution Log item 29). It used
+        not to: the latch is scoped to the instance, and the literal reading of
+        "first heavy this session" is that "rest" does not start a new session.
+        The architect has ruled the other way, and the reason is what "rest"
+        actually is — a cognitive reset, asked for in those words. Someone who
+        says "rest" is saying start fresh, and a buffer that has forgotten the
+        conversation but still remembers that it already mentioned being loaded
+        would arrive at heaviness a second time with nothing to say about it.
+
+        Criticality still does not latch, so there is nothing to re-arm for it.
         """
         self._recent.clear()
         self._medium.clear()
@@ -185,6 +191,7 @@ class SessionBuffer:
         self._actual_prompt_tokens = None
         self._actual_gen_tokens = None
         self._last_gen_speed_tok_s = None
+        self._heavy_pressure_expressed = False
 
     def set_focus_mode(self, focused: bool) -> None:
         """True = drop MEDIUM and OLD from prompt (not from storage)."""
@@ -278,7 +285,7 @@ class SessionBuffer:
         """The loaded bands, as an INSTRUCTION she can act on — or None.
 
             heavy     "You have a lot on your mind right now. Be brief."
-                      once per session, on first arrival
+                      once on first arrival, re-armed by "rest" (item 29)
             critical  "This is a lot to hold. Keep your response very short."
                       every turn it holds
 

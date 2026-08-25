@@ -164,14 +164,21 @@ decays, Energy moves, and attention refreshes on a fast cadence (v4 Layer 1/2/6)
 
 #### Acceptance Criteria
 1. WHEN a soul tick fires, THE Daemon SHALL call PAD_Engine.on_soul_tick() (Module 1 owns
-   the EMA math; the Daemon only ticks it).
-2. WHEN a soul tick fires AND the idle conditions are NOT met, THE Daemon SHALL call
+   the EMA math; the Daemon only ticks it). This is unconditional — PAD decays every tick.
+2. WHEN a soul tick fires AND output is pending (ACTIVE LOAD), THE Daemon SHALL call
    Needs_System.on_soul_tick() (active-load Energy depletion).
 3. WHEN a soul tick fires AND the idle conditions ARE met, THE Daemon SHALL call
    Needs_System.on_idle_recovery() ("soul tick recovers Energy during extended idle", v4).
+3a. WHEN a soul tick fires AND she is silent but the 8-minute idle gate has NOT opened yet
+   (PRE-IDLE SILENCE), THE Daemon SHALL call NEITHER Energy signal — Energy is HELD
+   (Resolution Log item 29: "in rest situation, energy will not consume"). Waiting is not
+   work, so Energy at the moment the gate opens is the tiredness the conversation left.
 4. WHEN a soul tick fires, THE Daemon SHALL refresh the attentional policy and evaluate
    initiative.
 5. THE soul-tick interval SHALL be a build-time tuning placeholder (F-8a), injectable.
+6. THE three Energy states SHALL be derived from the two markers idle detection already
+   owns (`_last_voice_input_at`, `_output_pending`) and the pinned 8-minute window — no new
+   flag, no new number (Resolution Log item 29).
 
 ### Requirement 4: The DMN tick and idle detection
 
@@ -474,9 +481,8 @@ PAD_Engine's `_last_applied_valence` is restored, keeping its restore-boundary r
 
 Modeled as two independent public methods plus a scheduler:
 
-- `soul_tick(now)`: `PAD_Engine.on_soul_tick()`; then `Needs.on_idle_recovery()` if idle else
-  `Needs.on_soul_tick()` ("soul tick recovers Energy during extended idle", v4);
-  `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
+- `soul_tick(now)`: `PAD_Engine.on_soul_tick()` (unconditional); then the THREE-state Energy
+  choice below; `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
 - `dmn_tick(now)`: if idle conditions 1 & 2 → `DMN.run_idle_pass(...)`. Never decays PAD.
 - `run_scheduler_step(now)`: fires each clock when `now - last_fire ≥ interval`, each on its
   OWN interval; neither triggers the other. Intervals are F-8a placeholders (injectable).
@@ -484,6 +490,29 @@ Modeled as two independent public methods plus a scheduler:
 The direct `soul_tick`/`dmn_tick` methods are the primary interface (and the test surface
 that proves independence): ticking soul N times decays PAD and runs no DMN pass; ticking DMN
 at idle runs a pass and leaves PAD identical.
+
+### Energy has three states, not two (Resolution Log item 29)
+
+| State | Condition | Signal sent to Module 2 |
+|---|---|---|
+| ACTIVE LOAD | `_output_pending` | `on_soul_tick()` — deplete |
+| PRE-IDLE SILENCE | quiet, gate not open yet | **none — Energy HELD** |
+| GENUINE IDLE | `_idle_conditions_met` | `on_idle_recovery()` — recover |
+
+`_in_pre_idle_silence(now)` is the middle predicate. It introduces no state: the three
+states are read off `_last_voice_input_at` and `_output_pending` plus the pinned 8-minute
+window, and `_note_voice_input` aborts the middle state for free by restarting that window.
+
+WHY. `_idle_conditions_met` is False for the whole pre-window stretch, so the old two-way
+branch treated silence as load: `tools/observe_dmn_pass.py` measured Energy falling
+81.5 → 0.1 across a real 8-minute silence, which made the DMN's first genuine pass SHALLOW
+and left Steps 2 and 3 unreachable through a real silence. Waiting is not work. The depth
+gate in `dmn.py` (FULL ≥ 20 / SHALLOW < 20) is unchanged — the number it reads is now true.
+
+CONSEQUENCE, FLAGGED (item 29A): `_output_pending` is now the only condition that sends the
+depletion signal, and in the synchronous REPL host no soul tick lands while it is True. Under
+that host Energy only holds or recovers; under a threaded daemon the depletion branch is live.
+Whether a turn should ALSO debit Energy per-turn is a new mechanism → Rule 1, not invented.
 
 ## Idle detection (Req 4)
 
@@ -696,9 +725,11 @@ never invented. All prior-module edits are ADDITIVE and doc-anticipated (Req 13 
   - _Requirements: 11.1, 11.4_
 
 - [x] 10. CLOCK 1 — `soul_tick()`.
-  - `PAD_Engine.on_soul_tick()`; `Needs.on_idle_recovery()` if idle else `on_soul_tick()`;
-    `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
-  - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.4_
+  - `PAD_Engine.on_soul_tick()` (unconditional); the THREE-state Energy choice —
+    `Needs.on_idle_recovery()` at genuine idle, NEITHER signal during pre-idle silence
+    (`_in_pre_idle_silence`), `Needs.on_soul_tick()` under active load (Resolution Log
+    item 29); `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
+  - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.3a, 3.4, 3.6_
 
 - [x] 11. CLOCK 2 — `dmn_tick()` + `run_scheduler_step()`.
   - `dmn_tick`: at idle(1&2) → `DMN.run_idle_pass`; else None. Never decays PAD.

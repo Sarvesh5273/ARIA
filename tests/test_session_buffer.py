@@ -290,6 +290,23 @@ def test_express_pressure_heavy_speaks_once_per_session():
     assert buf.express_pressure() is None
 
 
+def test_rest_re_arms_the_heavy_pressure_latch():
+    """Resolution Log item 29. "rest" is a cognitive reset — start fresh — so the
+    latch re-arms with the tiers. Arriving at heaviness a second time after a rest
+    is a new arrival, and she can say so again."""
+    buf = SessionBuffer()
+    buf.record_actual_tokens(prompt_tokens=13_000)      # heavy
+    assert buf.express_pressure() == _HEAVY_PRESSURE_INSTRUCTION
+    assert buf.express_pressure() is None              # latched
+
+    buf.clear()                                        # "rest"
+    assert buf._heavy_pressure_expressed is False
+
+    buf.record_actual_tokens(prompt_tokens=13_000)      # heavy again
+    assert buf.express_pressure() == _HEAVY_PRESSURE_INSTRUCTION
+    assert buf.express_pressure() is None              # and latches again
+
+
 def test_express_pressure_critical_holds_every_turn():
     buf = SessionBuffer()
     buf.record_actual_tokens(prompt_tokens=19_000)     # critical

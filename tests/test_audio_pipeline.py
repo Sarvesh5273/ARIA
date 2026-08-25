@@ -126,12 +126,31 @@ class FakeSpeaker:
 class FakeVAD:
     """VAD backend. A chunk is speech iff ANY of its samples is non-zero
     (silence = all zeros). Lets tests build utterances with leading/trailing
-    silence and prove trimming."""
+    silence and prove trimming.
+
+    RECURRENT-LIKE: it exposes `reset()` the way `SileroVAD` does, and `events`
+    logs resets and scores IN ORDER, so a test can prove the reset lands BEFORE
+    the first chunk of an utterance is scored rather than merely happening
+    (Resolution Log item 29)."""
     def __init__(self):
         self.calls = 0
+        self.resets = 0
+        self.events = []
 
     def speech_probability(self, chunk) -> float:
         self.calls += 1
+        self.events.append("score")
+        return 1.0 if any(s != 0.0 for s in chunk.samples) else 0.0
+
+    def reset(self) -> None:
+        self.resets += 1
+        self.events.append("reset")
+
+
+class StatelessFakeVAD:
+    """A VAD with NO `reset` — the shape of `audio_stack._Absent` and of any
+    stateless backend. The pipeline must still capture through it."""
+    def speech_probability(self, chunk) -> float:
         return 1.0 if any(s != 0.0 for s in chunk.samples) else 0.0
 
 
@@ -202,6 +221,7 @@ def make_pipeline(
     primary_fail=None,
     fallback_fail=None,
     playback=None,
+    vad=None,
 ):
     pad_source = pad_source if pad_source is not None else StubPAD()
     capture_segment = capture_segment if capture_segment is not None else _speech_segment()
@@ -213,7 +233,7 @@ def make_pipeline(
         capture=FakeCapture(capture_segment),
         wake_word=FakeWake(awake=awake),
         speaker_verification=FakeSpeaker(score=speaker_score),
-        vad=FakeVAD(),
+        vad=vad if vad is not None else FakeVAD(),
         stt=FakeSTT(transcript=transcript),
         tts_primary=primary,
         tts_fallback=fallback,
@@ -273,6 +293,52 @@ def test_vad_trims_nonspeech_boundaries():
     # STT got exactly ONE chunk of speech — boundaries trimmed.
     assert len(pipe._stt.received) == VAD_CHUNK_SIZE
     assert all(s == 1.0 for s in pipe._stt.received.samples)
+
+
+# ---------------------------------------------------------------------------
+# VAD recurrent state is RESET per utterance (Resolution Log item 29).
+# ---------------------------------------------------------------------------
+def test_vad_is_reset_before_the_first_chunk_of_each_utterance():
+    """Silero VAD is recurrent, so without this the tail of one utterance biases
+    the head of the next. The reset must land BEFORE the first score, and once
+    per utterance — not once per chunk, which would throw away the in-order
+    context that makes a recurrent VAD better than a per-frame energy test."""
+    samples = ([1.0] * VAD_CHUNK_SIZE) * 3          # three speech chunks
+    pipe = make_pipeline(capture_segment=seg(samples))
+    vad = pipe._vad
+
+    assert pipe.capture_turn() == "hey aria, i shipped it today"
+    assert vad.resets == 1
+    assert vad.events == ["reset", "score", "score", "score"]
+
+    # A SECOND utterance resets again — the point of the ruling.
+    pipe.capture_turn()
+    assert vad.resets == 2
+    assert vad.events.count("reset") == 2
+    assert vad.events[4] == "reset"
+
+
+def test_vad_is_not_reset_when_no_utterance_is_scored():
+    """The gates come first. A cycle that never reaches the VAD never resets it,
+    so the reset marks an utterance rather than a loop iteration."""
+    pipe = make_pipeline(awake=False)
+    assert pipe.capture_turn() is None
+    assert pipe._vad.resets == 0
+
+    pipe = make_pipeline(speaker_score=0.5)          # below the 0.75 gate
+    assert pipe.capture_turn() is None
+    assert pipe._vad.resets == 0
+
+
+def test_reset_is_a_no_op_for_a_vad_that_has_no_recurrent_state():
+    """A capability PROBE, not a Protocol method: `VADBackend` still declares one
+    method, and a backend without `reset` captures normally instead of raising
+    AttributeError. This is what keeps `audio_stack._Absent` — whose every
+    declared method refuses — from needing a silently-passing one."""
+    stateless = StatelessFakeVAD()
+    assert not hasattr(stateless, "reset")
+    pipe = make_pipeline(vad=stateless)
+    assert pipe.capture_turn() == "hey aria, i shipped it today"
 
 
 def test_capture_turn_does_not_appraise_or_judge():

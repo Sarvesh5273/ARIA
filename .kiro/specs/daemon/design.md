@@ -177,9 +177,8 @@ PAD_Engine's `_last_applied_valence` is restored, keeping its restore-boundary r
 
 Modeled as two independent public methods plus a scheduler:
 
-- `soul_tick(now)`: `PAD_Engine.on_soul_tick()`; then `Needs.on_idle_recovery()` if idle else
-  `Needs.on_soul_tick()` ("soul tick recovers Energy during extended idle", v4);
-  `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
+- `soul_tick(now)`: `PAD_Engine.on_soul_tick()` (unconditional); then the THREE-state Energy
+  choice below; `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
 - `dmn_tick(now)`: if idle conditions 1 & 2 → `DMN.run_idle_pass(...)`. Never decays PAD.
 - `run_scheduler_step(now)`: fires each clock when `now - last_fire ≥ interval`, each on its
   OWN interval; neither triggers the other. Intervals are F-8a placeholders (injectable).
@@ -187,6 +186,29 @@ Modeled as two independent public methods plus a scheduler:
 The direct `soul_tick`/`dmn_tick` methods are the primary interface (and the test surface
 that proves independence): ticking soul N times decays PAD and runs no DMN pass; ticking DMN
 at idle runs a pass and leaves PAD identical.
+
+### Energy has three states, not two (Resolution Log item 29)
+
+| State | Condition | Signal sent to Module 2 |
+|---|---|---|
+| ACTIVE LOAD | `_output_pending` | `on_soul_tick()` — deplete |
+| PRE-IDLE SILENCE | quiet, gate not open yet | **none — Energy HELD** |
+| GENUINE IDLE | `_idle_conditions_met` | `on_idle_recovery()` — recover |
+
+`_in_pre_idle_silence(now)` is the middle predicate. It introduces no state: the three
+states are read off `_last_voice_input_at` and `_output_pending` plus the pinned 8-minute
+window, and `_note_voice_input` aborts the middle state for free by restarting that window.
+
+WHY. `_idle_conditions_met` is False for the whole pre-window stretch, so the old two-way
+branch treated silence as load: `tools/observe_dmn_pass.py` measured Energy falling
+81.5 → 0.1 across a real 8-minute silence, which made the DMN's first genuine pass SHALLOW
+and left Steps 2 and 3 unreachable through a real silence. Waiting is not work. The depth
+gate in `dmn.py` (FULL ≥ 20 / SHALLOW < 20) is unchanged — the number it reads is now true.
+
+CONSEQUENCE, FLAGGED (item 29A): `_output_pending` is now the only condition that sends the
+depletion signal, and in the synchronous REPL host no soul tick lands while it is True. Under
+that host Energy only holds or recovers; under a threaded daemon the depletion branch is live.
+Whether a turn should ALSO debit Energy per-turn is a new mechanism → Rule 1, not invented.
 
 ## Idle detection (Req 4)
 

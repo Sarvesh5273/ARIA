@@ -224,6 +224,12 @@ Interface — Soul Filter does not inspect it.
   `submit_cognitive_load()`, and both of those plus the speed bump by
   `express_pressure()` once it is wired. `light` and `settled` still only mean
   "nothing to report".
-- Whether the heavy-pressure latch should re-arm on `"rest"`. It does not today
+- ~~Whether the heavy-pressure latch should re-arm on `"rest"`. It does not today
   ("first heavy this **session**", and rest does not start a new session), so a
-  second arrival at heaviness after a rest goes unmentioned.
+  second arrival at heaviness after a rest goes unmentioned.~~ **CLOSED
+  2026-08-25** by Resolution Log item 29B: `clear()` re-arms the latch. `"rest"` is
+  a cognitive reset — the user asking to start fresh — and a buffer that has
+  forgotten the conversation while still remembering it already mentioned being
+  loaded would reach heaviness again with nothing to say. Criticality still does
+  not latch, so it has nothing to re-arm. `express_pressure()` itself is unchanged
+  and still not wired.

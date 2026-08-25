@@ -35,9 +35,10 @@ and a caller therefore has to know:
 
   * chunks must be fed IN ORDER, which `_trim_to_speech` does;
   * the state must be reset between utterances, or the tail of one utterance
-    biases the head of the next. `reset()` exists for that, and
-    `AudioPipeline` never calls it — that is a real seam nobody owns yet, flagged
-    below rather than papered over.
+    biases the head of the next. `reset()` exists for that, and as of Resolution
+    Log item 29 `AudioPipeline._reset_vad` CALLS IT — once per utterance, at the
+    start of each scoring pass. It was a flagged seam nobody owned; the ruling
+    put it in Module 7, which is where the decision belonged.
 
 WHY ONNX RUNTIME AND NOT TORCH
 ------------------------------
@@ -174,22 +175,28 @@ class SileroVAD:
         return min(1.0, max(0.0, probability))
 
     def reset(self) -> None:
-        """Clear the recurrent state — call BETWEEN utterances.
+        """Clear the recurrent state — called BETWEEN utterances.
 
-        FLAGGED SEAM: `AudioPipeline` never calls this. Each `capture_turn()`
-        re-scores the whole ring-buffer snapshot with whatever state the previous
-        cycle left behind, so the first chunks of an utterance are read in the
-        context of the last one. Whether the pipeline should reset per snapshot is
-        a Module 7 question, not an adapter's to answer, so this exposes the
-        capability and leaves the decision alone (Rule 1).
+        SEAM NOW OWNED (Resolution Log item 29). `AudioPipeline._reset_vad` calls
+        this once per utterance, at the start of each `_trim_to_speech` scoring
+        pass. Before that ruling nothing called it, so each `capture_turn()`
+        re-scored the whole ring-buffer snapshot with whatever state the previous
+        cycle left behind and the first chunks of an utterance were read in the
+        context of the last one. The pipeline probes for this method rather than
+        the Protocol declaring it, so a stateless VAD needs no equivalent.
+
+        Takes the same lock `speech_probability` does — cheap, non-reentrant (no
+        nesting between the two), and it means a reset can never land halfway
+        through a scored chunk now that a caller actually exists.
         """
         zeros = self._np.zeros(
             (_STATE_LAYERS, _STATE_BATCH, _STATE_WIDTH), dtype=self._np.float32
         )
-        if "state" in self._input_names:
-            self._state = zeros
-        else:
-            self._state = (zeros, zeros.copy())
+        with self._lock:
+            if "state" in self._input_names:
+                self._state = zeros
+            else:
+                self._state = (zeros, zeros.copy())
 
 
 def available() -> bool:

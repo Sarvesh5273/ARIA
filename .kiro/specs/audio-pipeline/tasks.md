@@ -50,10 +50,13 @@ core module is modified (the Daemon's `AudioPipelinePort` is satisfied unchanged
     fields (`_last_fell_back`, `_last_primary_error`, `_last_prosody`).
   - _Requirements: 9.1, 2.2, 2.3_
 
-- [x] 8. Input chain — `capture_turn()` and `_trim_to_speech()`.
+- [x] 8. Input chain — `capture_turn()`, `_trim_to_speech()` and `_reset_vad()`.
   - capture → ring buffer → wake gate → speaker gate (≥ 0.75) → VAD trim (512-chunks, ≥ 0.5)
     → STT → return transcript verbatim (no appraisal). Gates return `None`.
-  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 2.1_
+  - `_reset_vad()` at the start of each `_trim_to_speech` pass — a `getattr` capability probe,
+    so it clears `SileroVAD`'s recurrent state and no-ops for a stateless backend
+    (Resolution Log item 29). `VADBackend` stays at one method.
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.4a, 3.5, 3.6, 2.1_
 
 - [x] 9. Output chain — `speak()` + `_current_prosody()` + `_synthesize_with_fallback()`.
   - `speak`: read PAD at generation time → prosody → synthesize (cloud primary, Kokoro

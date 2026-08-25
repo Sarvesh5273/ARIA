@@ -206,6 +206,13 @@ Two architect rulings are needed before it can be:
    no new ruling; the architect's full wording is stored verbatim so the choice
    is theirs.
 
+**Both rulings are still open.** What DID change 2026-08-25 (ResLog item 29B) is
+when the heavy latch is armed: `clear()` now re-arms it, so `"rest"` lets a second
+arrival at heaviness be mentioned again. `"rest"` is a cognitive reset — start
+fresh — and a buffer that has forgotten the conversation while still remembering it
+already mentioned being loaded would reach heaviness with nothing to say.
+`express_pressure()` itself is untouched and still uncalled.
+
 ---
 
 ## Module 4 (Appraisal Chain) / Module 1 (PAD Engine) — architect decision recorded
@@ -1253,6 +1260,25 @@ F-2a/F-2b placeholders, now with their first data) and the STRUCTURE (whether
 idle MEANS and needs a third state or a changed gate — a new mechanism, so Rule 1.
 Flagged, not invented.
 
+**RULED 2026-08-25 — Resolution Log item 29A: the third state exists.** Silence is
+NOT load. Energy is HELD through the pre-idle window (neither depleted nor
+recovered), depletes only under active load, and recovers at genuine idle:
+*"in rest situation, energy will not consume."* Energy at the moment the gate opens
+is now the tiredness the CONVERSATION left, so the depth gate reads a true number
+and the deep pass is reachable through a real silence — asserted by test with the
+real Needs System and the real DMN across 159 ticks of the pinned window. No new
+flag and no new number: the three states come off `_last_voice_input_at` and
+`_output_pending` plus the pinned 8 minutes, and `_note_voice_input` is the whole
+abort. `dmn.py` did not change.
+
+**One consequence left open, deliberately.** `_output_pending` is now the only
+condition that sends the depletion signal, and in this REPL host no soul tick can
+land while it is True (`route_inbound_turn` is synchronous; `run_scheduler_step()`
+runs between turns, never during one). So under the REPL Energy only holds or
+recovers and a long conversation costs nothing; under a threaded daemon the
+depletion branch is live. Whether a turn should ALSO debit Energy per-turn is a new
+mechanism → Rule 1, flagged for the architect.
+
 **Why the harness drives the clocks itself.** `run_scheduler_step()` returns which
 clocks fired and DISCARDS the `DMNPassResult` — right for a scheduler, useless for
 an observation. The harness reproduces its two independent interval comparisons and
@@ -1375,11 +1401,14 @@ forbids most directly.
 - **`PorcupineWakeWord` tracks a consumed-sample cursor.** The pipeline passes the
   whole 20-second ring snapshot every cycle, so without one, a single spoken wake
   word would wake her on every cycle for the twenty seconds it stayed in the buffer.
-- **`SileroVAD.reset()` exists and NOTHING CALLS IT.** Silero VAD is recurrent, so
-  the tail of one utterance biases the head of the next, and `AudioPipeline`
-  re-scores the whole snapshot with whatever state the previous cycle left. Whether
-  the pipeline should reset per snapshot is a Module 7 question; the capability is
-  exposed and the decision is left alone.
+- **`SileroVAD.reset()` IS NOW CALLED** — `AudioPipeline._reset_vad()`, once per
+  utterance, at the start of each `_trim_to_speech` pass (Resolution Log item 29).
+  Silero VAD is recurrent, so the tail of one utterance biased the head of the next
+  while nothing called it. It is a `getattr` capability PROBE, not a Protocol
+  method: `VADBackend` still declares one method, so `audio_stack._Absent` (whose
+  every declared method REFUSES) keeps its `isinstance` conformance and needs no
+  silently-passing `reset`. `reset()` now takes the same lock `speech_probability`
+  does, since a caller finally exists.
 - **Speaker verification has `enrol()` but cannot bind an identity.** It holds no
   StateManager handle, which makes "an audio backend decided who you are"
   structurally impossible. The tracker's ruling is that enrolment should SET

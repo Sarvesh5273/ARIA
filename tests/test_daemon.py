@@ -59,7 +59,7 @@ from daemon.graph_manager import MemoryGraph, PoignancyCategory, RelationalStage
 from daemon.appraisal_chain import AppraisalChain
 from daemon.soul_filter import SoulFilter, NeedState, NeedStates
 from daemon.llm_interface import LLMInterface
-from daemon.dmn import DMN, DMNPassInput
+from daemon.dmn import DMN, DMNPassInput, DMNPassType
 from daemon.backend_router import BackendRouter
 from daemon.aria_daemon import DaemonState
 
@@ -390,6 +390,112 @@ def test_scheduler_drives_both_clocks_on_independent_intervals(tmp_path):
     assert d.run_scheduler_step(now=T0 + timedelta(seconds=31)) == ["soul", "dmn"]
     assert d.soul_tick_count == 2
     assert d.dmn_tick_count == 1  # the dmn CLOCK fired once (pass gated on idle)
+
+
+# ===========================================================================
+# 1b) ENERGY HAS THREE STATES ON THE SOUL TICK (Resolution Log item 29).
+#     active load -> deplete | pre-idle silence -> HELD | genuine idle -> recover
+#
+# Before item 29 this was a two-way branch and "silent but not yet 8 minutes"
+# counted as load, so `tools/observe_dmn_pass.py` measured Energy 81.5 -> 0.1
+# across a real silence and the DMN's first genuine pass was always SHALLOW.
+# ===========================================================================
+
+class RecordingNeeds:
+    """Needs_System double that records WHICH Energy signal the soul tick sent.
+    The EMA math is Module 2's and is tested there; what is under test here is
+    the Daemon's three-way CHOICE — including the case where it sends neither."""
+
+    def __init__(self, energy=81.5):
+        self.signals = []
+        self._energy = energy
+
+    def initialize(self, restored=None): pass
+    def on_soul_tick(self): self.signals.append("deplete")
+    def on_idle_recovery(self): self.signals.append("recover")
+    def get_energy(self): return self._energy
+    def get_need_states(self, now=None): return NeedStates()  # all satisfied
+    def set_self_entity_id(self, entity_id): pass
+
+
+def _needs_daemon(tmp_path):
+    needs = RecordingNeeds()
+    ctx = make_daemon(tmp_path, needs=needs, dmn=SpyDMN())
+    ctx.daemon.startup()
+    needs.signals.clear()          # ignore anything startup itself did
+    return ctx.daemon, needs
+
+
+def test_energy_is_held_through_the_pre_idle_silence_window(tmp_path):
+    """Anywhere inside the 8-minute window: the idle gate has not opened, nothing
+    is pending, and NEITHER Energy signal is sent. Waiting is not work."""
+    d, needs = _needs_daemon(tmp_path)
+    for minute in (1, 2, 5, 7):
+        d.soul_tick(now=T0 + timedelta(minutes=minute))
+    assert needs.signals == []      # no deplete, no recover — HELD
+    assert d.soul_tick_count == 4   # the tick itself still ran
+
+
+def test_energy_recovers_once_the_idle_gate_opens(tmp_path):
+    """At the PINNED 8-minute boundary the middle state ends and recovery starts.
+    8:00 exactly is idle (the gate is >=), so it is the first recovering tick."""
+    d, needs = _needs_daemon(tmp_path)
+    d.soul_tick(now=T0 + timedelta(minutes=8) - timedelta(seconds=1))
+    assert needs.signals == []                     # 7:59 — still held
+    d.soul_tick(now=T0 + timedelta(minutes=8))
+    d.soul_tick(now=T0 + timedelta(minutes=20))
+    assert needs.signals == ["recover", "recover"]
+
+
+def test_energy_depletes_under_active_load(tmp_path):
+    """The remaining state. `_output_pending` is what "active load" means to the
+    Daemon — a turn is in flight — and it is the one condition that still sends
+    the depletion signal."""
+    d, needs = _needs_daemon(tmp_path)
+    d._output_pending = True
+    d.soul_tick(now=T0 + timedelta(minutes=2))     # inside the window
+    d.soul_tick(now=T0 + timedelta(minutes=20))    # past it, still pending
+    assert needs.signals == ["deplete", "deplete"]
+
+
+def test_user_speaking_aborts_idle_and_restarts_the_held_window(tmp_path):
+    """Speaking before the gate opens aborts the approach to idle. It is also
+    what aborts it AFTER: recovery stops and Energy is held again, because the
+    silence window restarts from the moment she was spoken to."""
+    d, needs = _needs_daemon(tmp_path)
+    d.soul_tick(now=T0 + timedelta(minutes=9))
+    assert needs.signals == ["recover"]
+
+    d._note_voice_input(now=T0 + timedelta(minutes=9))
+    needs.signals.clear()
+    d.soul_tick(now=T0 + timedelta(minutes=10))     # 1 min into a NEW window
+    assert needs.signals == []                      # held, not recovering
+
+
+def test_real_energy_survives_the_silence_and_the_dmn_pass_is_full(tmp_path):
+    """The end of item 29, through the REAL Needs_System and the REAL DMN: 160
+    soul ticks across the pinned 8-minute window (the observed cadence) leave
+    Energy exactly where the conversation left it, so the depth gate reads 81.5
+    and the pass is FULL. This is the assertion the observation harness failed."""
+    state = StateManager(state_dir=tmp_path)
+    state.save_energy(81.5)
+    ctx = make_daemon(tmp_path, state=state)
+    d = ctx.daemon
+    d.startup()
+
+    # 159 ticks x 3s = 7:57 — every one of them strictly inside the held window.
+    # (The 160th lands on 8:00, which is already idle: the gate is `>=`.)
+    for tick in range(1, 160):
+        d.soul_tick(now=T0 + timedelta(seconds=3 * tick))
+
+    assert ctx.needs.get_energy() == pytest.approx(81.5)
+    assert ctx.needs.get_energy() >= ENERGY_CRITICAL
+
+    result = d.dmn_tick(now=T0 + timedelta(minutes=9))
+    assert result is not None
+    assert result.pass_type is DMNPassType.FULL     # the deep half is reachable
+    assert result.step2_ran and result.step3_ran
+    ctx.graph.close()
 
 
 # ===========================================================================

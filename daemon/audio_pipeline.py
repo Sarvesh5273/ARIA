@@ -233,7 +233,13 @@ class SpeakerVerificationBackend(Protocol):
 class VADBackend(Protocol):
     """Voice-activity detection (v4: Silero VAD, ONNX). Returns a speech
     probability in [0, 1] for a single chunk; the pipeline applies the 0.5
-    gate and trims non-speech chunks."""
+    gate and trims non-speech chunks.
+
+    ONE METHOD, deliberately. A RECURRENT backend may additionally expose
+    `reset()` to clear its hidden state; `AudioPipeline._reset_vad` probes for
+    that and calls it once per utterance (Resolution Log item 29). It is not
+    declared here because a stateless backend has nothing to reset and should
+    not have to pretend otherwise."""
     def speech_probability(self, chunk: AudioSegment) -> float: ...
 
 
@@ -429,7 +435,11 @@ class AudioPipeline:
     def _trim_to_speech(self, audio: AudioSegment) -> Optional[AudioSegment]:
         """Keep only the chunks whose speech probability meets the VAD threshold
         (v4: 512-sample chunks, ≥ 0.5) — trimming leading/trailing non-speech.
-        Returns None if no chunk qualifies (silence only)."""
+        Returns None if no chunk qualifies (silence only).
+
+        Each call is ONE utterance's scoring pass and starts the VAD from a clean
+        recurrent state (Resolution Log item 29) — see `_reset_vad`."""
+        self._reset_vad()
         speech_chunks: List[AudioSegment] = []
         for chunk in audio.chunks(self._vad_chunk_size):
             if self._vad.speech_probability(chunk) >= self._vad_threshold:
@@ -437,6 +447,32 @@ class AudioPipeline:
         if not speech_chunks:
             return None
         return AudioSegment.concat(speech_chunks)
+
+    def _reset_vad(self) -> None:
+        """Clear the VAD's recurrent state before scoring a new utterance, if the
+        active backend has any (Resolution Log item 29).
+
+        Silero VAD is recurrent — that is why it beats a per-frame energy test —
+        and it therefore carries hidden state from chunk to chunk. This pipeline
+        re-scores the WHOLE 20-second ring snapshot on every capture cycle, so
+        without this call the head of each utterance is read in the context of the
+        tail of the last one. `adapters/audio_vad.py` has flagged that seam since
+        it was written: the capability was exposed and the decision deferred here,
+        to Module 7, because whether to reset per snapshot is a pipeline question.
+        This is the ruling.
+
+        CAPABILITY PROBE, NOT A PROTOCOL METHOD. `VADBackend` stays at the single
+        `speech_probability` it has always declared. Two of the three backends
+        that occupy the `vad=` slot have no recurrent state and so no `reset` —
+        `audio_stack._Absent`, whose entire contract is that every method it
+        declares REFUSES, and the test fakes. Widening the Protocol would make
+        `isinstance(_Absent(...), VADBackend)` false and force a silently-passing
+        method into a class built to raise. A probe says the true thing instead:
+        reset what has state to reset, and no-op for what does not.
+        """
+        reset = getattr(self._vad, "reset", None)
+        if callable(reset):
+            reset()
 
     # =======================================================================
     # OUTPUT CHAIN — AudioPipelinePort. speak() reads PAD for prosody at

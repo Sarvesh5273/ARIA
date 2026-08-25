@@ -60,9 +60,11 @@ never invented. All prior-module edits are ADDITIVE and doc-anticipated (Req 13 
   - _Requirements: 11.1, 11.4_
 
 - [x] 10. CLOCK 1 — `soul_tick()`.
-  - `PAD_Engine.on_soul_tick()`; `Needs.on_idle_recovery()` if idle else `on_soul_tick()`;
-    `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
-  - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.4_
+  - `PAD_Engine.on_soul_tick()` (unconditional); the THREE-state Energy choice —
+    `Needs.on_idle_recovery()` at genuine idle, NEITHER signal during pre-idle silence
+    (`_in_pre_idle_silence`), `Needs.on_soul_tick()` under active load (Resolution Log
+    item 29); `_refresh_attentional_policy()`; `_maybe_initiate()`. Never runs a DMN pass.
+  - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.3a, 3.4, 3.6_
 
 - [x] 11. CLOCK 2 — `dmn_tick()` + `run_scheduler_step()`.
   - `dmn_tick`: at idle(1&2) → `DMN.run_idle_pass`; else None. Never decays PAD.

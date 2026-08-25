@@ -103,6 +103,16 @@ inject fakes. No concrete provider is imported.
 | `TTSBackend` | `synthesize(text, prosody)` | cloud (Sarvam/ElevenLabs) + Kokoro | pipeline (fallback) |
 | `PlaybackBackend` | `play` / `play_cached` / `stop` | pw-play / PyQt6 audio | — |
 
+`VADBackend` stays at ONE method. A recurrent backend may ALSO expose `reset()`;
+`_reset_vad()` probes for it with `getattr` and calls it once per utterance, at the start of
+each `_trim_to_speech` pass (Resolution Log item 29). Silero VAD carries hidden state across
+chunks, and the pipeline re-scores the whole 20 s snapshot every cycle, so without the reset
+the head of each utterance is read in the context of the tail of the last one —
+`adapters/audio_vad.py` flagged that seam and deferred the decision here. It is a PROBE
+rather than a Protocol method because `audio_stack._Absent` (every declared method REFUSES)
+and the stateless test fakes have nothing to reset: declaring it would break their
+`isinstance` conformance and force a silently-passing method into a class built to raise.
+
 The gates (0.75 cosine, 0.5 VAD probability) live in the PIPELINE, not the backends, so the
 v4-cited thresholds are applied in one auditable place and backends stay dumb tools.
 
@@ -115,8 +125,9 @@ The v4 "Daemon — Audio Flow", stage by stage:
    `deque(maxlen=20s·16kHz)` auto-evicts the oldest samples.
 2. `wake.detect(buffered)` — if not woken, return `None` (STT never runs).
 3. `speaker.similarity(buffered)` — if `< 0.75`, return `None` (drop non-owner voice).
-4. `_trim_to_speech(buffered)` — iterate 512-sample chunks; keep those with
-   `speech_probability ≥ 0.5`; concat. If none, return `None` (silence).
+4. `_trim_to_speech(buffered)` — `_reset_vad()` first (see below); then iterate 512-sample
+   chunks; keep those with `speech_probability ≥ 0.5`; concat. If none, return `None`
+   (silence).
 5. `stt.transcribe(speech)` — return the transcript.
 
 The transcript is returned to the caller VERBATIM. This module does not appraise it; the

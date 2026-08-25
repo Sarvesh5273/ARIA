@@ -117,6 +117,10 @@ through the v4 chain, so the Daemon receives clean user text to route into appra
 4. THE Audio Pipeline SHALL run VAD over 512-sample chunks with a 0.5 probability threshold
    and SHALL trim non-speech boundaries, passing only the speech region to STT (v4 "VAD chunk
    size 512", "VAD threshold 0.5").
+4a. WHEN a new utterance is scored, THE Audio Pipeline SHALL clear the VAD's recurrent state
+   BEFORE the first chunk is scored, once per utterance, IF the active backend exposes
+   `reset()` — and SHALL no-op otherwise (Resolution Log item 29). Silero VAD is recurrent, so
+   without this the tail of one utterance biases the head of the next.
 5. WHEN no chunk meets the VAD threshold (silence), THE Audio Pipeline SHALL return no
    transcript.
 6. WHEN all gates pass, THE Audio Pipeline SHALL transcribe the trimmed speech via the STT

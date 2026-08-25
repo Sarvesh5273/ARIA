@@ -792,7 +792,106 @@ ruling is theirs to make on what they actually wrote.
 `"rest"` does not re-arm it — literal reading of "first heavy this session", since
 rest does not start a new session. The measured token record IS reset by `clear()`,
 because it described a prompt built from content that no longer exists and would
-otherwise have an empty buffer reporting `critical`.
+otherwise have an empty buffer reporting `critical`. — **CLOSED by item 29B: the
+latch now re-arms on `"rest"`.**
+
+---
+
+## 29. Energy is HELD through pre-idle silence; two flagged seams closed
+
+*(2026-08-25)* — architect-directed. Three changes, one commit. Each one closes a
+question that was already flagged in writing rather than opening a new one, and
+none of them adds a number, a coefficient, or a persisted field.
+
+### A. Energy is HELD during the pre-idle silence window
+
+**THE DEFECT, MEASURED.** `tools/observe_dmn_pass.py` recorded it against a real
+clock: at the PINNED 8-minute window the DMN's first genuine pass came back
+`pass_type=shallow`, `step2_ran=False`, `step3_ran=False`, with **Energy fallen
+81.5 → 0.1 during the silence itself**. `_idle_conditions_met` is False for the
+whole pre-window stretch, so all 160 soul ticks in it took the active-load branch
+and `on_idle_recovery()` was first reached at the same instant the DMN fired and
+read Energy < 20. The deep half of consolidation worked at a 30-second window and
+was **unreachable through a genuine silence**. HANDOFF_NOTES flagged the structural
+half of that as needing "a third state or a changed gate — a new mechanism, so
+Rule 1. Flagged, not invented."
+
+**THE RULING: the third state.** Energy now has THREE states on the soul tick,
+not two:
+
+| Daemon state | Condition | Energy signal |
+|---|---|---|
+| ACTIVE LOAD | output pending | `on_soul_tick()` — deplete |
+| PRE-IDLE SILENCE | quiet, gate not open yet | **none — HELD** |
+| GENUINE IDLE | gate open, nothing pending | `on_idle_recovery()` — recover |
+
+The architect's rationale, verbatim: *"In rest situation, energy will not
+consume."* **Waiting is not work.** Energy at the moment the gate opens is then the
+tiredness the CONVERSATION actually left, not an artefact of how long she has been
+sitting alone, and a deep pass runs only when she is genuinely rested.
+
+**THE DEPTH GATE IS UNCHANGED.** `DMN.run_idle_pass` already read Energy and chose
+`FULL` at ≥ 20 / `SHALLOW` at < 20 (DMN spec Req 2.3). Nothing in `dmn.py` moved.
+What changed is that the number it reads is now true.
+
+**NO NEW STATE, NO NEW NUMBER, AND NO NEW FLAG.** The instruction allowed a state
+flag; none was needed. All three states are read off the two markers idle
+detection already owns — `_last_voice_input_at` and `_output_pending` — plus the
+PINNED 8-minute window. `_note_voice_input` is the whole abort: the user speaking
+restarts the window, so the middle state re-arms from that instant and cannot be
+left stale. A duplicate boolean would have had to be maintained in three places to
+say something already derivable, which is more fragile, not less. Module 2 still
+owns every coefficient and every clamp; the Daemon only chooses which signal to
+send, and in the middle state it sends neither. PAD is untouched by this item — its
+decay stays unconditional, every tick.
+
+**WHAT STILL DEPLETES ENERGY — AND THE CONSEQUENCE, FLAGGED NOT FIXED.**
+`_output_pending` is now the only condition that sends the depletion signal, and in
+the CURRENT host no soul tick can land while it is True: `route_inbound_turn` runs
+synchronously from `_note_voice_input` to `_output_pending = False`, and `main.py`'s
+REPL drives `run_scheduler_step()` between turns, never during one. So under the
+REPL, Energy now only ever holds or recovers and a long conversation costs nothing.
+Under a threaded daemon — ticks firing on their own cadence while a turn generates —
+the depletion branch is live and a long turn costs what it costs. Whether a turn
+should ALSO debit Energy directly, per-turn rather than per-tick, is a NEW mechanism
+and therefore Rule 1: **flagged for the architect, not invented here.**
+
+### B. The heavy-pressure latch re-arms on `"rest"`
+
+`SessionBuffer.clear()` now sets `_heavy_pressure_expressed = False`. Item 28 left
+this open and read it the other way — the latch is scoped to the instance and
+`"rest"` does not start a new session, so "first heavy this **session**" argued for
+keeping it. The architect has ruled on what `"rest"` IS: a cognitive reset, asked
+for in those words. Someone who says it means *start fresh*, and a buffer that has
+forgotten the conversation while still remembering that it already mentioned being
+loaded would reach heaviness a second time with nothing to say. Criticality still
+does not latch, so there is nothing to re-arm for it.
+
+`express_pressure()` itself is **unchanged and still NOT WIRED** — item 28's two
+rulings still gate that, and the test asserting nothing calls it still passes. This
+changes only when the latch is armed.
+
+### C. Silero VAD is reset between utterances
+
+`AudioPipeline._reset_vad()` clears the VAD's recurrent state at the start of each
+`_trim_to_speech` scoring pass — once per utterance, before the first chunk is
+scored. Silero VAD is recurrent (that is why it beats a per-frame energy test), and
+the pipeline re-scores the whole 20-second ring snapshot every cycle, so without
+this the head of each utterance was read in the context of the tail of the last
+one. `adapters/audio_vad.py` exposed `reset()` and flagged the seam from the day it
+was written, deferring the decision to Module 7 because whether to reset per
+snapshot is a pipeline question. **This is that ruling.**
+
+**A CAPABILITY PROBE, NOT A WIDENED PROTOCOL.** `VADBackend` still declares the
+single `speech_probability` it always has; the pipeline probes `getattr(vad,
+"reset", None)` and calls it when present. Two of the three backends that occupy
+the `vad=` slot have no recurrent state and so no `reset` — `audio_stack._Absent`,
+whose entire contract is that every method it declares REFUSES, and the test
+fakes. Declaring `reset` on the Protocol would make `isinstance(_Absent(...),
+VADBackend)` false and force a silently-passing method into a class built to raise.
+A reset that no-ops for a stateless backend says the true thing instead. `reset()`
+also now takes the same lock `speech_probability` does — cheap, non-reentrant, and
+worth having the moment a caller actually exists.
 
 ---
 

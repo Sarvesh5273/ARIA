@@ -690,7 +690,12 @@ class AriaDaemon:
         """One soul tick: PAD decay + Energy + attentional policy + initiative.
         Drives Modules 1 and 2 — the Daemon calls their `on_soul_tick`; the
         modules own the math. This method NEVER runs a DMN pass (separate clock,
-        constraint 2) and NEVER writes PAD itself (constraint 1)."""
+        constraint 2) and NEVER writes PAD itself (constraint 1).
+
+        Energy has THREE states here, not two (Resolution Log item 29): deplete
+        under active load, HOLD through the pre-idle silence window, recover at
+        genuine idle. PAD is unaffected by that ruling — its decay is
+        unconditional, every tick, as it always was."""
         self._require_started()
         now = self._as_dt(now)
 
@@ -712,11 +717,17 @@ class AriaDaemon:
         # 1. PAD decay — Module 1 owns the EMA math; the Daemon only ticks it.
         self._pad.on_soul_tick()
 
-        # 2. Energy — deplete under active load, or RECOVER during extended idle
-        # (v4 "soul tick recovers Energy during extended idle"). Module 2 owns
-        # the math. This reads idle STATE; it does not touch the DMN clock.
+        # 2. Energy — THREE states, not two (Resolution Log item 29):
+        #      GENUINE IDLE      (gate open, nothing pending) -> RECOVER
+        #      PRE-IDLE SILENCE  (quiet, gate not open yet)   -> HELD (no call)
+        #      ACTIVE LOAD       (output pending)             -> DEPLETE
+        # Module 2 still owns all the math; the Daemon only chooses which signal
+        # to send, and in the middle state it sends NEITHER. This reads idle
+        # STATE; it does not touch the DMN clock.
         if self._idle_conditions_met(now):
             self._needs.on_idle_recovery()
+        elif self._in_pre_idle_silence(now):
+            pass  # HELD — see _in_pre_idle_silence for why silence is not load.
         else:
             self._needs.on_soul_tick()
 
@@ -1177,6 +1188,8 @@ class AriaDaemon:
 
     # =======================================================================
     # Idle detection (conditions 1 & 2 — Daemon-owned; condition 3 is DMN's).
+    # The same two markers also separate the THREE Energy states the soul tick
+    # chooses between (Resolution Log item 29) — see _in_pre_idle_silence.
     # =======================================================================
     def _idle_conditions_met(self, now: Optional[datetime] = None) -> bool:
         """Idle conditions the Daemon owns (v4 Idle Detection): (1) no voice
@@ -1189,8 +1202,35 @@ class AriaDaemon:
         no_pending_output = not self._output_pending
         return no_voice_for_window and no_pending_output
 
+    def _in_pre_idle_silence(self, now: Optional[datetime] = None) -> bool:
+        """The MIDDLE state (Resolution Log item 29): she has gone quiet, nothing
+        is pending, and the 8-minute idle gate has not opened yet. Energy is HELD
+        here — neither depleted nor recovered.
+
+        WHY SILENCE IS NOT LOAD. `_idle_conditions_met` is False for this whole
+        stretch, so before item 29 every soul tick in it took the active-load
+        branch: `tools/observe_dmn_pass.py` measured Energy falling 81.5 -> 0.1
+        across a real 8-minute silence, which made the DMN's first genuine pass
+        SHALLOW and left Steps 2 and 3 permanently unreachable through a real
+        silence. Waiting is not work. The architect's ruling: "in rest situation,
+        energy will not consume" — so Energy at the moment the gate opens is the
+        tiredness the CONVERSATION actually left, not an artefact of how long she
+        has been sitting alone.
+
+        This introduces no state and no number. The three states are read off the
+        two markers idle detection already owns (`_last_voice_input_at` and
+        `_output_pending`) and the PINNED 8-minute window. `_note_voice_input`
+        aborts the middle state for free: the user speaking restarts the window,
+        so the gate re-arms from that instant.
+        """
+        now = self._as_dt(now)
+        within_window = (now - self._last_voice_input_at) < self._idle_no_voice_window
+        return within_window and not self._output_pending
+
     def _note_voice_input(self, now: Optional[datetime] = None) -> None:
-        """Record that voice input arrived (resets idle condition 1)."""
+        """Record that voice input arrived (resets idle condition 1, and aborts
+        the pre-idle silence window — item 29's middle state is derived from this
+        timestamp, so restarting it is the whole abort)."""
         self._last_voice_input_at = self._as_dt(now)
 
     # =======================================================================
