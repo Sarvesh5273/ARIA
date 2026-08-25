@@ -96,7 +96,9 @@ from enum import Enum
 from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
 
 # --- REAL interfaces (imported, never redefined; Rule 6) -------------------
-from daemon.pad_engine import PADEngine, PADSnapshot, PADDelta, Valence
+from daemon.pad_engine import (
+    PADEngine, PADSnapshot, PADDelta, Valence, PAD_BASELINE,
+)
 from daemon.state_manager import (
     StateManager,
     PADState,
@@ -556,6 +558,15 @@ class AriaDaemon:
         self._initiative_expressed: Dict[str, bool] = {n: False for n in _NEED_ORDER}
         self._last_turn_was_emergency: bool = False
         self._initiative_count = 0
+        # Observability only: True when startup()'s PAD OQ4 consistency check
+        # discarded a half-written PAD record. Set by startup(), never read by
+        # any soul module, crosses no model boundary, decides nothing. It exists
+        # because the reset is otherwise INVISIBLE — "she is calm today" and "the
+        # fallback ate her state" look identical without it. Same reasoning
+        # Resolution Log item 25 gives for recording what the model PRODUCED
+        # before the strip: reading the condition afterwards would pin it False
+        # and destroy the evidence.
+        self._pad_restore_was_reset: bool = False
         # DMN-pass working inputs the Daemon tracks and relays.
         self._self_monitoring_buffer: List[BufferItem] = []
         self._active_uncertainty_refs: List[str] = []
@@ -605,6 +616,40 @@ class AriaDaemon:
         # BOTH conversions happen HERE, at the wiring call site.
         restored_snapshot = pad_state_to_snapshot(pad_state)
         restored_valence = valence_from_str(valence_str)
+
+        # PAD OQ4 RESTORE-BOUNDARY CONSISTENCY CHECK.
+        #
+        # PAD and last_applied_valence are ONE RECORD: PAD can only leave
+        # baseline through apply_appraisal_delta, which always sets a valence, so
+        # a non-baseline PAD with no valence is a HALF-WRITTEN record, not a
+        # state she was ever in. Carried into `initialize()` it makes the FIRST
+        # `on_soul_tick()` raise NotImplementedError, several REPL frames from
+        # the cause, because there is no basis for choosing an EMA decay
+        # coefficient and inventing one is what Rule 1 forbids.
+        #
+        # Resolution Log item 18 already ruled this class of case at this exact
+        # boundary: an entry that cannot be trusted falls back to the spec
+        # default rather than being repaired ("NaN has no position on a scale").
+        # Half a record is the same kind of thing, so it gets the same answer.
+        #
+        # This chooses NO coefficient, catches NO raise, and leaves
+        # `pad_engine.py` byte-unchanged. The raise stays live for any case this
+        # does not cover. Change 1 below (one atomic write instead of three)
+        # is what makes this rare enough to be a backstop rather than a habit.
+        #
+        # WHAT IT COSTS, stated because it is a real cost: the emotional residue
+        # of the turn before the crash is discarded — she resumes even rather
+        # than still warm. The graph is untouched (every MemoryGraph write
+        # commits inside its own method), so she remembers the conversation
+        # without still feeling it, which is the human shape rather than a
+        # machine reset. The alternative — presenting a feeling whose origin is
+        # unknown — would be performing a state instead of having one.
+        self._pad_restore_was_reset = (
+            restored_snapshot != PAD_BASELINE and restored_valence is None
+        )
+        if self._pad_restore_was_reset:
+            restored_snapshot = PAD_BASELINE
+
         self._pad.initialize(restored_snapshot, restored_valence)
 
         # Needs System: initialize the Energy substrate from restored Energy.
@@ -665,15 +710,38 @@ class AriaDaemon:
         self._save_state()
 
     def _save_state(self) -> None:
-        """Persist PAD, Energy and last_applied_valence. The Daemon owns no
-        meaning: it reads the live values from their owning modules and hands
-        them to StateManager (pure plumbing)."""
+        """Persist PAD, Energy and last_applied_valence in ONE atomic write. The
+        Daemon owns no meaning: it reads the live values from their owning
+        modules and hands them to StateManager (pure plumbing).
+
+        ONE WRITE, NOT THREE (PAD OQ4). This used to call `save_pad`,
+        `save_energy` and `save_last_applied_valence` separately — three
+        independent atomic writes with two gaps between them. A crash in either
+        gap persisted a non-baseline PAD while the valence key went unwritten,
+        which is the half-written record `startup()`'s consistency check now has
+        to clean up. `StateManager.save_all` closes the gap: its own docstring
+        already says "The Daemon calls this on cadence and on shutdown", so this
+        adopts the API Module 11 was written to be called through rather than
+        adding one. No new mechanism, no new key, nothing invented.
+
+        `self_model` is round-tripped through disk because `save_all` requires
+        it and the Daemon holds no live copy — `startup()` clears
+        consistency_flags and persists them immediately, so disk is the current
+        value. Read-modify-write of the same bytes, deliberately not a second
+        source of truth for a file this method does not own. FLAGGED: under a
+        THREADED host a `save_self_model` landing between this read and the
+        write would be clobbered. Not reachable in the synchronous REPL, where
+        `run_scheduler_step()` never overlaps a turn."""
         snap = self._pad.get_current_pad()
-        self._state.save_pad(snapshot_to_pad_state(snap))
-        self._state.save_energy(self._needs.get_energy())
+        energy = self._needs.get_energy()
         # last_applied_valence ROUND-TRIP (HANDOFF (a)).
         current_valence = read_pad_last_valence(self._pad)
-        self._state.save_last_applied_valence(valence_to_str(current_valence))
+        self._state.save_all(
+            pad=snapshot_to_pad_state(snap),
+            energy=energy,
+            self_model=self._state.load_self_model(),
+            last_applied_valence=valence_to_str(current_valence),
+        )
 
     def _require_started(self) -> None:
         if not self._started:
@@ -1480,6 +1548,18 @@ class AriaDaemon:
     @property
     def started(self) -> bool:
         return self._started
+
+    @property
+    def pad_restore_was_reset(self) -> bool:
+        """True when `startup()`'s PAD OQ4 consistency check discarded a
+        half-written PAD record and restored baseline instead (see startup()).
+
+        Read-only, observability ONLY — no soul module reads it, it crosses no
+        model boundary, and nothing branches on it. It exists so the reset is
+        visible: a silent fallback makes "she is resting at baseline today"
+        indistinguishable from "a corrupt state file erased what she felt", and
+        those need different responses from whoever is running her."""
+        return self._pad_restore_was_reset
 
     @property
     def session_buffer_fullness(self) -> str:

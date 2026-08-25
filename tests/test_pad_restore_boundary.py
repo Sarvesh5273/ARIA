@@ -253,3 +253,170 @@ def test_main_stays_quiet_at_baseline(tmp_path, capsys):
 
     aria_main.warn_pad_restore_boundary(_Wiring())
     assert capsys.readouterr().out == ""
+
+
+# ===========================================================================
+# The fix: one atomic write (closes the gap) + a restore-boundary consistency
+# check (handles a record that arrives broken anyway). Neither invents a
+# coefficient; `pad_engine.py` stays byte-unchanged, asserted above.
+# ===========================================================================
+
+def test_save_state_writes_pad_and_valence_in_one_atomic_write(tmp_path):
+    """The gap that produced the residual is CLOSED, measured by counting writes.
+
+    `_save_state` used to make three separate atomic writes — pad, energy,
+    valence — with two crash gaps between them. A crash in either gap persisted a
+    non-baseline PAD while the valence key went unwritten. Counting the writes is
+    the honest assertion: asserting the file "looks consistent" afterwards would
+    pass on the three-write version too, since all three do complete when nothing
+    crashes.
+    """
+    from tests.test_daemon import make_daemon
+    from daemon.pad_engine import PADDelta
+
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    ctx.pad.apply_appraisal_delta(PADDelta(
+        d_pleasure=0.2, d_arousal=0.1, d_dominance=0.0,
+        valence=Valence.POSITIVE, origin="appraisal",
+    ))
+
+    writes = []
+    real_write = ctx.state._write_json_atomic
+
+    def counting_write(path, data):
+        writes.append(pathlib.Path(path).name)
+        return real_write(path, data)
+
+    ctx.state._write_json_atomic = counting_write
+    ctx.daemon._save_state()
+
+    # aria_state.json carries pad + energy + last_applied_valence, so exactly ONE
+    # write touches it. (self_model.json is a separate file and a separate key
+    # space — it was never part of the OQ4 record.)
+    assert writes.count("aria_state.json") == 1, writes
+
+    # And the record it wrote is internally consistent.
+    on_disk = json.loads((tmp_path / "aria_state.json").read_text())
+    assert on_disk["pad"]["pleasure"] != PAD_BASELINE.pleasure
+    assert on_disk["last_applied_valence"] == "positive"
+
+
+def test_a_normal_restart_still_carries_pad_and_valence_across(tmp_path):
+    """Non-vacuous guard on the consistency check: an INTACT record must survive
+    untouched. If the check were too broad it would reset every restart, and she
+    would arrive at every session emotionally blank — which is the failure the
+    check exists to avoid, not to cause."""
+    from tests.test_daemon import make_daemon
+    from daemon.pad_engine import PADDelta
+
+    first = make_daemon(tmp_path)
+    first.daemon.startup()
+    first.pad.apply_appraisal_delta(PADDelta(
+        d_pleasure=0.2, d_arousal=0.1, d_dominance=0.0,
+        valence=Valence.POSITIVE, origin="appraisal",
+    ))
+    moved = first.pad.get_current_pad()
+    first.daemon.shutdown()
+
+    second = make_daemon(tmp_path)
+    second.daemon.startup()
+
+    assert second.daemon.pad_restore_was_reset is False
+    assert second.pad.get_current_pad() == moved          # she is still warm
+    assert second.pad._last_applied_valence is Valence.POSITIVE
+    second.daemon.soul_tick()                              # and decays normally
+    assert second.pad.get_current_pad().pleasure < moved.pleasure
+
+
+def test_startup_restores_baseline_when_pad_is_off_baseline_with_no_valence(tmp_path):
+    """The residual case, end to end: a half-written record no longer kills the
+    first soul tick.
+
+    Written by hand rather than by crashing a process, because that is how the
+    record can still arrive after the atomic-write fix — a truncated or
+    hand-edited file, or item 18's own clamp turning an out-of-range value into a
+    non-baseline PAD while the valence is absent. This is the same construction
+    `test_restored_non_baseline_pad_without_a_valence_raises` uses to prove the
+    raise reachable, which is the point: the file is the input, not the crash.
+    """
+    from tests.test_daemon import make_daemon
+    from daemon.state_manager import StateManager
+
+    state = StateManager(state_dir=tmp_path)
+    (tmp_path / "aria_state.json").write_text(json.dumps({
+        "pad": {"pleasure": 0.72, "arousal": 0.61, "dominance": 0.64},
+        "energy": 50.0,
+        # last_applied_valence deliberately ABSENT — the half-written record.
+    }))
+
+    ctx = make_daemon(tmp_path, state=state)
+    ctx.daemon.startup()
+
+    assert ctx.daemon.pad_restore_was_reset is True
+    assert ctx.pad.get_current_pad() == PAD_BASELINE
+    # The tick that used to raise NotImplementedError now runs.
+    ctx.daemon.soul_tick()
+    assert ctx.pad.get_current_pad() == PAD_BASELINE   # baseline decays to baseline
+
+
+def test_the_reset_is_reported_rather_than_silent(tmp_path, capsys):
+    """A silent fallback is the failure mode worth guarding: "she is resting at
+    baseline" and "a corrupt file erased what she felt" are the same observation
+    without a report. `startup()` runs BEFORE `report_startup()` in `main`, so the
+    original pre-startup warning can no longer fire on this path — this is what
+    replaces it."""
+    import main as aria_main
+    from tests.test_daemon import make_daemon
+    from daemon.state_manager import StateManager
+
+    state = StateManager(state_dir=tmp_path)
+    (tmp_path / "aria_state.json").write_text(json.dumps({
+        "pad": {"pleasure": 0.72, "arousal": 0.61, "dominance": 0.64},
+        "energy": 50.0,
+    }))
+    ctx = make_daemon(tmp_path, state=state)
+    ctx.daemon.startup()
+
+    class _Wiring:
+        pad = ctx.pad
+        daemon = ctx.daemon
+        state = ctx.state
+        state_dir = tmp_path
+
+    aria_main.warn_pad_restore_boundary(_Wiring())
+    out = capsys.readouterr().out
+    assert "RESET AT RESTORE" in out
+    assert "item 18" in out
+    # It must say the memory survived — that is the difference between one turn's
+    # feeling lost and a conversation lost.
+    assert "MEMORY IS INTACT" in out
+
+
+def test_no_report_when_nothing_was_reset(tmp_path, capsys):
+    """Non-vacuous: an ordinary startup says nothing about the restore boundary."""
+    import main as aria_main
+    from tests.test_daemon import make_daemon
+
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+
+    class _Wiring:
+        pad = ctx.pad
+        daemon = ctx.daemon
+        state = ctx.state
+        state_dir = tmp_path
+
+    aria_main.warn_pad_restore_boundary(_Wiring())
+    assert capsys.readouterr().out == ""
+
+
+def test_pad_engine_is_still_byte_unchanged_by_this_fix():
+    """The whole fix lives in the wiring layer. PAD Engine's two raises are still
+    there and still unmodified — pinned by the count tests at the top of this
+    file, restated here as the fix's own boundary claim."""
+    source = pathlib.Path("daemon/pad_engine.py").read_text()
+    assert len(_raise_lines("daemon/pad_engine.py")) == 2
+    # No consistency check leaked into the soul layer.
+    assert "pad_restore_was_reset" not in source
+    assert "half a record" not in source

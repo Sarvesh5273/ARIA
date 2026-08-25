@@ -534,7 +534,22 @@ def report_startup(w: Wiring) -> None:
 
 
 def warn_pad_restore_boundary(w: Wiring) -> None:
-    """Say so at STARTUP if the next soul tick is going to raise.
+    """Report the PAD restore boundary at startup.
+
+    TWO CASES, and the first one is the live one now that
+    `AriaDaemon.startup()` carries a consistency check:
+
+    1. **The check FIRED.** A half-written PAD record (non-baseline PAD, no
+       valence) was discarded and baseline restored, so the tick will not raise.
+       That is the right outcome and it must still be SAID: without this line,
+       "she is resting at baseline" and "a corrupt state file erased what she
+       felt" look identical from the outside. `startup()` runs before this
+       function, so this branch is what an operator actually sees.
+
+    2. **No daemon has started yet**, so nothing has cleaned the record — the
+       original diagnostic below still applies and still describes a tick that
+       would raise. Reached by callers that inspect a wiring without starting
+       it, which is what this function's own tests do.
 
     PAD Engine's Open Question 4 residual: `on_soul_tick` raises
     `NotImplementedError` when PAD was restored to a NON-BASELINE value and no
@@ -551,10 +566,27 @@ def warn_pad_restore_boundary(w: Wiring) -> None:
     FIRST `soul_tick()` raises — which in this REPL means the first turn dies with
     a traceback several frames from the cause.
 
-    So this prints the cause up front. It does NOT resolve it: no coefficient is
-    chosen, the raise is not caught, and `pad_engine.py` is untouched. Closing OQ4
-    is an architect decision.
+    Neither branch chooses a coefficient, neither catches the raise, and
+    `pad_engine.py` stays byte-unchanged.
     """
+    daemon = getattr(w, "daemon", None)
+    if daemon is not None and getattr(daemon, "pad_restore_was_reset", False):
+        print("  PAD          RESET AT RESTORE — the state file held a "
+              "non-baseline PAD with no")
+        print("               valence, which is half a record: PAD only leaves "
+              "baseline through an")
+        print("               appraisal delta, and that always sets a valence. "
+              "Baseline was restored")
+        print("               (Resolution Log item 18's rule for an entry that "
+              "cannot be trusted).")
+        print("               She resumes even rather than still warm. HER "
+              "MEMORY IS INTACT — the")
+        print("               graph commits per write — so this cost one turn's "
+              "feeling, not a")
+        print("               conversation. Usual cause: a crash or a "
+              "hand-edited state file.")
+        return
+
     pad = w.pad.get_current_pad()
     at_baseline = (
         pad.pleasure == PAD_BASELINE.pleasure
