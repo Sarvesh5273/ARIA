@@ -277,6 +277,46 @@ class LocalModelTransport(ModelTransport, Protocol):
 
 
 # ===========================================================================
+# Where the last candidate came from — the routing readout (Module 9).
+# ===========================================================================
+# CATEGORICAL, deliberately. Each value either holds or it does not; there is no
+# "how local was this turn", so the percentage test says category, not number.
+# These describe an observed FACT about the turn that just happened. They are not
+# a decision surface: nothing in the soul layer reads them, and routing is
+# BackendRouter's job (Track A).
+#
+# WHY THIS REPLACED `serving_from_local`, which was a bool reading
+# `local.is_loaded`: under v4's cloud-primary Brain Structure the local model
+# "loads on cloud failure, unloads on restore", so residency and degradation were
+# the same fact. Track A inverted that — the local voice is pinned resident from
+# startup and is the DEFAULT — so the old property was True during entirely
+# healthy operation while its docstring said "cloud is currently down". Module 10
+# names it as the degradation trigger, so wiring it would have parked her face in
+# INWARD_WAITING forever. Residency is no longer evidence of anything.
+ROUTE_NO_TURN_YET = "no_turn_yet"
+ROUTE_CLOUD_CHOSEN = "cloud_chosen"
+ROUTE_CLOUD_UNHEALTHY_FALLBACK = "cloud_unhealthy_fallback"
+ROUTE_LOCAL_CHOSEN = "local_chosen"
+ROUTE_NO_CLOUD_ADAPTER = "no_cloud_adapter"
+
+#: The complete set. Exhaustive by construction — `generate()` assigns exactly one
+#: on every path, and `last_route` returns only from this set.
+ROUTES = frozenset({
+    ROUTE_NO_TURN_YET,
+    ROUTE_CLOUD_CHOSEN,
+    ROUTE_CLOUD_UNHEALTHY_FALLBACK,
+    ROUTE_LOCAL_CHOSEN,
+    ROUTE_NO_CLOUD_ADAPTER,
+})
+
+#: Duck-typed marker a cloud transport may set False to say "I am not an adapter,
+#: I am the absence of one" (`adapters/transport_unconfigured.py`). Read with
+#: `getattr(..., True)` so a real adapter never has to know this exists, and so
+#: `daemon/` still imports nothing from `adapters/` — the boundary is the point.
+CONFIGURED_MARKER = "is_configured"
+
+
+# ===========================================================================
 # The LLM Interface — Module 9.
 # ===========================================================================
 class LLMInterface:
@@ -313,6 +353,11 @@ class LLMInterface:
         # Engine Req 7: enforcement is the absence of the surface, not a check).
         self._cloud = cloud_transport
         self._local = local_transport
+        # Observed outcome of the LAST turn. The only mutable state this module
+        # holds, and it is a RECORD, never an input: no method reads it to decide
+        # anything. Starts as "nothing has been served yet" rather than as a
+        # guess about where the first turn will go.
+        self._last_route: str = ROUTE_NO_TURN_YET
 
     # -- Soul Filter's LLMClient contract ----------------------------------
     def generate(
@@ -375,16 +420,34 @@ class LLMInterface:
             # CALLER'S DECISION (see path 1 above). Opaque passthrough: no
             # judgment, no cloud-first attempt, no load/unload lifecycle
             # touch, no swallowing of LLMTransportError.
+            #
+            # Recording WHICH backend served is observation, not routing — the
+            # choice was already made upstream and is not revisited here. By
+            # identity, because the objects are shared: `main.py` passes the same
+            # local transport to `LLMInterface` and to `BackendRouter`'s tier 0,
+            # and the same object to the cloud slot and tier 1.
+            #
+            # Anything that is NEITHER of this module's two transports is a tier
+            # it does not own — in practice BackendRouter's tier 2 — and the pool
+            # is {local, groq, azure}, so "not the local object" means a cloud
+            # tier served. That inference is sound for every caller in this
+            # codebase and is stated here rather than assumed silently.
+            self._last_route = (
+                ROUTE_LOCAL_CHOSEN if transport is self._local
+                else ROUTE_CLOUD_CHOSEN
+            )
             return transport.generate(prompt)  # verbatim — no judgment
 
         try:
             candidate = self._cloud.generate(prompt)
         except LLMTransportError as cloud_error:
             # Cloud is down → serve from the local fallback with the SAME prompt.
+            self._last_route = ROUTE_CLOUD_UNHEALTHY_FALLBACK
             return self._serve_from_local(prompt, cloud_error)
 
         # Cloud succeeded. If the local model was up (we had been in fallback),
         # this is the "restore" — unload it (v4 "unloads on restore").
+        self._last_route = ROUTE_CLOUD_CHOSEN
         if self._local.is_loaded:
             self._local.unload()
         return candidate  # verbatim — no judgment
@@ -409,9 +472,31 @@ class LLMInterface:
 
     # -- Read-only observability (NOT a decision surface) ------------------
     @property
-    def serving_from_local(self) -> bool:
-        """True while the local fallback is resident (cloud is currently down).
-        A read-through of the local transport's own `is_loaded` — the Interface
-        keeps no independent state and makes no judgment; this is a convenience
-        readout for the Daemon/Visual Layer's degradation UX (Modules 8/10)."""
-        return self._local.is_loaded
+    def last_route(self) -> str:
+        """Where the last candidate came from, as one of `ROUTES`.
+
+        Replaces `serving_from_local`, which reported the local model's RESIDENCY
+        and called it "cloud is down". Those were the same fact under v4's
+        cloud-primary lifecycle and stopped being the same fact under Track A —
+        see the ROUTES block above for the full reasoning.
+
+        AN UNCONFIGURED CLOUD TIER IS NOT A FAILURE, and that is the substantive
+        part of this fix rather than a naming tidy-up. If the cloud slot reports
+        `is_configured = False`, this returns `no_cloud_adapter` in preference to
+        `cloud_unhealthy_fallback` — because on the internal path an unconfigured
+        tier does raise `LLMTransportError`, which is indistinguishable from a
+        real outage if you only look at the exception. One is the ordinary resting
+        state of a local-first bring-up; the other is degradation. Collapsing them
+        is what made the old readout misleading, so the distinction is drawn here
+        rather than left to the consumer.
+
+        Still not a decision surface: nothing in the soul layer reads it, it
+        crosses no model boundary, and Module 10's degradation trigger remains
+        `LLMUnavailableError` (`adapters/visual_bridge.py`). This is a readout for
+        the startup/status report, and the deeper question of whether "cloud
+        unavailable" should drive a degradation face AT ALL under a local-primary
+        design is still the open tracker row — narrowed by this, not closed.
+        """
+        if not getattr(self._cloud, CONFIGURED_MARKER, True):
+            return ROUTE_NO_CLOUD_ADAPTER
+        return self._last_route

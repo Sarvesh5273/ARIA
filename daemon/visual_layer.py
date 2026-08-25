@@ -85,9 +85,13 @@ FLAG DISPOSITION (cite; do not invent -- Rule 1)
 
   Driver-loop / signal wiring (OQ-1/OQ-2) : the independent timer/thread that
         calls refresh(), and wiring the Daemon's speak()-boundary ->
-        set_speaking and the LLM Interface's serving_from_local ->
-        set_cloud_available, are top-of-tree BUILD-TIME wiring, not this
-        module's concern. The contract is exposed here; the Daemon is unchanged.
+        set_speaking and an LLM-availability signal -> set_cloud_available, are
+        top-of-tree BUILD-TIME wiring, not this module's concern. The contract is
+        exposed here; the Daemon is unchanged. (What that availability signal
+        should BE is an open question: `serving_from_local`, named when this was
+        written, no longer exists — see `adapters/visual_bridge.py`, which wires
+        `LLMUnavailableError` and explains why the routing readout that replaced
+        it is still not the right trigger under a local-primary design.)
 
 Precedence when documents conflict: ARIA_Resolution_Log.md >
 ARIA_Soul_Spec_v4_Addendum.md > ARIA_Soul_Spec_v4.md.
@@ -248,7 +252,9 @@ class VisualLayerPort(Protocol):
     visual port today, so the contract lives here (ResLog: "expose a clean
     contract the Daemon can drive"). The Daemon's EXISTING signals map onto it:
     the output-pending boundary around `audio.speak()` -> set_speaking(True/
-    False); the LLM Interface's `serving_from_local` -> set_cloud_available(...)."""
+    False); an LLM-availability signal -> set_cloud_available(...). The signal
+    originally named here was `serving_from_local`, which no longer exists; see
+    `adapters/visual_bridge.py` for what is wired instead and why."""
 
     def set_speaking(self, is_speaking: bool) -> None:
         ...
@@ -375,7 +381,8 @@ class VisualLayer:
 
     def set_cloud_available(self, available: bool) -> None:
         """INPUT: cloud-availability, from the Daemon / LLM Interface readout
-        (`serving_from_local` / LLMUnavailableError). Unavailable -> the inward/
+        (`LLMUnavailableError`; the `serving_from_local` half of the pair this
+        once named no longer exists). Unavailable -> the inward/
         waiting loop plays (v4 "Graceful degradation video state"), overriding
         PAD zones, promptly (a failure is not zone flicker -> ungated).
         Available -> resume PAD-driven zones with no announcement (v4 "Full voice

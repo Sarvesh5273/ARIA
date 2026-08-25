@@ -35,35 +35,34 @@ mouth mid-word for the rest of the session while the zone machinery kept running
 The observed empty-text crash (see `audio_tts.silence_for_empty_text`) is exactly
 the shape that would have done it.
 
-CLOUD AVAILABILITY — AND A READOUT THAT NO LONGER MEANS WHAT IT SAYS
--------------------------------------------------------------------
-Module 10 names `LLMInterface.serving_from_local` as the degradation trigger.
-**Do not wire that, and this module deliberately does not.**
+CLOUD AVAILABILITY — THE READOUT IS FIXED, THE WIRING STILL DOES NOT FOLLOW
+---------------------------------------------------------------------------
+Module 10 names the LLM Interface's readout as the degradation trigger.
+**Do not wire it, and this module deliberately does not.**
 
-    @property
-    def serving_from_local(self) -> bool:
-        # docstring: "True while the local fallback is resident
-        #             (cloud is currently down)."
-        return self._local.is_loaded
-
+The readout it named was `serving_from_local`, a bool that returned
+`self._local.is_loaded` under a docstring claiming "cloud is currently down".
 That equivalence held under v4's Brain Structure, where the local model "loads on
-cloud failure, unloads on restore" — so resident really did imply cloud-down. Track
-A inverted it: `AriaDaemon.startup()` calls `BackendRouter.ensure_local_loaded()`,
-Gemma is pinned resident from boot, and it is the DEFAULT voice rather than a
-fallback. So `serving_from_local` is True during entirely healthy operation, and
-`set_cloud_available(not serving_from_local)` would park her face in
+cloud failure, unloads on restore" — resident really did imply cloud-down. Track A
+inverted it: `AriaDaemon.startup()` calls `BackendRouter.ensure_local_loaded()`,
+the local voice is pinned resident from boot, and it is the DEFAULT rather than a
+fallback. So the property read True during entirely healthy operation, and
+`set_cloud_available(not serving_from_local)` would have parked her face in
 INWARD_WAITING permanently.
 
-FLAGGED, NOT PATCHED (Rule 1 / Rule 2). Two things are genuinely unresolved and
-neither is an adapter's to decide:
+**Half of that is now resolved.** `serving_from_local` is gone, replaced by
+`LLMInterface.last_route` — a categorical record of where the last candidate
+actually came from, which no longer consults residency and which distinguishes an
+unconfigured cloud tier from one that fell over.
 
-  1. `serving_from_local`'s docstring is now stale in `daemon/llm_interface.py`.
-     The property is a correct read-through of `is_loaded`; the parenthetical
-     "(cloud is currently down)" is what Track A falsified.
-  2. More deeply: v4's degradation state assumes CLOUD-PRIMARY, and the architect's
-     current design is local-primary with cloud proposed. Under that design "cloud
-     unavailable" is the ordinary resting state, not a degradation — so what should
-     trigger the inward/waiting loop is an open question, not a wiring detail.
+FLAGGED, NOT PATCHED (Rule 1 / Rule 2) — the deeper half is untouched, and it is
+the half that governs whether any of this reaches her face. v4's degradation state
+assumes CLOUD-PRIMARY; the architect's current design is local-primary with cloud
+proposed. Under that design "cloud unavailable" is the ordinary resting state, not
+a degradation, so a truthful readout still does not tell you whether she should
+LOOK withdrawn — `no_cloud_adapter` on a local-first bring-up is her normal
+Tuesday. What should drive the inward/waiting loop remains an open question rather
+than a wiring detail, so this module keeps reading neither name.
 
 What this module wires instead is the OTHER trigger Module 10's own docstring
 names, which is well-defined under either design: `LLMUnavailableError` — no

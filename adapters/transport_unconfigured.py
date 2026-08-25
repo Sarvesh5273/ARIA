@@ -56,6 +56,16 @@ DEFAULT_REASON = "no adapter is configured for this backend tier"
 class UnconfiguredTransport:
     """A backend tier with no adapter. Explicitly unhealthy; never generates."""
 
+    #: "I am the absence of an adapter, not a broken one." Read by
+    #: `LLMInterface.last_route` (via `getattr`, so a real adapter never has to
+    #: declare it) to report `no_cloud_adapter` instead of
+    #: `cloud_unhealthy_fallback`. The two are indistinguishable from the
+    #: exception alone — both raise `LLMTransportError` — but only one of them is
+    #: degradation. A local-first bring-up with no cloud credentials is the
+    #: INTENDED state, as the module docstring above argues, and it should not
+    #: read as an outage.
+    is_configured = False
+
     def __init__(self, *, tier_name: str, reason: str = DEFAULT_REASON) -> None:
         self._tier_name = tier_name
         self._reason = reason

@@ -1,5 +1,36 @@
 # Design Document — Module 9: LLM Interface
 
+> ## AMENDMENT 2026-08-24 — `serving_from_local` is replaced by `last_route`
+>
+> Resolution Log **item 26**. Every statement below that names
+> `serving_from_local`, or gives the public surface as
+> `{generate, serving_from_local}`, predates that ruling and is left in place so
+> the change is legible. **The current surface is `{generate, last_route}`.**
+>
+> `serving_from_local` returned `self._local.is_loaded` under a docstring reading
+> "cloud is currently down". Those were the same fact under v4's cloud-primary
+> lifecycle and stopped being the same fact under Track A, which pins the local
+> voice resident from startup and makes it the default — so the property read True
+> during entirely healthy operation.
+>
+> `last_route` records where the last candidate actually came from, as one of five
+> categorical values: `no_turn_yet`, `cloud_chosen`, `cloud_unhealthy_fallback`,
+> `local_chosen`, `no_cloud_adapter`. It consults no residency. Note especially
+> that line 251's reasoning below — "whether Gemma is resident is read from the
+> transport itself" — is exactly what the ruling reversed: residency is no longer
+> evidence of routing.
+>
+> One behaviour is a rule rather than a rename: an unconfigured cloud tier raises
+> `LLMTransportError` identically to a real outage, so `no_cloud_adapter` OUTRANKS
+> `cloud_unhealthy_fallback`. A local-first bring-up is the intended state, not
+> degradation. The seam is a duck-typed `is_configured` marker read with
+> `getattr(..., True)`, so `daemon/` still imports nothing from `adapters/`.
+>
+> The module gains ONE attribute, `_last_route`. It is a record, never an input —
+> nothing reads it to decide anything — and the structural guarantee this spec
+> rests on is unchanged: the constructor still takes transports only, so no graph,
+> PAD, needs, appraisal or state handle can reach a prompt through it.
+
 ## Overview
 
 The LLM_Interface is the socket for Aria's **hot-swappable language tool**. v4's

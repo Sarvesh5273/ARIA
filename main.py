@@ -485,17 +485,23 @@ def report_startup(w: Wiring) -> None:
         playback = getattr(port, "_playback", None)
         print(f"  audio        SPEAKING — {type(primary).__name__}"
               f" -> {playback.describe() if playback is not None else '?'}")
+        # Read from the PROBE rather than hardcoded, so this line cannot claim a
+        # capability the active backend does not have. Said out loud because it is
+        # a real gap in v4's Layer 5 voice expression, not a detail.
+        support = dict(getattr(primary, "prosody_support", {}))
         unmapped = list(getattr(primary, "unmapped_prosody", []))
-        if unmapped:
-            # Said out loud because it is a real gap in v4's Layer 5 voice
-            # expression, not a detail: two of the three locked PAD->prosody
-            # directions reach nothing with any available provider.
-            print(f"               prosody: only length_scale (Arousal) reaches "
-                  f"the voice; unmapped {unmapped}")
-        print("               format guard is OPEN (needs-ruling): a stage "
-              "direction or heading that")
-        print("               passes the Output Gate is spoken — the gate's four "
-              "checks are about content.")
+        if support:
+            reaches = [f for f, ok in support.items() if ok]
+            print(f"               prosody: {', '.join(reaches) or 'nothing'} "
+                  f"reaches the voice")
+            if unmapped:
+                print(f"               dormant but still computed: {unmapped} "
+                      f"— v4 Layer 5 keeps all three")
+        print("               format markers are STRIPPED for speech only "
+              "(ResLog 25): the text,")
+        print("               session buffer and graph keep them. Unmarked "
+              "plain-prose narration")
+        print("               is still spoken — no regex reaches it. Known gap.")
     warn_pad_restore_boundary(w)
     if w.visual is None:
         print("  visual       off. --visual (PyQt6 + libmpv) or --visual-headless.")
@@ -506,12 +512,14 @@ def report_startup(w: Wiring) -> None:
             print(f"               {w.visual_window.describe()}")
         print("               speaking signal comes from the audio port "
               "(AriaDaemon unmodified);")
-        print("               degradation is driven by LLMUnavailableError, NOT "
-              "by serving_from_local")
-        print("               — that readout says 'cloud is down' but returns "
-              "local.is_loaded, which")
-        print("               Track A made permanently True. See "
-              "adapters/visual_bridge.py.")
+        print("               degradation is driven by LLMUnavailableError — "
+              "'nothing could answer")
+        print("               this turn' — which holds under both a "
+              "cloud-primary and a local-primary")
+        print("               design. The routing readout is NOT wired: under "
+              "local-primary, 'no")
+        print("               cloud' is the resting state, not a face change. "
+              "See visual_bridge.py.")
     if w.created_primary_entity:
         print(f"  speaking to  {w.primary_entity_id}")
         print("               FIRST RUN — created and persisted. Every later run "
@@ -615,6 +623,14 @@ def report_state(w: Wiring) -> None:
     print(f"  ticks        soul={w.daemon.soul_tick_count} "
           f"dmn={w.daemon.dmn_tick_count}")
     print(f"  backends     {health}")
+    # WHERE THE LAST ANSWER CAME FROM. Replaces what used to be reported as
+    # "serving_from_local", which returned the local model's residency and
+    # therefore said "cloud is down" during entirely healthy operation. Reads
+    # `local_chosen` on an ordinary Track A turn, and distinguishes an
+    # unconfigured cloud tier (`no_cloud_adapter`, the intended state of a
+    # local-first bring-up) from one that actually fell over
+    # (`cloud_unhealthy_fallback`).
+    print(f"  last route   {w.llm.last_route}")
     print(f"  graph        {counts}")
     print(f"  embedding    {w.embedding.stats} dim={w.embedding.dimension}")
     print()
@@ -701,8 +717,8 @@ def run_repl(w: Wiring) -> int:
         except LLMUnavailableError as exc:
             print(f"\n  [no backend could answer this turn] {exc}\n")
             # Module 10's degradation trigger: withdrawn, not sleeping. This is
-            # the signal its docstring names alongside serving_from_local, and the
-            # one that still means something under Track A.
+            # the other signal its docstring names, and the one that means the
+            # same thing whether the cloud or the local voice is primary.
             report_turn_outcome(w, served=False)
             continue
         except LLMTransportError as exc:

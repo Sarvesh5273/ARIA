@@ -75,11 +75,15 @@ from adapters.audio_pcm import (
 )
 from adapters.audio_playback import CommandLinePlayback
 from adapters.audio_tts import (
+    PROSODY_DIRECTIONS,
     SAY_DEFAULT_WPM,
+    SAY_SAMPLE_RATE,
     SystemSayTTS,
     _has_format_markers,
     _speed_from,
     _wpm_from,
+    silence_for_empty_text,
+    strip_format_markers,
 )
 from adapters.audio_wake import HotkeyWakeWord
 
@@ -328,6 +332,76 @@ def test_two_of_v4s_three_prosody_dimensions_reach_nothing():
     ]
 
 
+def test_the_prosody_probe_reports_exactly_what_the_backend_can_express():
+    """The probe, and its agreement with the gap report.
+
+    Both are derived from ONE declaration, so this asserts they cannot disagree —
+    the failure mode being a backend that claims a control in one report and
+    disclaims it in the other, which would look like PAD reaching the voice.
+    """
+    backend = SystemSayTTS()
+
+    # Categorical: the control exists or it does not. No magnitudes here.
+    assert backend.prosody_support == {
+        "noise_scale": False,       # no timbre control in `say`
+        "length_scale": True,       # -r words-per-minute IS the same quantity
+        "pitch_shift": False,       # no pitch control in `say`
+    }
+    # The two reports are the same fact. Anything unsupported must be named as
+    # unmapped, and nothing else may be.
+    unsupported = {f for f, ok in backend.prosody_support.items() if not ok}
+    named = {entry.split(" ")[0] for entry in backend.unmapped_prosody}
+    assert named == unsupported
+    # All three of v4's directions are ACCOUNTED FOR, not just the working one.
+    assert set(backend.prosody_support) == set(PROSODY_DIRECTIONS)
+    assert len(PROSODY_DIRECTIONS) == 3
+
+
+def test_all_three_directions_stay_computed_even_though_two_are_dormant():
+    """"Do not delete directions 2 and 3." Pinned at the dataclass, which is where
+    a well-meaning cleanup would remove them — a provider limitation must not
+    become a spec change.
+    """
+    prosody = Prosody(noise_scale=0.9, length_scale=0.8, pitch_shift=-0.2)
+
+    # Present, distinct, and carrying real values — not zeroed placeholders.
+    assert prosody.noise_scale == 0.9
+    assert prosody.pitch_shift == -0.2
+    for field in PROSODY_DIRECTIONS:
+        assert hasattr(prosody, field), field
+
+    # Dormant means IGNORED, not absent. Asserted on the CONVERSIONS rather than
+    # on rendered audio: these are the only places a `say`/Kokoro/ElevenLabs
+    # backend consumes prosody, so invariance here is the whole claim — and it is
+    # hermetic, where comparing two `say` renderings is not (see the wobble
+    # measured in the stage-direction test).
+    dormant_moved = Prosody(noise_scale=0.1, length_scale=0.8, pitch_shift=0.9)
+    assert prosody.length_scale == dormant_moved.length_scale   # only this shared
+    assert _wpm_from(prosody, base_wpm=SAY_DEFAULT_WPM) == _wpm_from(
+        dormant_moved, base_wpm=SAY_DEFAULT_WPM
+    )
+    assert _speed_from(prosody) == _speed_from(dormant_moved)
+
+    # And the live direction is genuinely live, so the test above is not vacuous.
+    faster = Prosody(noise_scale=0.9, length_scale=0.5, pitch_shift=-0.2)
+    assert _speed_from(faster) != _speed_from(prosody)
+
+
+def test_a_backend_cannot_declare_a_direction_v4_does_not_have():
+    """A typo or an invented fourth axis is refused at construction.
+
+    Silently accepting `"pitch_shft"` would report support for `pitch_shift` — a
+    capability the voice does not have — which is the exact failure the probe
+    exists to prevent.
+    """
+    from adapters.audio_tts import _ProsodyRecorder
+
+    with pytest.raises(ValueError, match="not v4 Layer 5 prosody directions"):
+        _ProsodyRecorder(unmapped=["pitch_shft"])
+    with pytest.raises(ValueError, match="not v4 Layer 5 prosody directions"):
+        _ProsodyRecorder(unmapped=["emotion_scale"])
+
+
 # ===========================================================================
 # The format-guard row. Records, never strips.
 # ===========================================================================
@@ -406,31 +480,107 @@ def test_narration_with_no_marker_at_all_is_a_known_gap():
 
 
 @needs_say
-def test_a_stage_direction_is_recorded_and_still_spoken_verbatim():
-    """The tracker's needs-ruling row, made observable rather than resolved.
-    'Strip it in the adapter' was rejected: that is the transport judging content,
-    and Resolution Log item 15 puts verbatim passthrough here deliberately. So the
-    marker is RECORDED and the audio is still produced from the full text."""
+def test_a_stage_direction_is_recorded_and_no_longer_spoken():
+    """Resolution Log item 25 — the ruling, asserted as audio rather than prose.
+
+    This test previously pinned the OPPOSITE: that the direction was recorded and
+    still spoken, because "strip it in the adapter" had been rejected. Item 25
+    narrowed that rejection to the RESPONSE and permitted stripping the RENDERING,
+    so the assertion inverts with it.
+
+    Both halves matter. The audio must match the plain sentence, proving the
+    direction was not pronounced — and the flag must still be True, proving the
+    measurement surface item 22 was decided on survived the change.
+    """
     backend = SystemSayTTS()
+
+    # EXACT, and hermetic: what reaches the synthesiser is the sentence alone.
+    # Asserted on the text rather than the audio because this is the actual claim
+    # — the bytes are downstream evidence, and `say` is an external binary.
+    assert backend._for_speech(
+        "(Aria listens, her presence steady.) Just the words."
+    ) == "Just the words."
+    assert backend.last_text_had_format_markers is True   # evidence preserved
+    assert backend.last_text_was_only_format_markers is False
+
     plain = backend.synthesize("Just the words.", NEUTRAL)
     assert backend.last_text_had_format_markers is False
-
     staged = backend.synthesize(
         "(Aria listens, her presence steady.) Just the words.", NEUTRAL
     )
+    narration_only = backend.synthesize("Aria listens, her presence steady.", NEUTRAL)
+
+    # And the audio agrees. NOT compared for exact equality: `say` is not
+    # byte-deterministic — measured at 39,898 bytes on 53 of 60 identical
+    # invocations and 39,804 on the other 7, a 94-byte wobble in trailing
+    # silence. So the margin is derived from the thing being detected rather than
+    # picked: a tenth of the narration's own 90 KB is ~96x that wobble and ~10x
+    # smaller than the narration, which separates the two cases cleanly.
+    # This test previously asserted `len(staged) > len(plain)` — the defect.
+    assert abs(len(staged) - len(plain)) < len(narration_only) // 10
+
+
+@needs_say
+def test_a_reply_that_is_only_narration_becomes_silence_not_prose():
+    """The case the strip creates, which did not exist before it.
+
+    Nothing speakable is left, so this lands on the SAME empty-text floor as a
+    genuinely empty candidate — deliberately, because inventing a substitute
+    sentence would be putting words in her mouth (item 21's reasoning). The two
+    causes stay distinguishable: `empty_text_requests` does not move, and
+    `last_text_was_only_format_markers` is what says why.
+    """
+    backend = SystemSayTTS()
+    audio = backend.synthesize("[I lean forward, my gaze calm]", NEUTRAL)
+
     assert backend.last_text_had_format_markers is True
-    # Longer audio, because the stage direction was spoken too. That is the
-    # defect the ruling has to settle — this asserts it is still present.
-    assert len(staged) > len(plain)
+    assert backend.last_text_was_only_format_markers is True
+    assert backend.empty_text_requests == 0      # she DID say something
+    # A valid, zero-frame WAV: silence, not a fabricated line.
+    assert audio == silence_for_empty_text(SAY_SAMPLE_RATE)
 
 
-def test_no_adapter_exposes_a_strip_or_sanitize_helper():
-    """Asserted as an ABSENCE, because this is the kind of thing someone adds later
-    meaning well. The fix for the format defect does not live at this layer."""
-    import adapters.audio_tts as module
-    names = [n.lower() for n in dir(module)]
-    for forbidden in ("strip", "sanitize", "sanitise", "clean", "normalize"):
-        assert not any(forbidden in name for name in names), forbidden
+def test_the_strip_reaches_speech_only_and_leaves_prose_alone():
+    """The two boundaries that keep item 25 a rendering change, not an edit.
+
+    `strip_format_markers` is a pure function on a string — it holds no handle to
+    the response, the session buffer or the graph, so it CANNOT edit what she
+    said. And it reuses the detector's line-anchored pattern, so ordinary
+    mid-sentence parentheses survive: a strip broader than what item 22 measured
+    would make the 3/16 figure describe something that no longer exists.
+    """
+    from adapters.audio_tts import strip_format_markers
+
+    # Line-opening narration goes.
+    assert strip_format_markers(
+        "[I lean forward] I hear you."
+    ) == "I hear you."
+    assert strip_format_markers(
+        "(Aria listens.) I hear you."
+    ) == "I hear you."
+    # Mid-sentence parentheses are ORDINARY PROSE and stay.
+    kept = "It was (mostly) fine, honestly."
+    assert strip_format_markers(kept) == kept
+    # Bold markers are not speech anywhere; the words they wrapped remain.
+    assert strip_format_markers("That **matters** to me.") == "That matters to me."
+    # A reasoning trace is removed rather than pronounced.
+    assert "think" not in strip_format_markers("<think>hmm</think>I hear you.")
+
+
+def test_the_strip_does_not_reach_the_unmarked_narration_gap():
+    """Item 25 closes the MARKED case only, and says so.
+
+    Plain-prose narration carries no marker, so no regex reaches it and the thing
+    that would is content judgment. Pinned as a known gap so the ruling is not
+    later read as having closed more than it did.
+    """
+    from adapters.audio_tts import strip_format_markers
+
+    prose_narration = (
+        "I am sitting still. My attention is focused entirely on the words you "
+        "are saying."
+    )
+    assert strip_format_markers(prose_narration) == prose_narration
 
 
 # ===========================================================================

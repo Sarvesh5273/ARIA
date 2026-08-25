@@ -60,6 +60,12 @@ from daemon.llm_interface import (
     LocalModelTransport,
     LLMTransportError,
     LLMUnavailableError,
+    ROUTES,
+    ROUTE_NO_TURN_YET,
+    ROUTE_CLOUD_CHOSEN,
+    ROUTE_CLOUD_UNHEALTHY_FALLBACK,
+    ROUTE_LOCAL_CHOSEN,
+    ROUTE_NO_CLOUD_ADAPTER,
 )
 
 T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -247,10 +253,18 @@ def test_structural_no_graph_pad_state_constructor_params():
 
 def test_structural_instance_holds_only_transports():
     interface, cloud, local = make_interface()
-    # The only state it carries is the two injected transports — nothing else.
-    assert set(vars(interface)) == {"_cloud", "_local"}
+    # The two injected transports, plus ONE observation record. The guarantee this
+    # test defends is that no graph / PAD / state / needs / appraisal handle can
+    # be reached from here, so the exact attribute set is pinned: an unexpected
+    # name is the failure mode worth catching.
+    #
+    # `_last_route` is a RECORD of what happened, not a collaborator and not an
+    # input — nothing reads it to decide anything, and it holds a categorical
+    # string, never model output, prompt text or soul state.
+    assert set(vars(interface)) == {"_cloud", "_local", "_last_route"}
     assert interface._cloud is cloud
     assert interface._local is local
+    assert interface._last_route == ROUTE_NO_TURN_YET
 
 
 def test_structural_module_does_not_import_state_sources():
@@ -270,10 +284,12 @@ def test_structural_module_does_not_import_state_sources():
 
 
 def test_structural_interface_has_no_gate_or_scoring_surface():
-    # F-9b / Resolution Log item 15: no gate, no validation, no scoring lives
-    # here. The public surface is generate() + a read-only observability prop.
+    # F-9b / Requirement 5: no gate, no validation, no scoring lives here. The
+    # public surface is generate() + a read-only observability prop.
+    # (NOT "Resolution Log item 15" — that resolves gate OWNERSHIP and does not
+    # state the passthrough rule. See Resolution Log item 23.)
     public = {n for n in dir(LLMInterface) if not n.startswith("_")}
-    assert public == {"generate", "serving_from_local"}
+    assert public == {"generate", "last_route"}
     for banned in ("gate", "validate", "score", "check", "judge", "filter",
                    "moderate", "correct", "retry"):
         assert not any(banned in n.lower() for n in public), banned
@@ -452,7 +468,9 @@ def test_fallback_cloud_failure_loads_and_serves_gemma():
     assert out == "Gemma took over."       # served from the local model
     assert local.load_calls == 1           # loaded ON cloud failure (v4)
     assert local.is_loaded is True
-    assert interface.serving_from_local is True
+    # A REAL outage: the cloud slot is a configured adapter that failed, so this
+    # is degradation and says so.
+    assert interface.last_route == ROUTE_CLOUD_UNHEALTHY_FALLBACK
     assert len(cloud.received) == 1        # cloud was TRIED first
     assert len(local.received) == 1
 
@@ -464,7 +482,7 @@ def test_fallback_healthy_cloud_never_loads_gemma():
     assert out == "Cloud reply."
     assert local.load_calls == 0           # Gemma stays unloaded when cloud is up
     assert local.is_loaded is False
-    assert interface.serving_from_local is False
+    assert interface.last_route == ROUTE_CLOUD_CHOSEN
     assert local.received == []            # local never touched
 
 
@@ -484,7 +502,95 @@ def test_fallback_unloads_gemma_on_cloud_restore():
     assert out == "Cloud back."
     assert local.unload_calls == 1
     assert local.is_loaded is False
-    assert interface.serving_from_local is False
+    # The readout FOLLOWED the restore. This is the case the old
+    # `serving_from_local` also got right, because residency and routing still
+    # agreed on the internal path; Track A is where they came apart.
+    assert interface.last_route == ROUTE_CLOUD_CHOSEN
+
+
+def test_route_local_chosen_when_the_caller_supplies_the_local_transport():
+    """The ORDINARY production turn, and the case the readout had no word for.
+
+    Track A means `BackendRouter` picks the local voice for plain conversation and
+    hands it in, so the cloud is never attempted. That is not a fallback and not
+    an outage — nothing is wrong — but the old bool reported it identically to a
+    real outage, and `cloud_chosen` / `cloud_unhealthy_fallback` /
+    `no_cloud_adapter` alone cannot express it either.
+    """
+    interface, cloud, local = make_interface(
+        cloud=FakeCloudTransport(reply="cloud would have answered"),
+        local=FakeLocalTransport(reply="the local voice answered"))
+    out = interface.generate(a_five_field(), "hi", transport=local)
+
+    assert out == "the local voice answered"
+    assert interface.last_route == ROUTE_LOCAL_CHOSEN
+    assert cloud.received == []             # a healthy cloud was never asked
+    assert local.load_calls == 0            # path 1 touches no lifecycle
+
+
+def test_route_cloud_chosen_when_the_caller_supplies_a_non_local_transport():
+    """A caller-supplied transport that is not the local object is a cloud tier.
+
+    Covers BackendRouter's tier 2, which `LLMInterface` never receives in its
+    constructor and so cannot identify by name — only by not being the one local
+    object it owns.
+    """
+    interface, cloud, local = make_interface()
+    tier_2 = FakeCloudTransport(reply="the reasoning tier answered")
+    out = interface.generate(a_five_field(), "hi", transport=tier_2)
+
+    assert out == "the reasoning tier answered"
+    assert interface.last_route == ROUTE_CLOUD_CHOSEN
+    assert local.received == []
+
+
+def test_an_unconfigured_cloud_tier_is_not_reported_as_degradation():
+    """`no_cloud_adapter` OUTRANKS `cloud_unhealthy_fallback`, deliberately.
+
+    An unconfigured tier raises `LLMTransportError` exactly like a real outage, so
+    the exception alone cannot tell them apart. One is a local-first bring-up
+    working as intended; the other is degradation. Reporting the first as the
+    second is the same class of mistake as the readout this replaced.
+    """
+    class _Unconfigured(FakeCloudTransport):
+        is_configured = False               # the duck-typed marker
+
+    interface, cloud, local = make_interface(
+        cloud=_Unconfigured(fail=True),
+        local=FakeLocalTransport(reply="local served"))
+    out = interface.generate(a_five_field(), "hi")
+
+    assert out == "local served"            # the turn was answered
+    assert interface.last_route == ROUTE_NO_CLOUD_ADAPTER
+    # The underlying record still says what mechanically happened; the property
+    # is what applies the precedence, so no information is destroyed.
+    assert interface._last_route == ROUTE_CLOUD_UNHEALTHY_FALLBACK
+
+
+def test_every_route_value_is_in_the_declared_set():
+    """`ROUTES` is the whole vocabulary — no value may escape it."""
+    interface, cloud, local = make_interface()
+    assert interface.last_route in ROUTES
+    interface.generate(a_five_field(), "hi")
+    assert interface.last_route in ROUTES
+    assert len(ROUTES) == 5
+
+
+def test_the_unconfigured_adapter_declares_the_marker_the_interface_reads():
+    """The two halves of the duck-typed contract, pinned together.
+
+    `daemon/` must import nothing from `adapters/`, so this convention is the
+    seam. Asserting only one side would let them drift apart silently — and the
+    failure would be invisible, because `getattr(..., True)` defaults to
+    "configured" and the tier would quietly read as a real outage again.
+    """
+    from adapters.transport_unconfigured import UnconfiguredTransport
+    from daemon.llm_interface import CONFIGURED_MARKER
+
+    tier = UnconfiguredTransport(tier_name="tier_1 (groq)")
+    assert getattr(tier, CONFIGURED_MARKER) is False
+    # A real adapter says nothing, and the default must read as configured.
+    assert getattr(FakeCloudTransport(), CONFIGURED_MARKER, True) is True
 
 
 def test_fallback_stays_on_gemma_across_a_sustained_outage():
@@ -630,8 +736,9 @@ def test_integration_soul_filter_emergency_bypasses_gate_via_interface():
 
 def test_integration_fallback_full_respond_flow_through_gemma():
     # Cloud down: the ENTIRE SoulFilter.respond flow still completes, served by
-    # Gemma, and the Output Gate still runs on Gemma's candidate (gate lives in
-    # Soul Filter — Resolution Log item 15 — regardless of which backend spoke).
+    # the local voice, and the Output Gate still runs on its candidate (gate
+    # ownership lives in Soul Filter — Resolution Log item 15, cited correctly
+    # here for OWNERSHIP — regardless of which backend spoke).
     clean = "That's really hard. I'm here with you."
     filt, interface, cloud, local, pad, graph = make_soul_filter(
         cloud=FakeCloudTransport(fail=True),
@@ -642,7 +749,7 @@ def test_integration_fallback_full_respond_flow_through_gemma():
     assert resp.text == clean                  # Gemma's candidate
     assert resp.gate_results and resp.gate_results[0].passed  # gate DID run
     assert local.load_calls == 1 and local.is_loaded is True
-    assert interface.serving_from_local is True
+    assert interface.last_route == ROUTE_CLOUD_UNHEALTHY_FALLBACK
 
 
 def test_integration_gemma_gets_identical_prompt_to_cloud_in_respond():

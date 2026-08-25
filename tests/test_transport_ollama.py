@@ -370,20 +370,22 @@ def test_generate_rejects_a_response_with_no_text(monkeypatch):
 # ===========================================================================
 
 def test_the_default_is_the_model_v4_names():
-    """The measurement sent the default back to the spec.
+    """`SPEC_MODEL` cites the precedence chain; `DEFAULT_MODEL` is configuration.
 
-    `gemma4:12b-it-qat` was the default for part of 2026-08-22 and was reverted
-    the same day: 10-13x slower per turn, identical on every gate metric, and
-    worse on the register read. So `DEFAULT_MODEL` and `SPEC_MODEL` are the same
-    value today.
+    v4's RAM budget table names "Gemma 4 E2B QAT", so `SPEC_MODEL` is pinned to
+    that tag and must not drift — it is the citation, not a preference. Changing
+    it would make the constant assert something v4 does not say.
 
-    They stay TWO NAMES because `resolve_model`'s ladder is written in terms of
-    "the configured default" versus "what v4 names", and those are only
-    coincidentally equal. This test pins the coincidence so that if the default
-    ever moves again, rung 2 is still meaningful rather than dead code.
+    `DEFAULT_MODEL` moved to `qwen3.5:9b-mlx` by architect ruling (Resolution Log
+    item 24). The two are now DIFFERENT, which is the state `resolve_model`'s
+    ladder was written for: rung 2 ("fall back to what v4 names") does real work
+    instead of being unreachable. This test pins the DISTINCTION rather than the
+    old coincidence — the earlier version asserted equality, so it would have
+    failed on any default change even a spec-faithful one.
     """
     assert SPEC_MODEL == "gemma4:e2b-it-qat"
-    assert DEFAULT_MODEL == SPEC_MODEL
+    assert DEFAULT_MODEL == "qwen3.5:9b-mlx"
+    assert DEFAULT_MODEL != SPEC_MODEL
 
 
 def test_resolve_model_rung1_prefers_the_configured_default():
@@ -423,14 +425,36 @@ def test_resolve_model_rung4_refuses_to_guess_between_family_members():
     operator — and this model stays resident for the life of the process."""
     tag, note = resolve_model(["gemma4:e4b", "gemma4:26b"])
     assert tag is None
-    assert "several Gemma models" in note
+    assert "several sanctioned local-voice models" in note
 
 
-def test_resolve_model_never_falls_outside_the_gemma_family():
-    """Gemma is the local voice v4 names. "Whatever is installed" is not a model
-    choice, and Addendum §1 is explicit that the embedding model is Not Gemma —
-    the separation runs both ways."""
+def test_resolve_model_accepts_the_qwen_family_at_rung3():
+    """Item 24 admits Qwen 3.5 as a sanctioned family, not just one tag.
+
+    With neither the configured default nor v4's model installed, a lone
+    `qwen3.5` tag is a legitimate rung-3 substitution rather than a rung-4
+    refusal — which is what proves the prefix was added to the family set and not
+    merely assigned to DEFAULT_MODEL.
+    """
+    tag, note = resolve_model(["granite4:3b", "qwen3.5:9b"])
+    assert tag == "qwen3.5:9b"
+    assert "DIFFERENT variant" in note      # the substitution stays visible
+
+
+def test_resolve_model_never_falls_outside_a_sanctioned_family():
+    """"Whatever is installed" is not a model choice.
+
+    Two families are sanctioned — Gemma because v4's RAM budget table names it,
+    Qwen 3.5 because Resolution Log item 24 admits it. Anything else is a model
+    nobody chose, so the ladder returns None and says what to pull.
+
+    The previous version of this test also cited Addendum §1 ("the embedding
+    model is Not Gemma") as forbidding a non-Gemma VOICE. That inference does not
+    hold: §1 constrains the embedding seam, not this one. The rule rests on v4
+    naming the model, which is what SPEC_MODEL cites.
+    """
     tag, note = resolve_model(["granite4:3b", "all-minilm:latest", "llama3:8b"])
     assert tag is None
-    assert "no Gemma model installed" in note
+    assert "sanctioned local-voice family" in note
     assert SPEC_MODEL in note               # offers both routes out
+    assert DEFAULT_MODEL in note

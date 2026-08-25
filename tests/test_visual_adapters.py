@@ -12,12 +12,14 @@ WHAT IS LOAD-BEARING HERE
    leave her mouth frozen open for the rest of the session. The observed empty-text
    crash is exactly the shape that would have done it.
 
-3. `test_serving_from_local_is_not_used_as_the_degradation_trigger` — that readout
-   says "cloud is currently down" and returns `local.is_loaded`, which Track A made
-   permanently True. Wiring it would park her face in INWARD_WAITING forever. This
-   asserts the bridge does not, and the deeper question (v4's degradation state
-   assumes cloud-primary; the current design is local-primary) is flagged, not
-   resolved.
+3. `test_the_llm_routing_readout_is_not_used_as_the_degradation_trigger` — the
+   readout Module 10 names must not be wired. `serving_from_local` said "cloud is
+   currently down" while returning `local.is_loaded`, which Track A made
+   permanently True, so wiring it would park her face in INWARD_WAITING forever.
+   `last_route` replaced it and tells the truth, and the guard STAYS: under a
+   local-primary design "no cloud" is the resting state, so the deeper question
+   (v4's degradation state assumes cloud-primary) is flagged, not resolved. Both
+   names are asserted absent.
 
 PyQt6 and libmpv are absent in this environment, so `MpvVideoWindow` is exercised
 only for what does not need them: the loop catalogue, the key derivation, and the
@@ -401,17 +403,24 @@ def test_cloud_reporter_is_edge_triggered():
     assert reporter.transitions == [True, False]
 
 
-def test_serving_from_local_is_not_used_as_the_degradation_trigger():
-    """Module 10's docstring names `serving_from_local`, and it must NOT be wired.
+def test_the_llm_routing_readout_is_not_used_as_the_degradation_trigger():
+    """Module 10's docstring names the LLM Interface's readout, and it must NOT
+    be wired — even now that the readout tells the truth.
 
-    It returns `local.is_loaded`, and Track A made that permanently True —
-    `AriaDaemon.startup()` calls `ensure_local_loaded()` so Gemma is pinned resident
-    from boot and is the DEFAULT voice, not a fallback. So
-    `set_cloud_available(not serving_from_local)` would park her face in
-    INWARD_WAITING for the entire session.
+    The old `serving_from_local` was disqualified because it LIED: it returned
+    `local.is_loaded`, which Track A made permanently True, so
+    `set_cloud_available(not serving_from_local)` would have parked her face in
+    INWARD_WAITING for the entire session. `last_route` fixes the lie.
 
-    Asserted as an ABSENCE in the code, not just in prose, because this is exactly
-    the wiring a later reader would add on the strength of the docstring.
+    The wiring still does not follow, and that is the point of keeping this
+    guard. Under a local-primary design "no cloud" is the ordinary resting state
+    rather than degradation, so whether it should drive a withdrawn face AT ALL
+    is the question the tracker row still holds open. Until that is ruled on,
+    the trigger stays `LLMUnavailableError` — "nothing could answer this turn" —
+    which is well-defined under either design.
+
+    Both names are asserted absent: the new one so the open question is not
+    quietly closed by wiring it, and the old one so it cannot come back.
     """
     import ast
     import pathlib
@@ -421,13 +430,17 @@ def test_serving_from_local_is_not_used_as_the_degradation_trigger():
         node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
     }
     assert "serving_from_local" not in attributes
+    assert "last_route" not in attributes
 
 
-def test_the_stale_readout_still_behaves_as_described():
-    """Pins the FACT behind the flag, so the claim is checkable rather than
-    asserted: with the local transport loaded, `serving_from_local` is True — while
-    nothing is wrong at all."""
-    from daemon.llm_interface import LLMInterface
+def test_a_resident_local_model_no_longer_reads_as_cloud_failure():
+    """The regression pin for the row this fixed, stated as the fact it turns on.
+
+    A loaded local transport with nothing wrong anywhere used to make the readout
+    say "cloud is currently down". It no longer can, because residency is not
+    consulted: nothing has been served yet, so the honest answer is `no_turn_yet`.
+    """
+    from daemon.llm_interface import LLMInterface, ROUTE_NO_TURN_YET
 
     class _Loaded:
         is_loaded = True
@@ -442,7 +455,7 @@ def test_the_stale_readout_still_behaves_as_described():
             pass
 
     interface = LLMInterface(cloud_transport=_Loaded(), local_transport=_Loaded())
-    assert interface.serving_from_local is True
+    assert interface.last_route == ROUTE_NO_TURN_YET
 
 
 # ===========================================================================

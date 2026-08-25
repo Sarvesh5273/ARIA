@@ -532,9 +532,15 @@ REAL `PADEngine`; the REAL `AriaDaemon` for the end-to-end contract. Highlights:
 
 - **OQ-1 (build-time wiring):** the independent driver loop (repeated `refresh()`), top-of-tree.
 - **OQ-2 (signal wiring):** the Daemon defines no visual port; wiring `speak()`-boundary →
-  `set_speaking` and `serving_from_local` → `set_cloud_available` is top-of-tree. The contract
-  is EXPOSED here; the Daemon is NOT modified. A Daemon-side hook would be a flagged contract
-  change.
+  `set_speaking` and an LLM-availability signal → `set_cloud_available` is top-of-tree. The
+  contract is EXPOSED here; the Daemon is NOT modified. A Daemon-side hook would be a flagged
+  contract change. **Amended 2026-08-24 (ResLog 26):** the signal named here and elsewhere in
+  this spec was `serving_from_local`, which no longer exists — it reported the local model's
+  RESIDENCY, which Track A made permanently True. `adapters/visual_bridge.py` wires
+  `LLMUnavailableError` instead and asserts by AST that neither `serving_from_local` nor its
+  replacement `last_route` is read, because the deeper question is still open: under a
+  local-primary design "no cloud" is the resting state, so a truthful routing readout still
+  does not say whether she should LOOK withdrawn.
 - **OQ-3 (zone precedence / gate reading):** `TODO(F-10-zone-precedence)` — the precedence
   order among overlapping signatures and the descriptive-vs-gate reading of moderate values
   are documented presentation placeholders; only v4 "+"/"-" markers are predicates. Never a

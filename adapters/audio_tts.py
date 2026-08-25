@@ -63,31 +63,77 @@ That is a genuine gap in the OUTPUT chain, not in this adapter, and it needs a
 provider with pitch and timbre control (or a ruling that the directions may be
 approximated). Flagged under Rule 1, not resolved.
 
-TEXT IS PASSED VERBATIM — AND THIS IS THE FORMAT-GUARD ROW
-----------------------------------------------------------
-The tracker's open `needs-ruling` row says the Output Validation Gate has no
-FORMAT check, that Addendum §4 fixes it at four comparisons, and that this "stops
-being cosmetic" when TTS is wired. TTS is now wired. **These adapters still do not
-strip anything.**
+ALL THREE DIRECTIONS STAY COMPUTED, AND THE PROBE IS WHAT DECIDES WIRING
+------------------------------------------------------------------------
+`Prosody` carries all three fields on every turn regardless of what any backend
+can do with them (`daemon/audio_pipeline.py`). A direction a provider cannot
+express is DORMANT — computed, passed, ignored — never dropped from the dataclass.
+That distinction is the point: deleting `noise_scale` and `pitch_shift` because
+today's providers lack the knobs would make v4's Layer 5 unrecoverable without
+re-deriving it, and would turn a provider limitation into a spec change.
 
-So a stage direction, a markdown heading, a bulleted list, an emoji or a `<think>`
-block that reaches `speak()` WILL BE SPOKEN ALOUD. That is not an oversight and it
-must not be fixed here: "strip it in the adapter" was rejected on the grounds
-that it is the transport judging content, and F-9b / LLM Interface Req 5 put
-verbatim passthrough at this layer deliberately. (That rejection formerly cited
-"Resolution Log item 15", which resolves gate OWNERSHIP and does not state the
-passthrough rule — see Resolution Log item 23. The reasoning is unaffected.)
+`PROSODY_DIRECTIONS` is the full locked set, and each backend declares which of
+them it cannot express by FIELD NAME. From that one declaration the base class
+derives both `prosody_support` (the probe: field -> bool) and `unmapped_prosody`
+(the same fact for humans), so the capability report and the gap report cannot
+drift apart. Categorical, because a control exists or it does not — there is no
+fraction of a pitch control, so no number belongs here.
 
-MEASURED, so this is not hypothetical: adversarial bait against the real model
-produced a stage direction on 8/16 turns with the original Field 1 wording, and
-3/16 after Field 1 was sharpened to name the bracket syntax (Resolution Log item
-22). The residual is an OPEN question with a recommended option, not a solved
-problem.
+Wiring follows the probe rather than a hardcoded assumption: a backend reporting
+`prosody_support["pitch_shift"] is True` is one whose `synthesize` consumes it.
+Today all three backends report support for `length_scale` only, so
+`_speed_from` / `_wpm_from` are the only conversions that exist. When a provider
+with real pitch or timbre control arrives, it declares fewer unmapped fields and
+the probe reports the difference — the dormant values are already there to use.
 
-What these adapters DO is make the situation observable instead of theoretical:
-`last_text_had_format_markers` records that a marker was present. A flag is not a
-guard — it decides nothing and changes nothing about what is spoken. It exists so
-the ruling can be made on evidence.
+FORMAT MARKERS ARE STRIPPED — ON THE AUDIO PATH ONLY (Resolution Log item 25)
+-----------------------------------------------------------------------------
+The Output Validation Gate has no FORMAT check: Addendum §4 fixes it at four
+comparisons and all four are about content, so nothing upstream stops a stage
+direction reaching a speaker. Measured, so this is not hypothetical — adversarial
+bait against the real model produced one on 8/16 turns with the original Field 1
+wording and 3/16 after Field 1 was sharpened to name the bracket syntax
+(Resolution Log item 22). Prompt mitigation cuts it by two thirds and does not
+close it.
+
+**Architect ruling (item 25): strip markers where the text becomes SPEECH, and
+nowhere else.** `_ProsodyRecorder._for_speech` removes what `_FORMAT_MARKER_RE`
+matches — round and square bracket narration, `*action*` lines, headings, bullets,
+numbered lists, `<think>` blocks, bold emphasis — immediately before synthesis.
+Every other consumer keeps the text byte-for-byte: the printed transcript, the
+session buffer, the graph, the Visual Layer.
+
+WHY THIS IS NOT THE "STRIP IT IN THE ADAPTER" OPTION THAT WAS REJECTED. That
+option would have edited her RESPONSE — the artefact the rest of the system treats
+as what she said. This edits a RENDERING of it. "[I lean forward]" is not
+pronounceable; a speech synthesiser is a device for pronouncing words, and
+deciding that bracket syntax is not words is the same class of judgment as
+choosing a sample rate. The response is unchanged, so nothing downstream of the
+gate disagrees about what she said, and F-9b / LLM Interface Req 5 keeps verbatim
+passthrough at the TRANSPORT layer, which is a different seam and is untouched.
+(That rejection formerly cited "Resolution Log item 15", which resolves gate
+OWNERSHIP and does not state the passthrough rule — see item 23.)
+
+TWO THINGS THIS DOES NOT FIX, both measured and both recorded rather than papered
+over:
+
+  1. **Unmarked narration still gets through.** "I am sitting still. My attention
+     is focused entirely on the words you are saying." is a stage direction in
+     plain prose. No regex reaches it, and the thing that would is content
+     judgment. The 3/16 figure counts MARKED narration only.
+  2. **The defect still compounds.** Item 22 measured 4/8 becoming 8/8 as her own
+     bracketed replies re-entered as session context and she imitated herself.
+     The session buffer holds the unstripped text BY DESIGN — it is a faithful
+     record of what was said — so stripping at the speaker does not interrupt
+     that loop. It stops her being HEARD narrating; it does not stop her learning
+     to narrate.
+
+`last_text_had_format_markers` still records what was present in the ORIGINAL
+text, before the strip. That ordering is deliberate: the flag is the measurement
+surface item 22 was decided on, and reading it after the strip would make it
+permanently False and quietly destroy the evidence that the ruling rests on.
+`last_text_was_only_format_markers` is new and covers the case where a reply was
+narration and nothing else, which now renders as silence rather than as prose.
 """
 
 from __future__ import annotations
@@ -100,7 +146,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from daemon.audio_pipeline import Prosody, TTSUnavailable
 
@@ -192,8 +238,53 @@ _FORMAT_MARKER_RE = re.compile(
 )
 
 
+# ===========================================================================
+# v4 Layer 5's three locked directions, and the capability probe over them.
+# ===========================================================================
+#: `Prosody` field -> the PAD axis it reads. This is the WHOLE set: v4 Layer 5
+#: locks exactly three directions, and none may be dropped because a provider
+#: cannot express it. All three are computed on every turn by the Audio Pipeline
+#: whether or not anything downstream consumes them (`daemon/audio_pipeline.py`
+#: `Prosody`); a backend that cannot express one leaves it DORMANT, not deleted.
+PROSODY_DIRECTIONS: Dict[str, str] = {
+    "noise_scale": "Pleasure",      # warmth / resonance
+    "length_scale": "Arousal",      # speed, INVERSE
+    "pitch_shift": "Dominance",     # lower, more grounded
+}
+
+
 def _has_format_markers(text: str) -> bool:
     return bool(_FORMAT_MARKER_RE.search(text or ""))
+
+
+def strip_format_markers(text: str) -> str:
+    """Remove what `_FORMAT_MARKER_RE` matches, for SPEECH ONLY.
+
+    Deliberately the SAME pattern as the detector rather than a second, broader
+    one. Item 22's measurements are expressed in terms of that pattern, so a strip
+    that removed more than it reports would make the 3/16 figure describe
+    something that no longer exists — and a mismatch between what is counted and
+    what is acted on is how the original 0/16 near-miss happened.
+
+    Consequences of reusing it, both intended:
+
+      * The narration alternatives are LINE-ANCHORED (`^\\s*\\(...\\)`), so a
+        mid-sentence parenthetical in ordinary prose — "it was (mostly) fine" — is
+        left alone. Only narration occupying the start of a line goes, which is
+        the form every measured failure took.
+      * `**` is unanchored, because bold markers are not speech anywhere they
+        appear. They are removed in place, leaving the emphasised words.
+
+    Whitespace is then collapsed so removing a leading direction does not leave
+    the sentence starting with a blank line or a stray gap.
+    """
+    if not text:
+        return ""
+    stripped = _FORMAT_MARKER_RE.sub("", text)
+    # Collapse the holes the removal left: blank runs between lines, and leading
+    # or trailing space on each surviving line.
+    lines = [ln.strip() for ln in stripped.splitlines()]
+    return "\n".join(ln for ln in lines if ln).strip()
 
 
 class _ProsodyRecorder:
@@ -204,24 +295,74 @@ class _ProsodyRecorder:
     rather than three.
     """
 
-    def __init__(self, unmapped: List[str]) -> None:
-        #: v4 Layer 5 dimensions this provider has no control for. See the module
-        #: docstring: mapping them onto unrelated knobs was rejected.
-        self.unmapped_prosody: List[str] = list(unmapped)
-        #: Whether the LAST text handed over carried a format marker. Records;
-        #: does not act. The format guard is a needs-ruling row, not this layer's.
+    def __init__(self, unmapped: Sequence[str]) -> None:
+        # `unmapped` names `Prosody` FIELDS. An unknown name is a programming
+        # error and is refused loudly rather than silently creating a fourth
+        # direction v4 does not have, or silently claiming support for a
+        # misspelled one — which would read as a capability the voice lacks.
+        unknown = [f for f in unmapped if f not in PROSODY_DIRECTIONS]
+        if unknown:
+            raise ValueError(
+                f"not v4 Layer 5 prosody directions: {unknown}. "
+                f"Expected any of {sorted(PROSODY_DIRECTIONS)}."
+            )
+        #: THE PROBE. Which of v4's three directions this provider can actually
+        #: express — categorical, because a control either exists or it does not
+        #: (there is no "60% of a pitch control", so no number belongs here).
+        #: Derived from `unmapped` rather than declared separately, so the probe
+        #: and the gap report cannot disagree.
+        self.prosody_support: Dict[str, bool] = {
+            field: field not in unmapped for field in PROSODY_DIRECTIONS
+        }
+        #: v4 Layer 5 dimensions this provider has no control for, rendered for
+        #: humans. GENERATED from the same source as `prosody_support`. See the
+        #: module docstring: mapping them onto unrelated knobs was rejected.
+        self.unmapped_prosody: List[str] = [
+            f"{field} ({PROSODY_DIRECTIONS[field]})" for field in unmapped
+        ]
+        #: Whether the LAST text handed over carried a format marker, measured on
+        #: the ORIGINAL text before the strip. This is the surface item 22's
+        #: measurements were taken on, so it must keep reporting what the model
+        #: produced — reading it after the strip would pin it False forever and
+        #: destroy the evidence the ruling rests on.
         self.last_text_had_format_markers = False
+        #: The last text was narration and NOTHING else, so speech is silence.
+        #: Separated from `empty_text_requests` because the causes differ: one is
+        #: "she said nothing", the other is "she said only things that are not
+        #: speakable". Both render as silence, and conflating them would hide a
+        #: model producing pure stage direction behind a counter that reads as an
+        #: upstream empty-candidate bug (item 21's territory, a different defect).
+        self.last_text_was_only_format_markers = False
         self.syntheses = 0
         #: How many times `synthesize` was asked to render NOTHING. See
         #: `silence_for_empty_text` — this counter is the visibility that stops the
         #: no-content turn from being swallowed.
         self.empty_text_requests = 0
 
-    def _note(self, text: str) -> None:
-        self.last_text_had_format_markers = _has_format_markers(text)
+    def _for_speech(self, text: str) -> str:
+        """Record what arrived, then return what should be SPOKEN (item 25).
+
+        Every backend calls this instead of `_note` and synthesises the RESULT.
+        One call site per backend, so a new backend cannot accidentally get the
+        recording without the strip or the strip without the recording.
+
+        Order matters: the flags describe the ORIGINAL text (see the attribute
+        comments), and only the return value is stripped. The caller's own
+        empty-text guard then catches a reply that was pure narration, which is
+        why that case needs no separate branch here.
+        """
+        original = text or ""
+        self.last_text_had_format_markers = _has_format_markers(original)
         self.syntheses += 1
-        if not (text or "").strip():
+        if not original.strip():
             self.empty_text_requests += 1
+            self.last_text_was_only_format_markers = False
+            return original
+
+        spoken = strip_format_markers(original)
+        # Non-empty in, nothing left to say: the whole reply was narration.
+        self.last_text_was_only_format_markers = not spoken
+        return spoken
 
 
 def silence_for_empty_text(sample_rate: int) -> bytes:
@@ -273,7 +414,7 @@ class ElevenLabsTTS(_ProsodyRecorder):
     ) -> None:
         # Pleasure and Dominance have no counterpart in this API. Recorded, not
         # approximated onto `stability` / `style`, which control other things.
-        super().__init__(unmapped=["noise_scale (Pleasure)", "pitch_shift (Dominance)"])
+        super().__init__(unmapped=["noise_scale", "pitch_shift"])
         if not api_key or not voice_id:
             raise AudioBackendUnavailable(
                 "cloud TTS needs both an API key and a voice id; no voice is "
@@ -300,14 +441,16 @@ class ElevenLabsTTS(_ProsodyRecorder):
         and a technical failure here carries no information content and is never
         appraised (Addendum §5 logic).
         """
-        self._note(text)
+        text = self._for_speech(text)
         if not text.strip():
             # No request is made. Spending a paid API call to render nothing would
             # be worse than pointless, and the reasoning is the same as for the
-            # local renderers — see `silence_for_empty_text`.
+            # local renderers — see `silence_for_empty_text`. Reached either
+            # because she said nothing, or because the reply was only narration
+            # (item 25) — `last_text_was_only_format_markers` tells them apart.
             return silence_for_empty_text(ELEVENLABS_PCM_RATE)
         payload: Dict[str, object] = {
-            "text": text,                      # VERBATIM. See module docstring.
+            "text": text,                      # SPEAKABLE. See module docstring.
             "voice_settings": {"speed": _speed_from(prosody)},
         }
         if self._model_id:
@@ -376,7 +519,7 @@ class KokoroTTS(_ProsodyRecorder):
         lang_code: str = "a",
         sample_rate: int = 24_000,
     ) -> None:
-        super().__init__(unmapped=["noise_scale (Pleasure)", "pitch_shift (Dominance)"])
+        super().__init__(unmapped=["noise_scale", "pitch_shift"])
         provider = require_module(
             _KOKORO, purpose="local TTS", install=_KOKORO_INSTALL
         )
@@ -391,7 +534,7 @@ class KokoroTTS(_ProsodyRecorder):
         self._lock = threading.Lock()
 
     def synthesize(self, text: str, prosody: Prosody) -> bytes:
-        self._note(text)
+        text = self._for_speech(text)
         if not text.strip():
             return silence_for_empty_text(self._sample_rate)
         with self._lock:
@@ -425,7 +568,7 @@ class SystemSayTTS(_ProsodyRecorder):
         binary: str = _SAY,
         timeout: float = 60.0,
     ) -> None:
-        super().__init__(unmapped=["noise_scale (Pleasure)", "pitch_shift (Dominance)"])
+        super().__init__(unmapped=["noise_scale", "pitch_shift"])
         self._binary = require_binary(
             binary, purpose="system TTS", install=_SAY_INSTALL
         )
@@ -441,7 +584,7 @@ class SystemSayTTS(_ProsodyRecorder):
         documented default, not a chosen value, which is what keeps this a unit
         conversion rather than an invented magnitude.
         """
-        self._note(text)
+        text = self._for_speech(text)
         if not text.strip():
             return silence_for_empty_text(SAY_SAMPLE_RATE)
         rate = _wpm_from(prosody, base_wpm=self._base_wpm)

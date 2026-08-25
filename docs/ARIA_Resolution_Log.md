@@ -420,8 +420,16 @@ ROUND brackets. Printing the replies showed square-bracket narration in half
 of them. "Prompt-level mitigation is sufficient" was one step from entering
 this Log as a measured finding on the strength of a detector bug.
 
-**STILL OPEN — the residual 3/16 needs a ruling, and it is NOT taken here.**
-Options, with the reasoning that survives measurement:
+**RULED ON 2026-08-24 — see item 25.** The ruling took a narrowed form of the
+third option below: strip markers where text becomes SPEECH, leaving the response
+itself untouched. It closes the MARKED fraction only; findings 1 and 3 above
+(unmarked prose narration, and the compounding through the session buffer) are
+explicitly not closed by it, and the recommended moral-schema option remains
+available and un-foreclosed. The options below are kept as the reasoning item 25
+was decided against, not as live choices.
+
+The residual 3/16 needed a ruling and it was not taken here. Options, with the
+reasoning that survives measurement:
 
 - **A fifth gate check.** Rejected on two independent grounds: Addendum §4
   fixes the comparison set at four, and a format defect is not a comparison
@@ -495,6 +503,207 @@ not exist. The affected citations now point at F-9b / Req 5.
 Reading the source rather than the citation is what surfaced this, while
 deriving items 21 and 22. It is a reminder that a citation repeated across
 three documents is not evidence that anyone checked it.
+
+---
+
+## 24. The local voice is `qwen3.5:9b-mlx`; `SPEC_MODEL` still cites v4
+
+*(2026-08-24)* — architect ruling.
+
+**`DEFAULT_MODEL` = `qwen3.5:9b-mlx`. `SPEC_MODEL` = `gemma4:e2b-it-qat`,
+unchanged.** The two constants now hold different values for the first time.
+
+Rationale, as given: native vision, tool support, a 256K context window, and
+~13–14 tok/s sustained on the target Mac.
+
+**What was verified here, and what was not** — recorded separately because the
+log is the top of the precedence chain and the distinction matters later:
+
+| Claim | Status |
+|---|---|
+| Installed on the target machine, 8.9 GB | VERIFIED (`ollama list`) |
+| 256K context | VERIFIED — `ollama show` reports 262144 |
+| Native vision | VERIFIED — reports `vision` capability |
+| Tool support | VERIFIED — reports `tools` capability |
+| ~13–14 tok/s sustained | **ARCHITECT-SUPPLIED, not reproduced in-project.** No harness run is recorded against this tag. `tools/compare_local_models.py qwen3.5:9b-mlx gemma4:e2b-it-qat` would produce the same table item 22's predecessors were decided on |
+
+**Why `SPEC_MODEL` did not move.** v4's RAM budget table names "Gemma 4 E2B QAT",
+and `SPEC_MODEL` is the citation of that fact, not a preference. Pointing it at a
+model v4 never mentions would make the constant assert something the precedence
+chain does not say. `DEFAULT_MODEL` is configuration and is the architect's to
+set; the citation is not. This is also what makes `resolve_model()`'s rung 2 —
+"fall back to what v4 names" — do real work for the first time instead of being
+unreachable while the two values coincided.
+
+`_LOCAL_VOICE_FAMILY_PREFIXES` gains `qwen3.5`, so the sanctioned set is now two
+families rather than one. The ladder still refuses to reach outside it: "whatever
+is installed" is not a model choice, and with six Gemma tags plus two Qwen tags on
+the dev machine, guessing would pick a memory footprint on the operator's behalf.
+
+**A supporting claim that does NOT hold, corrected here.** Several places —
+`transport_ollama`'s module docstring and a test docstring among them — argued
+that Addendum §1 forbids a non-Gemma local voice, citing its "Not Gemma" line.
+§1 says the EMBEDDING model is not Gemma. That is a different seam and places no
+constraint on the voice. The rule rested on v4 naming the model all along, which
+is why `SPEC_MODEL` is the thing that had to be protected.
+
+**Two risks this carries, neither of them closed by the switch.** Both are
+consequences of the tag, not objections to the ruling:
+
+1. **`qwen3.5:9b-mlx` reports a `thinking` capability.** Item 22's measurement
+   found that neither Gemma emitted reasoning traces, and warned that a model
+   which did would have them SPOKEN — the transport passes output verbatim
+   (F-9b / Req 5) and the Output Gate's four checks are about content. Item 25
+   now strips `<think>` blocks on the audio path, which covers the tagged form.
+   An untagged reasoning preamble in plain prose is not covered.
+2. **A capability regression.** `gemma4:e2b-it-qat` reports `vision` AND `audio`;
+   `qwen3.5:9b-mlx` reports `vision` but not `audio`. Nothing uses model-native
+   audio today — STT and TTS are separate adapters — so this costs nothing now
+   and is recorded because it closes a door quietly.
+
+**Superseded:** the 2026-08-22 finding that "the measurement sent the default back
+to the spec" is no longer the current state. It is not withdrawn — the reasoning
+that rejected `gemma4:12b-it-qat` (10–13× slower, tripping a conversational
+ceiling, and a WORSE register read on the flattery-bait turn) stands as measured,
+and applies to that tag. This is a different tag on a different runtime.
+
+---
+
+## 25. Stage directions — stripped where text becomes SPEECH, and nowhere else
+
+*(2026-08-24)* — architect ruling. **Resolves the question item 22 left open.**
+
+Item 22 measured prompt mitigation at 8/16 → 3/16 and closed the "accept
+mitigation as sufficient" option on evidence, leaving four options and taking
+none. **The ruling takes a narrowed form of the third: strip format markers at
+the TTS boundary. The response itself is never edited.**
+
+What is stripped, immediately before synthesis, by
+`adapters/audio_tts.strip_format_markers`: round- and square-bracket narration
+opening a line, `*action*` lines, markdown headings, bullets, numbered lists,
+`<think>` blocks, and bold emphasis markers. What keeps the text byte-for-byte:
+the printed transcript, the session buffer, the graph, and the Visual Layer.
+
+**Why this is not the "strip it in the adapter" option that was rejected.** That
+option would have edited her RESPONSE — the artefact every other consumer treats
+as what she said. This edits a RENDERING of it. "[I lean forward]" is not
+pronounceable, a speech synthesiser is a device for pronouncing words, and ruling
+that bracket syntax is not words is the same class of decision as choosing a
+sample rate. Because the response is unchanged, nothing downstream of the gate
+disagrees about what she said, and verbatim passthrough at the TRANSPORT layer
+(F-9b / Req 5) is a different seam and is untouched. Addendum §4's four
+comparisons are also untouched: no fifth check exists, and this is not a check.
+
+**Two things this does NOT fix**, both measured, both recorded rather than
+absorbed:
+
+1. **Unmarked narration still reaches the speaker.** "I am sitting still. My
+   attention is focused entirely on the words you are saying." carries no marker.
+   No regex reaches it and the thing that would is content judgment. Item 22's
+   3/16 counts MARKED narration only, so this ruling closes that fraction and
+   not the defect entire.
+2. **The compounding loop is untouched.** Item 22 measured 4/8 becoming 8/8 as her
+   own bracketed replies re-entered as session context and she imitated herself.
+   The session buffer holds the UNSTRIPPED text by design — it is a faithful
+   record of what was said — so this stops her being HEARD narrating without
+   stopping her learning to narrate. If the marked rate rises over a long session,
+   this is why.
+
+**Not taken, and still available:** extending the moral schema's anti-pattern list,
+which item 22 recommended. That remains the only option addressing the defect as a
+truthfulness problem rather than a rendering one, and it is the only one that would
+reach unmarked narration. This ruling does not foreclose it.
+
+**A consequence worth naming.** A reply that is narration and NOTHING else now
+renders as silence, landing on item 21's existing minimum-safe floor rather than
+inventing a substitute sentence. `last_text_was_only_format_markers` distinguishes
+it from a genuinely empty candidate, because the causes differ and conflating them
+would hide a model producing pure stage direction behind a counter that reads as
+an upstream bug. `last_text_had_format_markers` continues to record what the model
+PRODUCED, before the strip — that flag is the surface item 22 was decided on, and
+reading it afterwards would pin it False and destroy the evidence.
+
+---
+
+## 26. `serving_from_local` is replaced by a routing readout
+
+*(2026-08-24)* — architect ruling. Narrows a `needs-ruling` tracker row; does not
+close it.
+
+`LLMInterface.serving_from_local` returned `self._local.is_loaded` under a
+docstring reading "cloud is currently down". Those were the same fact under v4's
+Brain Structure, where the local model loads on cloud failure and unloads on
+restore. Track A inverted it — the local voice is pinned resident from startup and
+is the DEFAULT — so the property read True during entirely healthy operation while
+Module 10 names it as the degradation trigger.
+
+**Replaced by `LLMInterface.last_route`**, a categorical record of where the last
+candidate actually came from. Categorical because the routing either went one way
+or another; there is no "how local" a turn was, so the percentage test says
+category. Five values: `no_turn_yet`, `cloud_chosen`, `cloud_unhealthy_fallback`,
+`local_chosen`, `no_cloud_adapter`.
+
+**The architect specified three; two were added, and the reasons are recorded
+because adding to a ruling needs justifying:**
+
+* `local_chosen` — the ORDINARY Track A turn, where the router picks the local
+  voice for plain conversation and the cloud is never attempted. Under a
+  local-primary design this is the common case, and the three specified values
+  cannot express it: `cloud_chosen` is false, `cloud_unhealthy_fallback` is false
+  because nothing failed, and `no_cloud_adapter` may be false because the cloud
+  may be perfectly healthy and simply not chosen. Leaving it out would reproduce
+  the defect being fixed — a readout with no word for the normal state.
+* `no_turn_yet` — before the first turn there is no routing decision, and any
+  other value would be a claim about something that has not happened.
+
+**The substantive fix is a precedence rule, not the renaming.** An unconfigured
+cloud tier raises `LLMTransportError` exactly as a real outage does, so the
+exception alone cannot distinguish them. `no_cloud_adapter` therefore OUTRANKS
+`cloud_unhealthy_fallback`: a local-first bring-up with no cloud credentials is
+the intended state, not degradation. The seam is a duck-typed `is_configured`
+marker read with `getattr(..., True)`, so `daemon/` still imports nothing from
+`adapters/` and a real adapter never has to declare it.
+
+**Still open, and deliberately so:** whether "cloud unavailable" should drive a
+degradation face AT ALL. v4's degradation state assumes cloud-primary; the current
+design is local-primary, under which `no_cloud_adapter` is her normal Tuesday. A
+truthful readout does not answer that, so `adapters/visual_bridge.py` keeps
+`LLMUnavailableError` as the trigger and asserts by AST that neither the old name
+nor the new one is read.
+
+---
+
+## 27. Prosody — all three of v4's directions stay, and a probe decides wiring
+
+*(2026-08-24)* — architect ruling. Narrows a `needs-ruling` tracker row.
+
+v4 Layer 5 locks three directions: Pleasure→`noise_scale`, Arousal→`length_scale`
+(inverse), Dominance→`pitch_shift`. Only `length_scale` has a counterpart in any
+available provider — ElevenLabs, Kokoro and `say` all expose a speed control,
+which is the same physical quantity, so mapping it is a unit conversion.
+
+**Ruling: all three remain computed. A direction no provider can express is
+DORMANT, never deleted.** Deleting `noise_scale` and `pitch_shift` because
+today's backends lack the knobs would turn a provider limitation into a spec
+change and make Layer 5 unrecoverable without re-deriving it.
+
+**A capability PROBE decides wiring.** `PROSODY_DIRECTIONS` holds the locked set;
+each backend declares which fields it cannot express, and `prosody_support`
+(field → bool) plus `unmapped_prosody` (the same fact for humans) are both derived
+from that ONE declaration, so a backend cannot claim a control in one report and
+disclaim it in the other. An unrecognised field name is refused at construction:
+accepting `"pitch_shft"` would silently report support for `pitch_shift`, which is
+the exact failure the probe exists to prevent. Categorical throughout — a control
+exists or it does not, so no magnitude belongs here.
+
+Today all three backends support `length_scale` only, so nothing new was wired;
+`main.py` now reads the probe instead of hard-coding that fact. **Unchanged and
+still rejected:** mapping Pleasure or Dominance onto adjacent knobs such as
+ElevenLabs `stability` or `style`. Those control something else, and the mapping
+would make PAD appear to reach the voice while doing something unrelated to what
+v4 specifies — an invented coefficient with a feeling attached, which the
+protected chain forbids. Closing the row still needs a provider with real pitch
+and timbre control, or a ruling that the directions may be approximated.
 
 ---
 

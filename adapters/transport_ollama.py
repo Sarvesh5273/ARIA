@@ -45,11 +45,15 @@ Ollama: pin it indefinitely. `unload()` sends `keep_alive=0`, which evicts
 immediately — it exists because the Protocol requires it, not because this
 adapter ever calls it.
 
-MODEL NAME — MEASURED, AND IT LANDED BACK ON THE SPEC
------------------------------------------------------
+MODEL NAME — TWO CONSTANTS THAT NO LONGER AGREE, DELIBERATELY
+--------------------------------------------------------------
 v4 names "Gemma 4 E2B QAT (~2.62 GB)" in its RAM budget table. The Ollama tag
-for exactly that model is `gemma4:e2b-it-qat` (4.3 GB), and it is both
-`SPEC_MODEL` and `DEFAULT_MODEL`.
+for exactly that model is `gemma4:e2b-it-qat` (4.3 GB), and it remains
+`SPEC_MODEL` — the citation of what the precedence chain says.
+
+`DEFAULT_MODEL` is `qwen3.5:9b-mlx` by architect ruling (Resolution Log item 24).
+The two constants now hold DIFFERENT values for the first time, which is the
+state `resolve_model()`'s ladder was written for.
 
 It briefly was not. `gemma4:12b-it-qat` (7.2 GB) was made the default on
 2026-08-22 and reverted the same day on measurement. Recorded here rather than
@@ -80,13 +84,21 @@ reconstruct it:
 Numbers and the register comparison are in `PROJECT_STATUS.md` under "Local model
 latency and register measurements".
 
-`DEFAULT_MODEL` and `SPEC_MODEL` stay as two names for one value, because
 `resolve_model()`'s ladder is written in terms of "the configured default" versus
-"what v4 names" and those are only coincidentally equal today. It walks that
-ladder and RETURNS a note rather than printing, so the caller decides how loud to
-be. It never picks a non-Gemma model: Addendum §1 is explicit that the embedding
-model is "Not Gemma", and the reverse holds too — the local voice is Gemma, not
-whatever happens to be installed.
+"what v4 names". Those were coincidentally equal until item 24 and are now
+genuinely different, so rung 2 — fall back to v4's own model — does real work
+instead of being unreachable. The ladder RETURNS a note rather than printing, so
+the caller decides how loud to be.
+
+It still never picks an arbitrary installed model. `_LOCAL_VOICE_FAMILY_PREFIXES`
+is the SANCTIONED set, and it now holds two families rather than one: Gemma
+because v4 names it, and Qwen 3.5 because item 24 admits it. Anything outside
+that set is a model choice nobody made, and the ladder returns `None` rather
+than guessing. Note that v4's own basis for "the local voice is Gemma" is its RAM
+budget table naming the model, which `SPEC_MODEL` still cites; the frequently
+repeated supporting claim that Addendum §1 forbids a non-Gemma voice does NOT
+hold — §1 says the EMBEDDING model is "Not Gemma", which is a different seam and
+does not constrain this one.
 
 TIMEOUT: `DEFAULT_TIMEOUT_SECONDS = 120` is a deliberate CONVERSATIONAL ceiling,
 not an arbitrary number. 12b tripped it, and that was the timeout working. Use
@@ -108,20 +120,22 @@ DEFAULT_HOST = "http://localhost:11434"
 #: The model v4's RAM budget table names: "Gemma 4 E2B QAT".
 SPEC_MODEL = "gemma4:e2b-it-qat"      # 4.3 GB, 128K context
 
-#: The default, and as of 2026-08-22 the SAME model — the measurement sent this
-#: back to the spec. Kept as a separate name because `resolve_model`'s ladder is
-#: written in terms of "the configured default" vs "what v4 names", and those are
-#: only coincidentally equal. Collapsing them would erase the distinction the
-#: fallback logic depends on.
-DEFAULT_MODEL = SPEC_MODEL
+#: The configured default local voice — architect ruling, Resolution Log item 24.
+#: DIFFERENT from `SPEC_MODEL`, which keeps citing what v4 names. Verified on the
+#: target machine: 8.9 GB, 262144-token context, and it reports `vision`, `tools`
+#: and `thinking` capabilities.
+DEFAULT_MODEL = "qwen3.5:9b-mlx"      # 8.9 GB, 256K context
 
 DEFAULT_TIMEOUT_SECONDS = 120.0       # TODO(build-time): generation timeout
 KEEP_RESIDENT = -1                    # Ollama: pin indefinitely
 EVICT_NOW = 0                         # Ollama: unload immediately
 
-#: Model families acceptable as the local voice. v4 names Gemma; a substitution
-#: outside the family would be a different decision, not a tag difference.
-_LOCAL_VOICE_FAMILY_PREFIXES = ("gemma4", "gemma3", "gemma")
+#: Model families SANCTIONED as the local voice — v4 names Gemma, and Resolution
+#: Log item 24 admits Qwen 3.5. A substitution outside this set is a different
+#: decision rather than a tag difference, so the ladder returns `None` instead of
+#: reaching for it. Order is longest-prefix-first so `qwen3.5` is matched before a
+#: future bare `qwen` would swallow it.
+_LOCAL_VOICE_FAMILY_PREFIXES = ("qwen3.5", "gemma4", "gemma3", "gemma")
 
 
 class OllamaLocalTransport:
@@ -398,15 +412,16 @@ def resolve_model(
        the thing to watch. Falling back to the SPEC model is the right second
        choice: if we must deviate from the configured default, deviating TOWARD
        the precedence chain is the safe direction.
-    3. exactly one other Gemma-family tag -> use it, with a note naming the
-       substitution. A different variant is a different footprint and a
-       different model; that must be visible, not absorbed.
-    4. several family tags, or none -> `(None, note)`. The caller must choose.
-       Guessing between two Gemmas picks a memory footprint on the operator's
-       behalf, which is not this function's call.
+    3. exactly one other tag from a sanctioned family -> use it, with a note
+       naming the substitution. A different variant is a different footprint and
+       a different model; that must be visible, not absorbed.
+    4. several sanctioned tags, or none -> `(None, note)`. The caller must
+       choose. Guessing between two of them picks a memory footprint on the
+       operator's behalf, which is not this function's call.
 
-    Deliberately never falls back outside the family: Gemma is the local voice
-    v4 names, and "whatever is installed" is not a model choice.
+    Deliberately never falls back outside `_LOCAL_VOICE_FAMILY_PREFIXES`: those
+    two families are the ones v4 and Resolution Log item 24 sanction, and
+    "whatever is installed" is not a model choice.
     """
     tags = [t for t in installed if t]
     if preferred in tags:
@@ -436,13 +451,14 @@ def resolve_model(
         )
     if not family:
         return None, (
-            f"no Gemma model installed, so there is no local voice. "
-            f"`ollama pull {preferred}` (the configured default) or "
-            f"`ollama pull {SPEC_MODEL}` (v4's model), or pass --local-model. "
-            f"Installed: {tags or 'nothing'}."
+            f"no model from a sanctioned local-voice family "
+            f"({', '.join(_LOCAL_VOICE_FAMILY_PREFIXES)}) is installed, so there "
+            f"is no local voice. `ollama pull {preferred}` (the configured "
+            f"default) or `ollama pull {SPEC_MODEL}` (v4's model), or pass "
+            f"--local-model. Installed: {tags or 'nothing'}."
         )
     return None, (
-        f"several Gemma models installed ({family}) and neither {preferred!r} "
-        f"nor {SPEC_MODEL!r} is among them. Pass --local-model to choose; "
-        f"guessing between them would pick a footprint on your behalf."
+        f"several sanctioned local-voice models installed ({family}) and neither "
+        f"{preferred!r} nor {SPEC_MODEL!r} is among them. Pass --local-model to "
+        f"choose; guessing between them would pick a footprint on your behalf."
     )
