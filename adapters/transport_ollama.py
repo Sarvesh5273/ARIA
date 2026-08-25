@@ -104,6 +104,25 @@ TIMEOUT: `DEFAULT_TIMEOUT_SECONDS = 120` is a deliberate CONVERSATIONAL ceiling,
 not an arbitrary number. 12b tripped it, and that was the timeout working. Use
 `tools/compare_local_models.py --timeout` to measure a slow model rather than
 raising it here to hide the problem.
+
+TOKEN COUNTS — A SIDE-CHANNEL, NOT A RETURN-TYPE CHANGE
+-------------------------------------------------------
+Every `/api/generate` response already carries `prompt_eval_count`, `eval_count`
+and `eval_duration`: the exact token counts and the exact generation time, from
+the process that did the work. Until now this adapter read `response` and threw
+the rest away, so `SessionBuffer` was budgeting against `chars // 4` while the
+real number sat one dict key away.
+
+They are recorded on the instance and read through `last_turn_metadata()`.
+`generate()` still returns `str` and `ModelTransport.generate` is UNCHANGED —
+deliberately. Widening the Protocol's return type to carry counts would push a
+measurement concern through `LLMInterface` and `SoulFilter`, two layers that have
+no business holding it, to reach the Daemon. A side-channel the Daemon reads
+directly from the transport it selected touches neither.
+
+`last_turn_metadata()` describes the LAST SERVED TURN only, and only `generate()`
+writes it. `load()` and `unload()` go through the same `_post_generate` but are
+warm/evict calls rather than turns, so they leave it alone.
 """
 
 from __future__ import annotations
@@ -111,6 +130,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 from daemon.llm_interface import AssembledPrompt, LLMTransportError
@@ -138,6 +158,54 @@ EVICT_NOW = 0                         # Ollama: unload immediately
 _LOCAL_VOICE_FAMILY_PREFIXES = ("qwen3.5", "gemma4", "gemma3", "gemma")
 
 
+@dataclass(frozen=True)
+class TurnMetadata:
+    """What a provider reported about ONE served turn. Counts, not judgments.
+
+    Defined here and IMPORTED by `transport_cloud.py` rather than copied, for the
+    same reason `split_prompt` is: two copies of a shared shape is how the two
+    transports quietly diverge. Both report the same three fields so the Daemon
+    reads them the same way regardless of which tier served the turn.
+
+    Every field is Optional because providers differ in what they report — an
+    OpenAI-compatible endpoint returns token counts but no generation duration, so
+    `duration_ns` is None there. A consumer must handle None rather than assume a
+    zero, because a missing measurement is not a measurement of zero.
+
+    `duration_ns` is nanoseconds because that is Ollama's own unit; converting at
+    the boundary would be this adapter reinterpreting the provider's number.
+    """
+
+    prompt_tokens: Optional[int] = None
+    gen_tokens: Optional[int] = None
+    duration_ns: Optional[int] = None
+
+    @property
+    def is_empty(self) -> bool:
+        """True when the provider reported nothing at all."""
+        return (
+            self.prompt_tokens is None
+            and self.gen_tokens is None
+            and self.duration_ns is None
+        )
+
+
+def reported_count(value: object) -> Optional[int]:
+    """A provider-reported count, or None if what arrived is not one.
+
+    Public and shared with `transport_cloud.py` for the same reason `split_prompt`
+    is: both transports must read a count the same way, and two copies of this
+    check is where one of them quietly stops rejecting something.
+
+    `bool` is excluded explicitly — it is an `int` subclass in Python, so a
+    provider sending `true` would otherwise be recorded as 1 token. A negative
+    count is not a count either.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
 class OllamaLocalTransport:
     """`LocalModelTransport` + `HealthProbe` backed by a local Ollama daemon.
 
@@ -157,6 +225,13 @@ class OllamaLocalTransport:
         self._timeout = timeout
         self._loaded = False
         self.prompts_served = 0
+
+        # --- last-served-turn measurements. Observability + the SessionBuffer
+        # side-channel; never fed back into any decision this adapter makes. ---
+        self._last_prompt_tokens: Optional[int] = None
+        self._last_gen_tokens: Optional[int] = None
+        self._last_gen_duration_ns: Optional[int] = None
+        self._has_served_a_turn = False
 
     # -- read-only observability --------------------------------------------
 
@@ -243,9 +318,33 @@ class OllamaLocalTransport:
                 f"{self._model!r} returned no 'response' string "
                 f"(got {type(text).__name__})"
             )
+        # Recorded AFTER the shape check: a response that was not a valid
+        # generation should not leave counts behind describing it as one.
+        self._last_prompt_tokens = reported_count(body.get("prompt_eval_count"))
+        self._last_gen_tokens = reported_count(body.get("eval_count"))
+        self._last_gen_duration_ns = reported_count(body.get("eval_duration"))
+        self._has_served_a_turn = True
         self._loaded = True
         self.prompts_served += 1
         return text
+
+    def last_turn_metadata(self) -> Optional[TurnMetadata]:
+        """The provider's own counts for the last turn `generate()` served.
+
+        None when there is nothing to report: no turn served yet, or a turn whose
+        response carried none of the three fields. None means "ask the estimate",
+        which is exactly what `SessionBuffer.fullness_state()` does with it — so
+        returning a `TurnMetadata` with three Nones instead would look like a
+        measurement and be indistinguishable from one at the call site.
+        """
+        if not self._has_served_a_turn:
+            return None
+        metadata = TurnMetadata(
+            prompt_tokens=self._last_prompt_tokens,
+            gen_tokens=self._last_gen_tokens,
+            duration_ns=self._last_gen_duration_ns,
+        )
+        return None if metadata.is_empty else metadata
 
     # -- HealthProbe --------------------------------------------------------
 

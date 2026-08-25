@@ -67,6 +67,11 @@ from daemon.aria_daemon import DaemonState
 T0 = datetime(2026, 4, 1, 9, 0, 0, tzinfo=timezone.utc)
 _BENIGN_REPLY = "That's genuinely good to hear. Shipping something real is hard, and you did it."
 
+#: The bands `SessionBuffer.fullness_state()` actually returns. Spelled out here
+#: because the Daemon's read-through property is asserted against it in several
+#: places and a band that does not exist makes a membership check vacuous.
+_FULLNESS_BANDS = ("light", "settled", "heavy", "critical")
+
 
 # ===========================================================================
 # Fakes for the NOT-YET-BUILT modules (Audio Pipeline = Module 7) and the LLM
@@ -1517,7 +1522,11 @@ def test_session_buffer_fullness_is_exposed_read_only(tmp_path):
 def test_session_buffer_fullness_tracks_real_turns(tmp_path):
     """Non-vacuous: prove it reads LIVE buffer state rather than returning a
     constant. Asserted as a set-membership on the documented bands, because the
-    exact band a turn lands in is SessionBuffer's business, not the Daemon's."""
+    exact band a turn lands in is SessionBuffer's business, not the Daemon's.
+
+    The band set is the REAL one — 'settled', not 'moderate'. The earlier version
+    of this test listed a band that does not exist, which made the membership
+    assertion looser than it looked."""
     ctx = make_daemon(tmp_path)
     ctx.daemon.startup()
     before = ctx.daemon.session_buffer_fullness
@@ -1526,7 +1535,186 @@ def test_session_buffer_fullness_tracks_real_turns(tmp_path):
         ctx.daemon.route_inbound_turn(user_text="tell me about your day", now=T0)
 
     after = ctx.daemon.session_buffer_fullness
-    assert before in ("light", "moderate", "heavy", "critical")
-    assert after in ("light", "moderate", "heavy", "critical")
+    assert before in _FULLNESS_BANDS
+    assert after in _FULLNESS_BANDS
     # The property is wired to the same object the pipeline appends to.
     assert ctx.daemon._session_buffer.fullness_state() == after
+
+
+def test_a_handful_of_short_turns_is_light(tmp_path):
+    """The bands are PERCENTAGES of a 24K budget now, not tier occupancy. Three
+    short turns are a rounding error against that, and reporting anything but
+    'light' would be the buffer overstating what she is holding."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+
+    for _ in range(3):
+        ctx.daemon.route_inbound_turn(user_text="tell me about your day", now=T0)
+
+    assert ctx.daemon.session_buffer_fullness == "light"
+
+
+def test_fullness_crosses_the_bands_on_measured_size(tmp_path):
+    """Drive the buffer's own measured-token path and read the answer back
+    THROUGH the Daemon's property, so the two are provably the same banding
+    logic rather than two copies of it."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    buf = ctx.daemon._session_buffer
+
+    for tokens, expected in (
+        (1_000, "light"), (7_000, "settled"), (13_000, "heavy"),
+        (19_000, "critical"),
+    ):
+        buf.record_actual_tokens(prompt_tokens=tokens)
+        assert ctx.daemon.session_buffer_fullness == expected
+
+
+def test_heavy_measured_size_still_reaches_the_cognitive_load_path(tmp_path):
+    """STEP 4's trigger is unchanged and must keep firing on the new signal:
+    'heavy' or 'critical' -> AppraisalChain.submit_cognitive_load(). This is the
+    ONE thing that carries buffer pressure into meaning, and it takes the
+    categorical band — never a token count."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+
+    seen = []
+    ctx.appraisal.submit_cognitive_load = lambda state: seen.append(state)
+
+    ctx.daemon._session_buffer.record_actual_tokens(prompt_tokens=20_000)
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    assert "critical" in seen
+    assert all(isinstance(s, str) for s in seen)
+
+
+# ===========================================================================
+# 13) Actual token counts — the transport side-channel into SessionBuffer.
+# ===========================================================================
+
+class MeteredLocal(FakeLocal):
+    """A local transport that reports what it counted.
+
+    `last_turn_metadata()` appears in NO Protocol — the Daemon duck-types it, so
+    this fake is written the way any adapter would be: it just has the method.
+    The metadata object is a plain namespace with the three field names, which is
+    what proves the Daemon reads names rather than a type. That the REAL
+    `adapters.transport_ollama.TurnMetadata` carries those same three names is
+    asserted in the transport suites; this suite stays free of adapter imports.
+    """
+    def __init__(self, metadata=None, **kwargs):
+        super().__init__(**kwargs)
+        self.metadata = metadata
+        self.metadata_reads = 0
+
+    def last_turn_metadata(self):
+        self.metadata_reads += 1
+        return self.metadata
+
+
+def _metadata(prompt_tokens=None, gen_tokens=None, duration_ns=None):
+    return SimpleNamespace(
+        prompt_tokens=prompt_tokens, gen_tokens=gen_tokens,
+        duration_ns=duration_ns,
+    )
+
+
+def test_actual_tokens_reach_the_session_buffer(tmp_path):
+    """The provider already counted, exactly. Before this the buffer budgeted
+    against `chars // 4` while the real number sat one dict key away."""
+    local = MeteredLocal(_metadata(prompt_tokens=19_000, gen_tokens=280,
+                                   duration_ns=20_000_000_000))
+    ctx = make_daemon(tmp_path, local=local, backend_router=True)
+    ctx.daemon.startup()
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    buf = ctx.daemon._session_buffer
+    assert local.metadata_reads == 1
+    assert buf._actual_prompt_tokens == 19_000
+    assert buf._actual_gen_tokens == 280
+    # 280 tokens in 20s = 14 tok/s. ns -> ms happens in the Daemon.
+    assert buf._last_gen_speed_tok_s == pytest.approx(14.0)
+    assert ctx.daemon.session_buffer_fullness == "critical"
+
+
+def test_a_transport_without_the_method_changes_nothing(tmp_path):
+    """No Protocol was widened, so every adapter written before this — and every
+    test double — keeps working, on the estimate."""
+    ctx = make_daemon(tmp_path, local=FakeLocal(), backend_router=True)
+    ctx.daemon.startup()
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    buf = ctx.daemon._session_buffer
+    assert not hasattr(ctx.local, "last_turn_metadata")
+    assert buf._actual_prompt_tokens is None
+    assert buf.fullness_state() == "light"      # from the estimate
+
+
+def test_no_router_means_no_handle_and_no_counts(tmp_path):
+    """With no BackendRouter the Daemon holds no transport to ask, so the
+    estimate stands. Fully backward compatible."""
+    ctx = make_daemon(tmp_path)                 # backend_router defaults to None
+    ctx.daemon.startup()
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+    assert ctx.daemon._session_buffer._actual_prompt_tokens is None
+
+
+def test_a_transport_reporting_nothing_leaves_the_estimate_alone(tmp_path):
+    local = MeteredLocal(None)                  # served a turn, counted nothing
+    ctx = make_daemon(tmp_path, local=local, backend_router=True)
+    ctx.daemon.startup()
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    assert local.metadata_reads == 1
+    assert ctx.daemon._session_buffer._actual_prompt_tokens is None
+
+
+def test_a_cloud_shaped_report_without_a_duration_is_accepted(tmp_path):
+    """An OpenAI-compatible tier reports counts but no generation time. The
+    counts must still land; speed stays unknown rather than becoming zero."""
+    local = MeteredLocal(_metadata(prompt_tokens=13_000, gen_tokens=280))
+    ctx = make_daemon(tmp_path, local=local, backend_router=True)
+    ctx.daemon.startup()
+
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    buf = ctx.daemon._session_buffer
+    assert buf._actual_prompt_tokens == 13_000
+    assert buf._last_gen_speed_tok_s is None
+    assert buf.fullness_state() == "heavy"      # from the count alone
+
+
+def test_a_measured_token_count_never_becomes_a_pad_write(tmp_path):
+    """The protected chain, on the new signal. A token count is SUBSTRATE: it
+    may set a band, and the band may reach meaning through
+    `submit_cognitive_load`, but nothing may skip to writing PAD from a number.
+
+    Driven at critical fullness so a cognitive-load PAD write really does happen
+    — the assertion is about WHICH origin carried it, and a test where no PAD
+    moved at all would prove nothing."""
+    local = MeteredLocal(_metadata(prompt_tokens=19_000, gen_tokens=280,
+                                   duration_ns=20_000_000_000))
+    ctx = make_daemon(tmp_path, local=local, backend_router=True)
+    ctx.daemon.startup()
+    ctx.daemon._session_buffer.record_actual_tokens(prompt_tokens=19_000)
+
+    origins = []
+    real_apply = ctx.pad.apply_appraisal_delta
+
+    def spy(delta):
+        origins.append(delta.origin)
+        return real_apply(delta)
+
+    ctx.pad.apply_appraisal_delta = spy
+    ctx.daemon.route_inbound_turn(user_text="how are you", now=T0)
+
+    # PAD did move, and every write came through an already-sanctioned origin.
+    # No fifth origin appeared for "tokens".
+    assert origins == ["cognitive_load"]
+    assert set(origins) <= {"appraisal", "aha_insight", "cognitive_load"}
+    # And the count itself reached the Appraisal Chain as a WORD, not a number.
+    assert ctx.daemon._session_buffer._actual_prompt_tokens == 19_000

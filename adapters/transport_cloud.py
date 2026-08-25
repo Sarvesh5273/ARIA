@@ -81,6 +81,24 @@ two tiers quietly diverge. So:
 `tests/test_transport_cloud.py` asserts the two transports send the same text for
 the same prompt, so the coupling is checked rather than trusted.
 
+TOKEN COUNTS — THE SAME SIDE-CHANNEL THE LOCAL TRANSPORT USES
+-------------------------------------------------------------
+An OpenAI-compatible response carries `usage.prompt_tokens` and
+`usage.completion_tokens` — the provider's exact counts, the same ones it bills
+on. They are recorded and read through `last_turn_metadata()`, returning the SAME
+`TurnMetadata` the local transport returns, imported from `transport_ollama` for
+the same reason `split_prompt` is: one shape, one definition, so the Daemon reads
+a served turn the same way whichever tier served it.
+
+`generate()` still returns `str`; `ModelTransport.generate` is unchanged.
+
+**No generation duration crosses, because these APIs do not report one.**
+`duration_ns` stays None on this transport, so the speed-degradation signal in
+`SessionBuffer.fullness_state()` simply never fires for a cloud turn. That is the
+honest outcome: a round trip over a network measures the network as much as the
+model, so timing it here and calling it generation speed would be inventing a
+measurement. Absent when it cannot be measured, not approximated.
+
 REASONING / THINKING FIELDS ARE NOT MERGED IN
 ---------------------------------------------
 Some models on both providers return a separate reasoning field alongside
@@ -156,7 +174,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from daemon.backend_router import HEALTH_CACHE_TTL_SECONDS
 from daemon.llm_interface import AssembledPrompt, LLMTransportError
 
-from adapters.transport_ollama import split_prompt
+from adapters.transport_ollama import TurnMetadata, reported_count, split_prompt
 
 # ---------------------------------------------------------------------------
 # Groq (tier 1). OpenAI-compatible; Bearer auth.
@@ -245,6 +263,13 @@ class OpenAICompatibleTransport:
         self._last_failure_at: Optional[datetime] = None
         self._last_failure: Optional[str] = None
 
+        # --- last-served-turn measurements (the SessionBuffer side-channel).
+        # No `duration_ns` counterpart: these APIs report no generation time,
+        # and timing the round trip would measure the network. ---------------
+        self._last_prompt_tokens: Optional[int] = None
+        self._last_gen_tokens: Optional[int] = None
+        self._has_served_a_turn = False
+
     # -- read-only observability -------------------------------------------
 
     @property
@@ -328,10 +353,48 @@ class OpenAICompatibleTransport:
         }
         body = self._request(self._chat_url, payload)
         text = self._extract_content(body)
+        # Recorded AFTER the content check, matching the local transport: a
+        # response that was not a valid generation leaves no counts describing
+        # it as one.
+        self._record_usage(body)
         self._last_failure = None
         self._last_failure_at = None
         self.prompts_served += 1
         return text
+
+    def _record_usage(self, body: dict) -> None:
+        """Read `usage.prompt_tokens` / `usage.completion_tokens` if present.
+
+        Assigns None when the field is absent or malformed, so a provider that
+        stops reporting usage stops being quoted — the previous turn's counts
+        described a different prompt.
+        """
+        usage = body.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        self._last_prompt_tokens = reported_count(usage.get("prompt_tokens"))
+        self._last_gen_tokens = reported_count(usage.get("completion_tokens"))
+        self._has_served_a_turn = True
+
+    def last_turn_metadata(self) -> Optional[TurnMetadata]:
+        """The provider's own counts for the last turn `generate()` served.
+
+        The SAME `TurnMetadata` the local transport returns, so the Daemon reads
+        a served turn identically whichever tier served it. `duration_ns` is
+        always None here — see the module docstring.
+
+        None when there is nothing to report: no turn served yet, or a response
+        with no `usage` field. None means "ask the estimate", which is what
+        `SessionBuffer.fullness_state()` does with it; a `TurnMetadata` of Nones
+        would be indistinguishable from a measurement at the call site.
+        """
+        if not self._has_served_a_turn:
+            return None
+        metadata = TurnMetadata(
+            prompt_tokens=self._last_prompt_tokens,
+            gen_tokens=self._last_gen_tokens,
+            duration_ns=None,
+        )
+        return None if metadata.is_empty else metadata
 
     def _extract_content(self, body: dict) -> str:
         """Pull `choices[0].message.content` and return it untouched.

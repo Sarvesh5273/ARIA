@@ -182,6 +182,32 @@ Independent code audit (subagent) found 5 defects, all fixed:
 - Per-turn `increment_uncertainty_interaction_count`
 ---
 
+## FLAG — `SessionBuffer.express_pressure()` is written and NOT WIRED
+
+*(2026-08-25, ResLog item 28)*
+
+`express_pressure()` turns the loaded fullness bands into a Field-5-shaped
+behavioural instruction (`"...Be brief."` / `"...Keep your response very
+short."`). It is implemented and tested. **Nothing calls it, and a test asserts
+that**, so the gap cannot close silently.
+
+Two architect rulings are needed before it can be:
+
+1. **Who appends it to Field 5.** `SoulFilter._derive_constraints` owns that
+   list, so the Daemon has no instruction object to append to and wiring this
+   needs Soul Filter to accept the sentence — which the change request that
+   specified the wiring also forbade. And **Addendum §9 caps Field 5 at MAX 3**:
+   a fourth entry either breaks the cap or is dropped, and which is a ruling.
+2. **Whether the state-claim half may cross.** `_derive_constraints` already
+   settled this shape for Energy — v4's *"You are running low."* was NOT carried
+   across because *"state never crosses (Addendum §9)"*, only its instruction
+   half was. *"You have a lot on your mind right now"* is the same shape.
+   Trimming to the instruction halves would satisfy the existing precedent with
+   no new ruling; the architect's full wording is stored verbatim so the choice
+   is theirs.
+
+---
+
 ## Module 4 (Appraisal Chain) / Module 1 (PAD Engine) — architect decision recorded
 
 `AppraisalChain.submit_cognitive_load()` (added in the gap-closure phase) is a
@@ -191,6 +217,11 @@ intentional, not an oversight:
 - Its trigger is `SessionBuffer.fullness_state()` returning `"heavy"` or
   `"critical"` — a structural/categorical read of the session buffer's
   fullness, not an invented number.
+  **Updated 2026-08-25 (ResLog item 28):** the band is now derived from token
+  SIZE (percentage of a resized 24K budget, measured from the provider's own
+  count when a transport reports one, plus a generation-speed bump) instead of
+  tier occupancy. What crosses into the Appraisal Chain is UNCHANGED — still one
+  of four words, never a count. The substrate moved; the seam did not.
 - `PADDelta.origin` (`daemon/pad_engine.py`) now admits a third literal value,
   `"cognitive_load"`, alongside `"appraisal"` and `"aha_insight"`, so this path
   is within the declared domain rather than smuggled past it. PAD_Engine still

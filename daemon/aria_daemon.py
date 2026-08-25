@@ -947,6 +947,11 @@ class AriaDaemon:
             transport=transport,
         )
 
+        # --- Actual token counts: the provider already counted, exactly, so
+        # SessionBuffer stops budgeting against `chars // 4`. Read from the
+        # transport the Daemon itself selected, AFTER the turn it describes. ---
+        self._record_actual_tokens(transport)
+
         # --- Audio Pipeline (Module 7 contract): render validated text (TTS). -
         self._audio.speak(response.text)
         self._output_pending = False
@@ -972,6 +977,57 @@ class AriaDaemon:
             self._consume_dmn_result(fp_result)
 
         return response
+
+    def _record_actual_tokens(self, transport: Optional[object]) -> None:
+        """Hand the served turn's REAL token counts to the SessionBuffer.
+
+        `transport` is the same opaque routing handle passed to Soul Filter, and
+        it stays opaque: this asks it ONE question, by duck type, and inspects
+        nothing else. A transport with no `last_turn_metadata()` — a test double,
+        `UnconfiguredTransport`, or any adapter written before this existed — is
+        silently skipped, and the buffer keeps using its own `chars // 4`
+        estimate. No Protocol changed to make this possible; nothing breaks by
+        not implementing it.
+
+        `transport is None` (no BackendRouter wired) is the same case: no handle,
+        no counts, estimate stands.
+
+        TWO HONEST LIMITS, both structural rather than fixable here:
+
+        * ONE TURN OF LAG. These counts describe the prompt just sent, which was
+          assembled before this turn was appended to the buffer. So STEP 4's
+          cognitive-load read on the NEXT turn is measuring the prompt before
+          last. Closing that gap would need a tokenizer inside `daemon/`, which
+          the layer's zero-dependency property forbids for something this small.
+        * WHOLE-PROMPT, NOT BUFFER-ONLY. `prompt_tokens` covers the five fields
+          and the user's message too. That is the number worth bounding — it is
+          what the model was actually asked to hold — but it is not a measurement
+          of this buffer's content in isolation.
+
+        This is a MEASUREMENT crossing into memory plumbing. It reaches PAD only
+        the way buffer fullness always has: `fullness_state()` collapses it to a
+        categorical band and the Appraisal Chain makes the meaning. No number
+        goes anywhere near PAD, and the Daemon still writes no PAD.
+        """
+        if transport is None:
+            return
+        reader = getattr(transport, "last_turn_metadata", None)
+        if not callable(reader):
+            return
+        metadata = reader()
+        if metadata is None:
+            return
+        duration_ns = getattr(metadata, "duration_ns", None)
+        self._session_buffer.record_actual_tokens(
+            prompt_tokens=getattr(metadata, "prompt_tokens", None),
+            gen_tokens=getattr(metadata, "gen_tokens", None),
+            # Nanoseconds → milliseconds, the unit SessionBuffer asks for. None
+            # stays None: a cloud tier reports no duration, and a zero would
+            # claim an instant generation rather than an unmeasured one.
+            gen_duration_ms=(
+                duration_ns // 1_000_000 if isinstance(duration_ns, int) else None
+            ),
+        )
 
     # =======================================================================
     # Backend-proposal state machine (Track A). See the module-level

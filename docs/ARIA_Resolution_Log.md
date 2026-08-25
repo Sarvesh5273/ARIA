@@ -707,6 +707,95 @@ and timbre control, or a ruling that the directions may be approximated.
 
 ---
 
+## 28. Session Buffer resized to 24K, and it now counts real tokens
+
+*(2026-08-25)* — architect-directed. Build-time tuning plus one new measurement
+seam. No source document states any number in this item; all of them are
+placeholders in the same category as the budgets they replace.
+
+**RESIZED.** `12000 / 8000 / 4000` = **24K total**, from `8000 / 6000 / 4000` =
+18K. Still a SPEED ceiling and not a window ceiling: `qwen3.5:9b-mlx` reports a
+262144-token window (item 24), so the context window has never been what bounds
+this and is still not the reason for the number.
+
+**ACTUAL TOKEN COUNTS, VIA A TRANSPORT SIDE-CHANNEL.** Every provider already
+counts exactly, and both adapters were discarding it — Ollama returns
+`prompt_eval_count` / `eval_count` / `eval_duration` on every `/api/generate`
+response, and an OpenAI-compatible endpoint returns `usage.prompt_tokens` /
+`usage.completion_tokens`. Both transports now record it and expose
+`last_turn_metadata() -> Optional[TurnMetadata]`; the Daemon duck-types that one
+method off the transport it already selected and calls
+`SessionBuffer.record_actual_tokens()`.
+
+`ModelTransport.generate()` still returns `str` and the Protocol is UNCHANGED.
+That was the point of a side-channel: widening the return type to carry counts
+would push a measurement concern through `LLMInterface` and `SoulFilter` — two
+layers with no business holding one — to reach the Daemon. A transport without the
+method (any pre-existing adapter, `UnconfiguredTransport`, any test double) is
+skipped and the buffer keeps its `chars // 4` estimate. **No tokenizer dependency
+was added**; `daemon/`'s zero-dependency property is intact.
+
+**`fullness_state()` NOW READS SIZE, NOT TIER OCCUPANCY.** Bands are percentages
+of the total budget — `light` < 25%, `settled` 25-50%, `heavy` 50-75%, `critical`
+>= 75% — computed from the measured count when there is one and from the estimate
+otherwise. Tier occupancy was a proxy for size and a poor one: promotion
+COMPRESSES, so a buffer deep enough to have archived topic tags can be holding
+under a third of budget, which the old logic reported as `heavy`.
+
+**SPEED DEGRADATION IS CONTEXT PRESSURE**, so a last generation below **10.0
+tok/s** bumps the band one step, saturating at `critical`. Prompt-eval cost grows
+with the prompt while a band boundary does not move, so a turn can be well inside
+a band and already labouring. The floor sits below the ~13-14 tok/s baseline the
+architect reports for `qwen3.5:9b-mlx`; **that baseline carries the same caveat
+item 24 records about it — architect-supplied, not reproduced by a harness run in
+this project.** `tools/compare_local_models.py` is what would.
+
+**THE PROTECTED CHAIN IS INTACT.** Token counts, budgets, band fractions and the
+speed floor are SUBSTRATE. They set a categorical band; the band is a word; the
+Daemon hands the word to `AppraisalChain.submit_cognitive_load()`, which is the
+already-sanctioned third PAD-write origin (`"cognitive_load"`). Nothing skips from
+a number to a feeling, no fifth PAD origin appeared, and the Daemon still writes
+no PAD. Asserted by test.
+
+### `express_pressure()` — implemented, NOT WIRED, two rulings needed
+
+`SessionBuffer.express_pressure()` returns the loaded bands as a Field-5-shaped
+behavioural instruction — `heavy` once per session, `critical` every turn it holds,
+None otherwise. It exists and is tested. **Nothing calls it, and a test asserts
+that,** so the gap cannot close by accident.
+
+The instruction to wire it into Field 5 could not be carried out as written, and
+both reasons are architect decisions rather than implementation choices:
+
+1. **WHO APPENDS IT.** Field 5 is assembled inside
+   `SoulFilter._derive_constraints`, from the appraisal and `need_states`. The
+   Daemon holds no instruction object to append to — `respond()` builds it. Wiring
+   this therefore needs Soul Filter to accept the sentence, and the same change
+   request that specified the wiring also said *"Do NOT change SoulFilter"*. Those
+   two cannot both hold. Separately, **Addendum §9 caps Field 5 at MAX 3**, so a
+   fourth entry either breaks the cap or is silently dropped — and which of those
+   it should be is a ruling, not a default.
+2. **THE FIRST SENTENCE OF EACH STRING IS STATE RENDERED AS A CLAIM.**
+   `_derive_constraints` already faced this exact shape and decided it the other
+   way: v4 line 949 supplies *"You are running low. Acknowledge it if it comes up
+   naturally."* and only the instruction half was carried across, because *"that
+   half is Energy state rendered as a claim, and state never crosses (Addendum
+   §9)"*. **"You have a lot on your mind right now" is the same shape as "You are
+   running low."** Same for *"This is a lot to hold."* The instruction halves —
+   *"Be brief."*, *"Keep your response very short."* — raise no such question, and
+   trimming to them would satisfy the existing precedent without a new ruling.
+
+The architect's wording is stored verbatim rather than quietly trimmed, so the
+ruling is theirs to make on what they actually wrote.
+
+**Also left open (minor):** the heavy-pressure latch is scoped to the instance, so
+`"rest"` does not re-arm it — literal reading of "first heavy this session", since
+rest does not start a new session. The measured token record IS reset by `clear()`,
+because it described a prompt built from content that no longer exists and would
+otherwise have an empty buffer reporting `critical`.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4
@@ -737,6 +826,8 @@ before:
 - Soul-tick & DMN-tick intervals (only idle=8min, reflection=6h pinned)
 - k_load / k_rest (Energy)
 - State Manager write cadence
+- Session Buffer tier budgets (12K/8K/4K), `fullness_state()` band fractions
+  (0.25/0.50/0.75) and the generation-speed floor (10.0 tok/s) — item 28
 
 ---
 

@@ -77,11 +77,15 @@ persisted, and a restart loses all of it by design.
 ## Tiers
 
 ```
-_RECENT_TOKEN_BUDGET = 8000    verbatim recent turns
-_MEDIUM_TOKEN_BUDGET = 6000    rule-based summaries
-_OLD_TOKEN_BUDGET    = 4000    topic tags only
-_TOTAL_TOKEN_BUDGET  = 18000
+_RECENT_TOKEN_BUDGET = 12000   verbatim recent turns
+_MEDIUM_TOKEN_BUDGET =  8000   rule-based summaries
+_OLD_TOKEN_BUDGET    =  4000   topic tags only
+_TOTAL_TOKEN_BUDGET  = 24000
 ```
+
+Resized 2026-08-25 from 8000/6000/4000 (18K). Still a SPEED ceiling rather than a
+window ceiling — `qwen3.5:9b-mlx` reports a 262144-token window, so the window has
+never been the binding constraint. See Resolution Log item 28.
 
 Summarisation is **rule-based**, not generative — no LLM call, so the buffer
 cannot editorialise what was said.
@@ -94,10 +98,68 @@ All four budgets are build-time tuning values. No source document states them.
 append_turn(user_text, response_text)   record a completed exchange
 get_context() -> str                    the assembled three-tier context
 fullness_state() -> str                 'settled' | 'light' | 'heavy' | 'critical'
+record_actual_tokens(...)               the provider's own count for the last turn
+express_pressure() -> str | None        the loaded bands as an instruction (UNWIRED)
 is_meta_command(text)                   'rest' | 'focus' | 'unfocus' | None
 set_focus_mode(...) / is_focused()      focus-mode toggle
 clear()                                 drop everything
 ```
+
+## Token counting — estimate, then the real number
+
+`_*_token_estimate()` is `chars // 4`, and it is all that is available *before* a
+turn is served: `daemon/` has zero external dependencies and a tokenizer is not
+worth breaking that for.
+
+*After* a turn is served the provider has already counted exactly.
+`record_actual_tokens(prompt_tokens=, gen_tokens=, gen_duration_ms=)` is where
+that lands, fed by the Daemon from the serving transport's `last_turn_metadata()`
+side-channel:
+
+```
+Ollama    prompt_eval_count / eval_count / eval_duration (ns)
+OpenAI-   usage.prompt_tokens / usage.completion_tokens
+compatible  (no duration is reported, so speed stays unknown there)
+```
+
+Assigns what it is given, **including None** — a turn that reports nothing drops
+back to the estimate rather than quoting the previous turn's number, which
+described a different prompt. `clear()` drops the record too.
+
+Two structural limits, both documented at
+`AriaDaemon._record_actual_tokens`: the count arrives one turn late (it describes
+the prompt just sent, assembled before this turn was appended), and it covers the
+WHOLE prompt — five fields and user message included — not this buffer alone.
+
+## Cognitive load
+
+`fullness_state()` returns a categorical band. Since 2026-08-25 it reads SIZE,
+not tier occupancy:
+
+```
+light     < 25% of _TOTAL_TOKEN_BUDGET
+settled    25-50%
+heavy      50-75%
+critical  >= 75%
+```
+
+Measured tokens when a transport reported them, the `chars // 4` estimate
+otherwise. A last generation slower than `_SLOW_GENERATION_TOK_S` (10.0 tok/s)
+bumps the band one step, saturating at `critical` — prompt-eval cost grows with
+the prompt while the band boundary does not move, so a turn can be well inside a
+band and already labouring. Tier occupancy was dropped as a signal because
+promotion COMPRESSES: acquiring an OLD tier can leave the prompt holding under a
+third of budget, which the old logic reported as `heavy`.
+
+Band boundaries are fractions of the total rather than absolute counts, so
+re-tuning a budget moves them with it. All four numbers here are build-time
+tuning values, same category as the budgets.
+
+The Daemon feeds `heavy` and
+`critical` into `AppraisalChain.submit_cognitive_load()`, which emits a small
+second-order PAD delta through the sanctioned appraisal path — this module never
+touches PAD itself. **Nothing skips from a token count to a feeling**: the count
+sets a band, the band is a word, and the Appraisal Chain makes the meaning.
 
 ## Meta-commands
 
@@ -115,17 +177,25 @@ BEFORE appraisal. They bypass appraisal, Soul Filter, the LLM and the Output
 Gate, and write **no EventNode** — a request to manage the buffer is not an
 appraisable event. `"rest"` additionally triggers a DMN consolidation pass.
 
-## Cognitive load
+## The cognitive-load entry point has a second caller
 
-`fullness_state()` returns a categorical band. The Daemon feeds `heavy` and
-`critical` into `AppraisalChain.submit_cognitive_load()`, which emits a small
-second-order PAD delta through the sanctioned appraisal path — this module never
-touches PAD itself.
+Since 2026-08-20 `AppraisalChain.submit_cognitive_load()` has a **second**
+caller: Energy below the in-spec 30 gate (ResLog item 19). Both can fire in one
+turn, so two PAD deltas can land. That stacking is measured and recorded as open
+in `PROJECT_STATUS.md`; collapsing it would need an invented precedence rule.
 
-Since 2026-08-20 that entry point has a **second** caller: Energy below the
-in-spec 30 gate (ResLog item 19). Both can fire in one turn, so two PAD deltas
-can land. That stacking is measured and recorded as open in `PROJECT_STATUS.md`;
-collapsing it would need an invented precedence rule.
+## Expression of pressure — present, NOT WIRED
+
+`express_pressure()` returns the loaded bands as a Field-5-shaped behavioural
+instruction (`heavy` once per session, `critical` every turn it holds) or None.
+Nothing calls it. Two architect rulings gate the wiring and both are recorded in
+Resolution Log item 28: **who** appends it to Field 5, given that
+`SoulFilter._derive_constraints` owns that list and Addendum §9 caps it at MAX 3;
+and whether the **state-claim** opening of each string may cross at all, since
+`_derive_constraints` faced the identical shape for Energy ("You are running
+low") and carried only the instruction half across.
+
+A test asserts the absence of a caller, so the gap cannot close by accident.
 
 ## Boundary
 
@@ -136,16 +206,24 @@ Interface — Soul Filter does not inspect it.
 
 ## Tests
 
-`tests/test_session_buffer.py`, 13 tests.
+`tests/test_session_buffer.py`, 40 tests.
 
 ## What a real spec would still need
 
-- The four token budgets and the three trigger lexicons, all placeholders.
+- The four token budgets, the three band fractions, the generation-speed floor
+  and the three trigger lexicons, all placeholders.
+- The two `express_pressure()` rulings above, before it can be wired.
 - ~~**The §9 tension above** — the one item here that is genuinely architectural
   rather than tuning. It needs an explicit Addendum or Resolution Log amendment
   saying whether current-session summaries are inside or outside "nothing
   else".~~ **CLOSED 2026-08-20**: Addendum §9 carries that amendment now —
   current-session transcript is inside, as a third sanctioned surface; anything
   crossing a session boundary stays outside. See the AMENDMENT at the top.
-- Whether `fullness_state()`'s four bands are the right granularity, given only
-  two of them (`heavy`, `critical`) have a consumer.
+- Whether `fullness_state()`'s four bands are the right granularity. Since
+  2026-08-25 three of the four are read: `heavy` and `critical` by
+  `submit_cognitive_load()`, and both of those plus the speed bump by
+  `express_pressure()` once it is wired. `light` and `settled` still only mean
+  "nothing to report".
+- Whether the heavy-pressure latch should re-arm on `"rest"`. It does not today
+  ("first heavy this **session**", and rest does not start a new session), so a
+  second arrival at heaviness after a rest goes unmentioned.

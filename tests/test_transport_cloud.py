@@ -53,7 +53,7 @@ from adapters.transport_cloud import (
     env_summary,
     groq_from_env,
 )
-from adapters.transport_ollama import OllamaLocalTransport
+from adapters.transport_ollama import OllamaLocalTransport, TurnMetadata
 from adapters.transport_unconfigured import UnconfiguredTransport
 
 FIVE_FIELD_TEXT = (
@@ -588,3 +588,157 @@ def test_whitespace_only_key_counts_as_absent():
     assert groq_from_env(env={
         GROQ_API_KEY_ENV: "   ", GROQ_MODEL_ENV: "m",
     }) is None
+
+
+# ===========================================================================
+# Token counts — the SAME side-channel shape the local transport reports.
+# ===========================================================================
+
+def _chat_reply_with_usage(
+    text="a real reply", *, prompt_tokens=1234, completion_tokens=280,
+    usage_present=True,
+):
+    def handler(_method, url, _body):
+        if url.rstrip("/").endswith("/models"):
+            payload = {"data": [{"id": "kimi-k2"}]}
+        else:
+            payload = {"choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }]}
+            if usage_present:
+                usage = {}
+                if prompt_tokens is not None:
+                    usage["prompt_tokens"] = prompt_tokens
+                if completion_tokens is not None:
+                    usage["completion_tokens"] = completion_tokens
+                payload["usage"] = usage
+        return _StubResponse(json.dumps(payload).encode("utf-8"))
+    return handler
+
+
+def test_last_turn_metadata_reports_usage(monkeypatch):
+    transport = _transport()
+    _stub(monkeypatch, _chat_reply_with_usage())
+
+    assert transport.last_turn_metadata() is None        # nothing served yet
+    transport.generate(PROMPT)
+
+    meta = transport.last_turn_metadata()
+    assert meta is not None
+    assert meta.prompt_tokens == 1234
+    assert meta.gen_tokens == 280
+
+
+def test_cloud_and_local_report_the_same_metadata_type(monkeypatch):
+    """One `TurnMetadata`, imported rather than copied — the same reason
+    `split_prompt` is shared. The Daemon reads a served turn identically
+    whichever tier served it."""
+    cloud = _transport()
+    local = OllamaLocalTransport()
+
+    def handler(_method, url, _body):
+        if "api.groq.com" in url:
+            return _chat_reply_with_usage()(_method, url, _body)
+        return _StubResponse(json.dumps({
+            "response": "local reply", "done": True,
+            "prompt_eval_count": 1234, "eval_count": 280,
+            "eval_duration": 20_000_000_000,
+        }).encode("utf-8"))
+
+    _stub(monkeypatch, handler)
+    monkeypatch.setattr(
+        "adapters.transport_ollama.urllib.request.urlopen",
+        lambda request, timeout=None: handler(
+            request.get_method(), request.full_url, None
+        ),
+    )
+
+    cloud.generate(PROMPT)
+    local.generate(PROMPT)
+
+    cloud_meta = cloud.last_turn_metadata()
+    local_meta = local.last_turn_metadata()
+    assert type(cloud_meta) is type(local_meta) is TurnMetadata
+    assert cloud_meta.prompt_tokens == local_meta.prompt_tokens == 1234
+    assert cloud_meta.gen_tokens == local_meta.gen_tokens == 280
+
+
+def test_no_generation_duration_crosses_from_a_cloud_tier(monkeypatch):
+    """These APIs report no generation time, and timing the round trip would
+    measure the network as much as the model. So `duration_ns` stays None and the
+    speed-degradation signal simply never fires for a cloud turn — absent rather
+    than approximated."""
+    transport = _transport()
+    _stub(monkeypatch, _chat_reply_with_usage())
+
+    transport.generate(PROMPT)
+    assert transport.last_turn_metadata().duration_ns is None
+
+
+def test_metadata_is_none_when_there_is_no_usage_field(monkeypatch):
+    transport = _transport()
+    _stub(monkeypatch, _chat_reply_with_usage(usage_present=False))
+
+    transport.generate(PROMPT)
+    assert transport.last_turn_metadata() is None
+
+
+def test_generate_still_returns_a_plain_string(monkeypatch):
+    """`ModelTransport.generate` is UNCHANGED — asserted structurally."""
+    transport = _transport()
+    _stub(monkeypatch, _chat_reply_with_usage("the verbatim reply"))
+
+    out = transport.generate(PROMPT)
+    assert out == "the verbatim reply"
+    assert isinstance(out, str)
+    assert isinstance(transport, ModelTransport)
+
+
+def test_a_later_turn_overwrites_an_earlier_one(monkeypatch):
+    transport = _transport()
+    _stub(monkeypatch, _chat_reply_with_usage(prompt_tokens=500))
+    transport.generate(PROMPT)
+    assert transport.last_turn_metadata().prompt_tokens == 500
+
+    # A provider that stops reporting stops being quoted: the old count
+    # described a different prompt.
+    _stub(monkeypatch, _chat_reply_with_usage(usage_present=False))
+    transport.generate(PROMPT)
+    assert transport.last_turn_metadata() is None
+
+
+def test_a_failed_generation_leaves_no_counts(monkeypatch):
+    """Recorded only after the content check passes, matching the local
+    transport: a response that was not a valid generation leaves no measurement
+    behind describing it as one."""
+    transport = _transport()
+
+    def handler(_method, _url, _body):
+        return _StubResponse(json.dumps({
+            "choices": [{"index": 0, "message": {"role": "assistant"},
+                         "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 4242, "completion_tokens": 0},
+        }).encode("utf-8"))
+
+    _stub(monkeypatch, handler)
+    with pytest.raises(CloudTransportError, match="no message content"):
+        transport.generate(PROMPT)
+    assert transport.last_turn_metadata() is None
+
+
+def test_a_malformed_usage_block_is_not_a_measurement(monkeypatch):
+    transport = _transport()
+
+    def handler(_method, _url, _body):
+        return _StubResponse(json.dumps({
+            "choices": [{"index": 0,
+                         "message": {"role": "assistant", "content": "hi"},
+                         "finish_reason": "stop"}],
+            "usage": "1234 tokens",
+        }).encode("utf-8"))
+
+    _stub(monkeypatch, handler)
+    transport.generate(PROMPT)
+    assert transport.last_turn_metadata() is None

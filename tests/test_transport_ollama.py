@@ -33,6 +33,8 @@ from adapters.transport_ollama import (
     KEEP_RESIDENT,
     SPEC_MODEL,
     OllamaLocalTransport,
+    TurnMetadata,
+    reported_count,
     resolve_model,
     split_prompt,
 )
@@ -458,3 +460,170 @@ def test_resolve_model_never_falls_outside_a_sanctioned_family():
     assert "sanctioned local-voice family" in note
     assert SPEC_MODEL in note               # offers both routes out
     assert DEFAULT_MODEL in note
+
+# ===========================================================================
+# 6) Token counts — the side-channel, and what it must NOT change.
+# ===========================================================================
+
+def _replies_with_counts(
+    text="a real reply", *, prompt_eval_count=1234, eval_count=280,
+    eval_duration=20_000_000_000, extra=None,
+):
+    """A `/api/generate` body shaped like a real one: Ollama returns these
+    counts on EVERY generation, which is why no tokenizer is needed."""
+    def handler(_method, url, _body):
+        if url.endswith("/api/tags") or url.endswith("/api/ps"):
+            payload = {"models": [{"name": DEFAULT_MODEL}]}
+        else:
+            payload = {"response": text, "done": True}
+            if prompt_eval_count is not None:
+                payload["prompt_eval_count"] = prompt_eval_count
+            if eval_count is not None:
+                payload["eval_count"] = eval_count
+            if eval_duration is not None:
+                payload["eval_duration"] = eval_duration
+            if extra:
+                payload.update(extra)
+        return _StubResponse(json.dumps(payload).encode("utf-8"))
+
+    return handler
+
+
+def _generate(transport):
+    return transport.generate(
+        AssembledPrompt(
+            instruction_text=FIVE_FIELD_TEXT,
+            user_message="I finally shipped it.",
+            kind="five_field",
+            session_context=SESSION_TEXT,
+        )
+    )
+
+
+def test_last_turn_metadata_reports_the_providers_own_counts(monkeypatch):
+    """The numbers were always in the response body; they were being discarded."""
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies_with_counts())
+
+    assert transport.last_turn_metadata() is None       # nothing served yet
+    _generate(transport)
+
+    meta = transport.last_turn_metadata()
+    assert meta is not None
+    assert meta.prompt_tokens == 1234
+    assert meta.gen_tokens == 280
+    assert meta.duration_ns == 20_000_000_000           # ns, Ollama's own unit
+
+
+def test_generate_still_returns_a_plain_string(monkeypatch):
+    """`ModelTransport.generate` is UNCHANGED. Carrying counts in the return type
+    would push a measurement concern through LLMInterface and SoulFilter, two
+    layers with no business holding one, to reach the Daemon."""
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies_with_counts("the verbatim reply"))
+
+    out = _generate(transport)
+    assert out == "the verbatim reply"
+    assert isinstance(out, str)
+    assert isinstance(transport, LocalModelTransport)   # Protocol still satisfied
+
+
+def test_metadata_is_none_when_the_provider_reports_nothing(monkeypatch):
+    """A body with no counts must read as "no measurement", not as zero tokens —
+    SessionBuffer treats None as "use the estimate"."""
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies())                      # no count fields at all
+
+    _generate(transport)
+    assert transport.last_turn_metadata() is None
+
+
+def test_partial_counts_are_reported_as_far_as_they_go(monkeypatch):
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies_with_counts(eval_count=None, eval_duration=None))
+
+    _generate(transport)
+    meta = transport.last_turn_metadata()
+    assert meta is not None
+    assert meta.prompt_tokens == 1234
+    assert meta.gen_tokens is None
+    assert meta.duration_ns is None
+
+
+def test_a_bool_is_not_a_token_count(monkeypatch):
+    """`bool` is an `int` subclass, so `true` would otherwise record as 1 token."""
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies_with_counts(prompt_eval_count=True, eval_count=-4))
+
+    _generate(transport)
+    meta = transport.last_turn_metadata()
+    assert meta is not None                             # eval_duration survived
+    assert meta.prompt_tokens is None
+    assert meta.gen_tokens is None                      # negative is not a count
+
+
+def test_a_later_turn_overwrites_an_earlier_one(monkeypatch):
+    """It describes the LAST served turn. A stale count would be quoted against a
+    prompt it never measured."""
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies_with_counts(prompt_eval_count=500))
+    _generate(transport)
+    assert transport.last_turn_metadata().prompt_tokens == 500
+
+    _stub(monkeypatch, _replies_with_counts(prompt_eval_count=9000))
+    _generate(transport)
+    assert transport.last_turn_metadata().prompt_tokens == 9000
+
+    # And a turn that reports nothing stops quoting the old number entirely.
+    _stub(monkeypatch, _replies())
+    _generate(transport)
+    assert transport.last_turn_metadata() is None
+
+
+def test_warming_and_evicting_are_not_turns(monkeypatch):
+    """`load()` / `unload()` share `_post_generate` but are not served turns, so
+    they must not clobber the record — nor create one."""
+    transport = OllamaLocalTransport()
+    _stub(monkeypatch, _replies_with_counts(prompt_eval_count=777))
+
+    transport.load()
+    assert transport.last_turn_metadata() is None
+
+    _generate(transport)
+    assert transport.last_turn_metadata().prompt_tokens == 777
+
+    transport.unload()
+    assert transport.last_turn_metadata().prompt_tokens == 777
+
+
+def test_a_failed_generation_leaves_no_counts(monkeypatch):
+    """A response that was not a valid generation must not leave measurements
+    behind describing it as one."""
+    transport = OllamaLocalTransport()
+
+    def handler(_method, _url, _body):
+        return _StubResponse(json.dumps(
+            {"done": True, "prompt_eval_count": 4242}
+        ).encode("utf-8"))
+
+    _stub(monkeypatch, handler)
+    with pytest.raises(LLMTransportError, match="no 'response' string"):
+        _generate(transport)
+    assert transport.last_turn_metadata() is None
+
+
+def test_reported_count_rejects_everything_that_is_not_a_count():
+    assert reported_count(0) == 0
+    assert reported_count(1234) == 1234
+    assert reported_count(True) is None
+    assert reported_count(False) is None
+    assert reported_count(-1) is None
+    assert reported_count(12.5) is None
+    assert reported_count("1234") is None
+    assert reported_count(None) is None
+
+
+def test_turn_metadata_defaults_to_empty():
+    assert TurnMetadata().is_empty is True
+    assert TurnMetadata(prompt_tokens=0).is_empty is False
+    assert TurnMetadata(duration_ns=1).is_empty is False
