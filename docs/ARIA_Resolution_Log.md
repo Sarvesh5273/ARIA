@@ -1282,6 +1282,110 @@ the floor exactly as the first draft would have: the floor-presence test fails.
 
 ---
 
+## 35. Three rulings closing three Still Open rows — prosody, the degradation face, stage-direction floors
+
+*(2026-08-26)* — architect rulings: Sarvesh. **Item 35.** Docs only; no code, no
+tests. Recorded HERE and not only in `PROJECT_STATUS.md` because the tracker is not
+the precedence chain — item 19's `session_context` flag was exactly the failure of a
+resolution living outside the chain it qualified, and three rulings that close rows
+belong inside it. Still Open 9 → 6.
+
+**35a. Prosody — DEFER until a provider offers real pitch/timbre control.**
+Approximating the unreachable directions by mapping them onto adjacent knobs
+(ElevenLabs `stability`/`style`) is rejected: those control something else, so PAD
+would *appear* to reach the voice while doing something unrelated to v4, and a voice
+that sounds robotic undermines "a real presence" more than a flat one. All three
+directions stay COMPUTED, so a provider limitation never becomes a spec change.
+Moved to Accepted decisions — a decision, not a deferral of one.
+
+  *Correction to the ruling as offered, twice over:* it described "the three
+  computed directions (warmth/urgency/uncertainty)" as all dormant and rejected
+  "approximation via speed changes". **TWO of three are dormant, not three** —
+  `length_scale` (Arousal → speed, INVERSE) is wired and verified at 156 wpm calm →
+  208 wpm alert. And speed is **not an approximation**: it is the real mapping,
+  because speed is the same physical quantity in v4 and in every provider. The
+  dormant two are `noise_scale` (Pleasure → warmth) and `pitch_shift` (Dominance →
+  groundedness). "Urgency" and "uncertainty" are not prosody directions in v4 at
+  all. Recording the ruling as offered would have said her voice is entirely flat
+  when one axis already tracks Arousal.
+
+**35b. The degradation face — CLOSED, no visual change on local fallback.** The
+local model is still ARIA; changing her face would signal "not fully there". The
+design stays coherent because `adapters/visual_bridge.py` fires on
+`LLMUnavailableError` (total backend failure), never on route — so cloud-down is the
+ordinary resting state of a local-primary design and only genuine unavailability
+shows.
+
+  *One clause of the ruling was struck, at the architect's own instruction and for
+  the reason I raised:* **she does not know which backend served her, and must not
+  be given a way to say so.** `last_route` is state, and Addendum §9's never-crosses
+  list bars state from every field — no surface could carry it. It is also the
+  consistent reading of the ruling itself: if the local voice is still her, there is
+  nothing to report, and "I'm using my local voice" would be her narrating her own
+  implementation, nearer the stage-direction failure than to presence. An operator
+  who wants to check has `:state`.
+
+**35c. Stage directions — CLOSED, both floors accepted, and the NUMBER corrected.**
+Split into two statements because one figure was doing duty for both halves.
+(a) **MARKED** narration stands at a measured **3/16** on a fresh graph, compounding
+loop closed by item 31. (b) **UNMARKED** prose narration — *"I am sitting still. My
+attention is focused entirely on the words you are saying."* — has no syntax to
+match, so no regex reaches it without judging content, which Addendum §4's zero-LLM
+checklist forbids. **Its rate is UNMEASURED AND UNQUANTIFIABLE — it is NOT 3/16.**
+The ruling as offered called 3/16 "the failure rate for unmarked prose narration";
+3/16 counted MARKED narration only, and attaching it to the unmarked case would put
+a measured number on the one thing it does not describe.
+
+  Both halves close because **no actionable route remains.** The recommended
+  moral-schema option is now MECHANICALLY blocked rather than merely unruled: item
+  34's derived layer looked like it opened this route and does not, because a
+  derived anti-pattern is detected by SUBSTRING markers and bracket narration is a
+  SYNTAX with no substring. Expressing it would need either changing the schema's
+  detection from substring to regex — the most protected module — or inventing a
+  bodily-narration lexicon that false-positives on true statements about her ("I
+  pause when I'm not sure"; thinking sounds are real).
+
+**THREE RULINGS OFFERED IN THE SAME PASS WERE NOT TAKEN**, recorded so the reasons
+survive rather than being rediscovered:
+
+* **Purpose evidence / max-5 cap — premise did not survive the code.**
+  `graph_manager.purpose_evidence` ALREADY uses a recency window
+  (`window: timedelta = WINDOW_PURPOSE`, `WHERE timestamp >= cutoff`) at the locked
+  14 days; there is no `COUNT(*) <= 5` anywhere in it, and a 30-day cutoff would
+  contradict item 7's locked 72h/14d/14d/60d ladder and invent a number. **The
+  "max-5 cap" is the UNCERTAINTY-node cognitive ceiling** (`create_uncertainty_node`,
+  Task 9), unrelated to Purpose — the Still Open row bundles two separate open
+  questions under one label, which is what caused the misread. **OQ6's real question
+  is untouched and still open:** what does "follow-through" structurally mean? The
+  current positive-valence query is explicitly "a stand-in over existing fields, to
+  be superseded by whatever query Module 2 specifies".
+* **Continuity contradiction signal — right question, cannot fire yet.** Correctly
+  grounded: §3 says *"neglected when updates have gapped for a long stretch, **or
+  new evidence contradicts rather than extends it**"*, and Continuity is the one
+  need the two-window model cannot serve because 60d is already the top rung. Two
+  problems: "the content opposes" is content judgment, and a REAL mechanism already
+  exists to reuse (`REALITY_CONTRADICTION`, delegated to the graph, Addendum §1/§4)
+  — reuse before invent. And contradiction is measured against narrative nodes,
+  which nothing writes, so today the signal would be a SECOND path that can never
+  fire, for the same reason `continuity_evidence` can never return True. **Sits
+  behind item 33's producer.**
+* **Random self-acknowledgment at Energy&lt;30 — rejected.** A 1-in-5 gate is a
+  probability: ask the percentage test's question and the answer is 20%, so it is a
+  number in disguise, and it is worse than a formula because a dice roll means her
+  self-disclosure has no meaning behind it — it skips the whole appraisal → meaning
+  → expression chain. "Prepend or weave a brief self-acknowledgment" would also have
+  the Daemon AUTHORING her words, which is the performance failure mode "a real
+  presence, not a persona" exists to prevent, and "if it feels forced, skip" is
+  undecidable by anything in the system. **The mechanism already exists:**
+  `soul_filter.py` appends `"acknowledge fatigue if it comes up naturally"` — v4 line
+  949's own wording — as a Field 5 constraint at Energy&lt;20 (the ruling cited &lt;30,
+  which is the "do not overextend" row). So "she never says it" is an UNMEASURED
+  claim about an existing instruction, and the precedent for that situation is item
+  22: measure the constraint the way `tools/measure_format_markers.py` measured the
+  Field 1 clause, and if it is silent, sharpen the wording.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4
