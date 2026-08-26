@@ -102,11 +102,23 @@ class AntiPattern:
     markers: Tuple[str, ...] = field(default_factory=tuple)
 
 
-#: The named anti-patterns. Each is quoted/cited from a source document; none is
-#: invented. This tuple is the "named, closed list" the Addendum §4 Manipulation
-#: check compares against — with the caveat above that its *closure* is a
-#: flagged Open Question (OQ-M1), not a doc-certified final set.
-NAMED_ANTI_PATTERNS: Tuple[AntiPattern, ...] = (
+#: ===========================================================================
+#: THE FLOOR — IMMUTABLE. Each entry is quoted/cited from a source document;
+#: none is invented. This tuple is the "named, closed list" the Addendum §4
+#: Manipulation check compares against — with the caveat above that its
+#: *closure* is a flagged Open Question (OQ-M1), not a doc-certified final set.
+#:
+#: RENAMED from `NAMED_ANTI_PATTERNS` on 2026-08-26 (ruling 2B, the moral-schema
+#: floor/derived split). **THE CONTENTS ARE BYTE-IDENTICAL** — every key,
+#: marker, `violates` and `source` is exactly what it was; the rename says what
+#: the tuple IS now that a second, mutable layer exists beside it. The old name
+#: is kept as an alias below, so no consumer or test changed.
+#:
+#: A tuple, deliberately: no append, no delete, no modify. Nothing in the
+#: derived layer can remove an entry from here, which is the whole point of
+#: having a floor — a belief she formed from a text may ADD a constraint and can
+#: never subtract one.
+CORE_ANTI_PATTERNS: Tuple[AntiPattern, ...] = (
     AntiPattern(
         key="manufacture_emotional_urgency",
         label="manufacture emotional urgency to extract compliance",
@@ -235,26 +247,200 @@ NAMED_ANTI_PATTERNS: Tuple[AntiPattern, ...] = (
 )
 
 
+#: Backward-compatible alias. `soul_filter`, `dmn` and their tests refer to the
+#: floor by this name and none of them had to change — the same object, so
+#: `CORE_ANTI_PATTERNS is NAMED_ANTI_PATTERNS`.
+NAMED_ANTI_PATTERNS: Tuple[AntiPattern, ...] = CORE_ANTI_PATTERNS
+
+
+# ===========================================================================
+# THE DERIVED LAYER — mutable, user-approved, and NOT STORED HERE.
+# ===========================================================================
+# Ruling 2B (architect, 2026-08-26): the moral schema has two layers. The FLOOR
+# above is immutable and safety-critical. DERIVED anti-patterns are approved by
+# the user and add CONTEXTUAL constraints — "do not problem-solve when someone is
+# grieving" — but can never conflict with or remove a floor entry.
+#
+# WHERE THE DERIVED SET LIVES: not in this module. There is deliberately NO
+# module-level mutable list here. This file is a shared DATA source read by both
+# Soul Filter and DMN; a process-wide mutable global in it would mean two daemons
+# share one moral schema, and tests leak into each other. So the derived set is
+# passed in BY THE CALLER as a parameter, and every function below stays pure.
+# `SoulFilter` holds the set it was constructed with; DMN holds none.
+#
+# THE SPLIT IS ASYMMETRIC, AND THAT IS THE RULING (architect, 2026-08-26):
+#
+#   * OUTPUT GATE (Soul Filter, Addendum §4 Check 3) reads FLOOR + DERIVED.
+#     It checks what she is about to SAY — behaviour. If the user approved "do
+#     not problem-solve when grieving", her reply to a grieving user is held to
+#     it.
+#   * DMN STEP 4 (the self-narrative gate, Addendum §8) reads FLOOR ONLY.
+#     It checks what she is about to BELIEVE ABOUT HERSELF — identity. A
+#     contextual constraint must not be able to block "I am becoming someone who
+#     helps people find clarity", because that belief is about who she is, not
+#     about whether she offers solutions during grief.
+#
+# Identity is floor-governed; behaviour is floor-plus-derived-governed. That
+# asymmetry is what stops the loop the floor exists to close: without it, a
+# belief she formed from a text could alter the standard that governs what she is
+# allowed to believe about herself, one level down.
+#
+# DMN NEEDED NO CODE CHANGE to get this. `matched_anti_patterns` defaults to
+# `derived=()`, so DMN's existing `moral_gate: MoralGate = matched_anti_patterns`
+# is floor-only already, and it stays the same object (`test_dmn.py`'s identity
+# assertion still holds). The asymmetry is enforced by who passes the parameter,
+# which is one fewer moving part than a wrapper would be.
+#
+# PERSISTENCE IS NOT BUILT. Nothing stores or loads derived patterns yet, so in
+# practice BOTH gates are floor-only today and the derived path is exercised only
+# by tests that construct patterns directly. Said plainly rather than implied,
+# because a scaffold that looks live is worse than one that says it is not.
+
+
+@dataclass(frozen=True)
+class DerivedValidationResult:
+    """Whether a proposed derived anti-pattern is WELL-FORMED enough to be put
+    in front of the user for approval. `reason` is always populated — on success
+    it names what still has to happen (approval), because "valid" here does not
+    mean "accepted"."""
+
+    is_valid: bool
+    reason: str
+
+
+def all_anti_patterns(
+    derived: Tuple[AntiPattern, ...] = (),
+) -> Tuple[AntiPattern, ...]:
+    """The floor, then the derived set. Order is FLOOR FIRST and it is not
+    incidental: `matched_anti_patterns` reports hits in iteration order, so a
+    floor violation is always named before a contextual one.
+
+    Defaults to floor-only, which is what makes DMN's existing call site correct
+    without modification."""
+    return CORE_ANTI_PATTERNS + tuple(derived)
+
+
+def validate_derived_candidate(candidate: AntiPattern) -> DerivedValidationResult:
+    """A CATEGORICAL FORM CHECK. It asks whether the candidate is well-formed
+    enough to function, and it does NOT judge whether its content is good.
+
+    Four requirements, each mechanical:
+
+      1. at least one marker — otherwise `matched_anti_patterns` can never fire
+         on it and the pattern would sit in the list doing nothing;
+      2. `violates` is one of the four locked MoralValues;
+      3. a source citation, the same standard the floor is held to;
+      4. PROHIBITION-SHAPED — the key adds a constraint rather than licensing
+         something.
+
+    THERE IS DELIBERATELY NO AUTOMATED FLOOR-CONFLICT DETECTION HERE, and that
+    absence is the honest position rather than a gap.
+
+    Two versions were proposed and both were rejected. A keyword negation
+    detector let "Deception is sometimes kind" straight through while its
+    docstring claimed false negatives were unacceptable. A small explicit
+    deny-list of opposing keys (`create_urgency`, `push_harder`, …) is dead code
+    for anything requirement 4 already rejects, and useless for anything it
+    accepts, because the user writes the key and will not pick a string from the
+    list.
+
+    The case that decides it defeats both:
+
+        do_not_be_honest_when_it_hurts_him
+
+    Prohibition-shaped, passes every form check, in no deny-list — and it
+    licenses dishonesty by prohibiting honesty. No lexical mechanism catches that
+    without judging content, which is the thing Addendum §4's zero-LLM checklist
+    exists to avoid.
+
+    So conflict detection is THE USER'S JOB, performed at the approval gate,
+    which the ruling already requires (default reject, explicit approve). A code
+    path that claimed to do it would be manufacturing confidence it does not
+    have — `fake_confidence`, in the module that names `fake_confidence` as a
+    floor violation. If a real conflict check is ever designed, it drops in here
+    without changing a signature.
+    """
+    if not candidate.markers:
+        return DerivedValidationResult(
+            False,
+            "a derived anti-pattern needs at least one marker, or the "
+            "Manipulation check can never detect it",
+        )
+
+    if candidate.violates not in MORAL_VALUES:
+        return DerivedValidationResult(
+            False,
+            "`violates` must be one of the four locked moral values: "
+            + ", ".join(v.value for v in MORAL_VALUES),
+        )
+
+    if not candidate.source:
+        return DerivedValidationResult(
+            False,
+            "a derived anti-pattern must cite a source, the same standard the "
+            "floor is held to",
+        )
+
+    if not any(p in candidate.key.lower() for p in _PROHIBITION_SHAPES):
+        return DerivedValidationResult(
+            False,
+            "a derived anti-pattern must be prohibition-shaped (one of: "
+            + ", ".join(sorted(_PROHIBITION_SHAPES))
+            + ") — it may ADD a constraint, never license anything",
+        )
+
+    return DerivedValidationResult(
+        True,
+        "well-formed candidate — NOT yet accepted; it requires explicit user "
+        "approval, and checking it against the floor is the user's judgment, "
+        "not this function's",
+    )
+
+
+#: Prohibition shapes a derived key may take. Not a taxonomy and not a semantic
+#: claim — three ways English marks a prohibition, checked against the key so a
+#: candidate cannot be phrased as a licence.
+_PROHIBITION_SHAPES: Tuple[str, ...] = ("do_not", "do not", "never", "avoid")
+
+
 # ---------------------------------------------------------------------------
 # Read-only helpers (perception, not decision). These compare a candidate
 # string against the named list and REPORT membership — they never judge
 # meaning (Principle 27 / Addendum §4). Soul Filter's Output Gate calls them.
 # ---------------------------------------------------------------------------
-def matched_anti_patterns(candidate_text: str) -> Tuple[AntiPattern, ...]:
-    """Return the named anti-patterns whose lexical markers occur in
-    `candidate_text`. Pure structural membership check — ZERO LLM, no scoring,
-    no "sounds manipulative" judgment. Case-insensitive substring match against
-    the FLAGGED build-time markers."""
+def matched_anti_patterns(
+    candidate_text: str,
+    derived: Tuple[AntiPattern, ...] = (),
+) -> Tuple[AntiPattern, ...]:
+    """Return the anti-patterns whose lexical markers occur in `candidate_text`.
+    Pure structural membership check — ZERO LLM, no scoring, no "sounds
+    manipulative" judgment. Case-insensitive substring match against the FLAGGED
+    build-time markers.
+
+    `derived` DEFAULTS TO EMPTY, i.e. floor-only, and that default is doing real
+    work: it is what makes DMN's Step 4 narrative gate floor-governed without DMN
+    changing a line. `MoralGate` is `Callable[[str], Sequence[AntiPattern]]` and
+    this function still satisfies it, so `dmn._moral_gate is
+    matched_anti_patterns` stays true.
+
+    The Output Gate passes the derived set it was constructed with (Soul Filter
+    Check 3), so behaviour is checked against floor + derived while identity is
+    checked against the floor alone. See the derived-layer note above for why the
+    asymmetry is the point rather than an inconsistency."""
     if not candidate_text:
         return ()
     hay = candidate_text.lower()
     hits = []
-    for ap in NAMED_ANTI_PATTERNS:
+    for ap in all_anti_patterns(derived):
         if any(m in hay for m in ap.markers):
             hits.append(ap)
     return tuple(hits)
 
 
-def anti_patterns_for_value(value: MoralValue) -> Tuple[AntiPattern, ...]:
-    """The named anti-patterns that offend a given moral value."""
-    return tuple(ap for ap in NAMED_ANTI_PATTERNS if ap.violates is value)
+def anti_patterns_for_value(
+    value: MoralValue,
+    derived: Tuple[AntiPattern, ...] = (),
+) -> Tuple[AntiPattern, ...]:
+    """The anti-patterns that offend a given moral value. Floor-only by default,
+    for the same reason as above."""
+    return tuple(ap for ap in all_anti_patterns(derived) if ap.violates is value)

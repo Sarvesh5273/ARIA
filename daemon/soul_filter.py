@@ -453,11 +453,29 @@ class SoulFilter:
         graph: MemoryGraph,
         llm_client: LLMClient,
         on_reconsideration: Optional[Callable[[], None]] = None,
+        derived_anti_patterns: Tuple[AntiPattern, ...] = (),
     ) -> None:
         self._pad = pad_engine
         self._graph = graph
         self._llm = llm_client
         self._on_reconsideration = on_reconsideration
+        # DERIVED anti-patterns for Output Gate Check 3 (ruling 2B, 2026-08-26).
+        # The Output Gate checks what she is about to SAY — behaviour — against
+        # FLOOR + DERIVED. DMN Step 4 checks what she is about to BELIEVE ABOUT
+        # HERSELF against the FLOOR ONLY, and gets that from
+        # `matched_anti_patterns`' default. See `daemon/moral_schema.py`'s
+        # derived-layer note for why the asymmetry is the ruling rather than an
+        # inconsistency.
+        #
+        # Held HERE rather than in `moral_schema`, which is a shared data source:
+        # a module-level mutable list there would mean two daemons share one
+        # moral schema and tests leak into each other. Defaults to empty, so
+        # every existing caller is behaviourally unchanged, and NOTHING SUPPLIES
+        # IT YET — persistence for approved patterns is not built, so the Output
+        # Gate is floor-only in practice today.
+        self._derived_anti_patterns: Tuple[AntiPattern, ...] = tuple(
+            derived_anti_patterns
+        )
 
     # =======================================================================
     # Field translators (state → natural language; NUMBERS/STATE NEVER CROSS)
@@ -713,7 +731,11 @@ class SoulFilter:
         # -- Check 3 — MANIPULATION: candidate vs the moral schema's named,
         # closed anti-pattern list — a finite checklist comparison, NOT an
         # open-ended "sounds manipulative" judgment (Addendum §4). ZERO LLM. ---
-        matched = moral_schema.matched_anti_patterns(candidate_text)
+        # FLOOR + DERIVED here, deliberately (ruling 2B): this gate reads her
+        # BEHAVIOUR. DMN Step 4's identity gate reads the floor alone.
+        matched = moral_schema.matched_anti_patterns(
+            candidate_text, derived=self._derived_anti_patterns
+        )
         if matched:
             failed.append(GateCheck.MANIPULATION)
 
