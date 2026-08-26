@@ -8,11 +8,16 @@ Counts and line numbers below were last measured against the code on
 **2026-08-26**. They are measured values, not estimates — if you change code,
 re-measure rather than assuming.
 
-Full suite: **842 passed** with an embedding backend reachable — soul layer
-**626**, adapter layer **199**, cross-cutting **17**. Re-measured per file on
-2026-08-26 with `pytest --collect-only -q`, and the arithmetic is split per commit
-deliberately, because the total had drifted once already and one jump would credit
-the wrong commit:
+Full suite: **863 collected** — soul layer **647**, adapter layer **199**,
+cross-cutting **17**. With an embedding backend reachable that is 863 passed; on
+the 2026-08-26 measurement run Ollama was down, so it read **860 passed + 3
+skipped** — the documented real-model embedding arm, which skips rather than fails
+so `make check` stays hermetic. Stated as COLLECTED first because that is the
+figure that does not depend on what is running on the machine.
+
+Re-measured per file with `pytest --collect-only -q`, and the arithmetic is split
+per commit deliberately, because the total had drifted once already and one jump
+would credit the wrong commit:
 
 | step | delta | commit | where |
 |---|---|---|---|
@@ -20,6 +25,7 @@ the wrong commit:
 | 821 → 827 | +6 | `096c618` (item 30, PAD OQ4) | `pad_restore_boundary` 11→17 |
 | 827 → 838 | +11 | `a394825` (item 31, stage directions) | `session_buffer` 41→52 |
 | 838 → 842 | +4 | `cf0c353` (item 32, continuity note) | `daemon` 71→75 |
+| 842 → 863 | +21 | `8d57605` (item 34, moral-schema floor/derived) | **new file** `test_moral_schema.py` — the module had none |
 
 Adapter layer did not move in any of the four. **Cross-cutting stayed at 17**:
 that bucket is `pad_restore_boundary` alone, which is a cross-module boundary file
@@ -46,10 +52,14 @@ Per-file test counts as measured on 2026-08-26 — soul layer: appraisal_chain 6
 **audio_pipeline 32** (+3, ResLog 29C's VAD reset),
 backend_router 25,
 **daemon 75** (+5 ResLog 29A's third Energy state, +4 item 32's Continuity note),
-dmn 44, graph_manager 63, llm_interface 41, needs_system 47, pad_engine 53,
+dmn 44, graph_manager 63, llm_interface 41,
+**moral_schema 21** (NEW file, item 34 — the shared resource had no test file of
+its own; it was covered incidentally through `test_soul_filter.py`'s
+citation assertion and `test_dmn.py`'s gate-identity assertion),
+needs_system 47, pad_engine 53,
 **session_buffer 52** (+11, item 31: the stage-direction compounding loop),
 **soul_filter 68**, state_manager 38,
-visual_layer 24 — **626**. Plus **`pad_restore_boundary` 17** (+6, item 30),
+visual_layer 24 — **647**. Plus **`pad_restore_boundary` 17** (+6, item 30),
 which is a cross-module boundary file rather than one module's suite.
 
 `pad_engine` stays at **53** and `daemon/pad_engine.py` is byte-unchanged by item
@@ -71,7 +81,7 @@ the Qwen family rung),
 the strip, the all-narration case, the probe, dormancy, and the refusal of an
 unrecognised direction), **visual_adapters 28** — 199. Cross-cutting:
 **pad_restore_boundary 17**. Soul layer 626 (llm_interface 41 included; +5 on
-08-24 for ResLog 26's routing values). Total 842.
+08-24 for ResLog 26's routing values). Total 863.
 
 The 08-24 pass also fixed a latent FLAKY test rather than only adding: macOS
 `say` is not byte-deterministic — 39,898 bytes on 53 of 60 identical invocations
@@ -211,7 +221,7 @@ model (`retrieve`, `reality_contradiction_check`, `_vulnerability`,
 | 2 | Needs System | ✅ Implemented + tested (subagent build→audit, APPROVED 1st pass) | `daemon/needs_system.py` (EnergyTracker substrate + NeedsEvaluator categorical + facade) + `tests/test_needs_system.py` (47 tests) + `.kiro/specs/needs-system/{requirements,design,tasks}.md`. 4 needs strictly CATEGORICAL (enum satisfied/due/neglected, no numeric score — enum-identity at 1h vs 70h in-window proves no gradation, passes percentage test); Energy is PAD-isolated SUBSTRATE (no PADEngine import; mutator tripwire never fires; real PADEngine byte-identical before/after; k_load/k_rest flagged TODO(build-time)); windows 72h/14d/14d/60d (ResLog 7) via graph_manager evidence queries; reverts satisfied→due purely by clock; output IS the shared NeedStates contract (now in `daemon/types.py`, OQ-4 closed). F-2a/b/c/d resolved. **OQ-1 CLOSED 2026-08-20 — `neglected` is now emitted, via the TWO-WINDOW model.** The counter-based option was rejected: Addendum §3 rules it out in the same paragraph that establishes the three states (*"the state reverts on its own; nothing actively subtracts anything … not a running clock"*). Instead two windows over the SAME evidence query — `satisfied` if evidence in the need's own window, else `due` if in the next rung up, else `neglected` — which is the shape §3 uses for the one need it defines fully (*"neglected when updates have gapped for a long stretch"*: a long stretch is a wider window, not a counter). Connection 72h→14d, Growth 14d→60d, Purpose 14d→60d. Both windows are already-locked ladder values, so no window, constant, counter or storage is introduced; `graph_manager` needed no change because all four `*_evidence` methods already accept `window`. State stays a pure function of (now, graph) and NeedsEvaluator stays stateless (Req 11.2). Continuity remains TWO-valued — see Still Open. |
 | 3 | Memory Graph | ✅ Implemented + tested; OQ resolutions applied + RE-AUDITED (criteria a–e PASS) | Full spec at `.kiro/specs/memory-graph/{requirements,design,tasks}.md`; code `daemon/graph_manager.py` + `tests/test_graph_manager.py` (63 tests). Coded directly (not via Kiro) at architect instruction. SQLite backend; injected embedding model. Implementation audit fixed 5 defects (D1 continuity recency, D2 retrieve edge-dedup, D3 first-of-kind = Addendum §6 Q2×Q3 profile, D4 EmotionNode-stays-vivid, D5 resolution_path→null). Architect OQ resolutions RESOLVED+implemented: OQ3 (node-embedding side-table), OQ5 (total-elapsed decay), OQ4 (retrieval pure reorder, mood PRIMARY/need SECONDARY, no coefficient), OQ1-trigger (habituation via `register_edge_firing`, edge-salience-only guard). DEFERRED (TODO-flagged): OQ1-rate. **OQ2 CLOSED 2026-08-20 — the invented medium/low `base_salience` floors are REMOVED**, per ResLog item 9's literal *"Medium/Low → no floor, decays/discards as already locked"*; `_MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER` is deleted and `_compute_base_salience` falls through to 0.0 for those tiers, with the Critical 0.85 / High 0.55 floors untouched. The v4 Baumeister +0.15 negative bonus still stacks "on top of whichever floor applies", which for medium/low is nothing. NOT this module: OQ6 Purpose→M2; max-5-no-evictable = raise. **Final re-audit (criteria a–e) PASS**: retrieval is stable-sort ordering only (no weighted score — proven by hard-partition test); salience/habituation never wired to PAD/appraisal (no PADEngine import); deferrals all explicitly stubbed; no numeric beyond stated placeholders. F-3b/F-3c resolved (ResLog 8/10). |
 | 4 | Appraisal Chain | ✅ Implemented + tested (subagent build→audit loop) | `daemon/appraisal_chain.py` + `tests/test_appraisal_chain.py` (64 tests) + `.kiro/specs/appraisal-chain/{requirements,design,tasks}.md`. Full suite **514 passed**, verified independently. Built by subagent, independently audited (found+looped 1 medium defect — vacuous test masking a neutral-turn PAD crash — fixed so purely-neutral appraisal emits NO PAD event). Auditor APPROVED via mutation-testing: ×1.5 negativity-inflation FAILS the symmetric test (proves no weighted formula); PAD purity = 3 apply_appraisal_delta sites, no direct PAD writes, no graph._conn reach-ins. PAD delta = categorical direction {−1,0,+1} × categorical Q1 tier; coping_potential transient/emergency-gate-only. F-4a/F-4b/F-4f RESOLVED (ResLog 12/10); F-4d/F-4e = flagged build-time placeholders. **Conflict-arc 2nd close condition CLOSED 2026-08-20**: `_conflict_arc_absence_close()` runs once per turn, increments the absent counter for every open arc whose entity did not recur (including turns with no entity at all), and closes those at the threshold — categorical, the turns have passed or they have not. Absence closures write the same single `"resolved"` edge as a Q2 flip. `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD` is aliased to the spec-named `_ARC_CLOSE_ABSENT_TURNS` so the threshold and its `AppraisalConfig` override cannot drift; its value moved 3→5 by architect direction (both are TODO(build-time) placeholders, so no locked value was overridden). **Resolved-edge `base_salience` now DERIVED, not invented** (2026-08-20): the deleted `poignancy_base_hint()` returned 0.35 for medium/low — the same class of invented number removed from Module 3's OQ2. v4 "Argument Buffer Mode" names the multiplicand (*the resolution is "weighted 3× higher than **the conflict itself**"*), so the edge now takes the OPENING EventNode's own `base_salience`. An arc only opens on a Q2=negative EventNode, so the Baumeister +0.15 guarantees a non-zero multiplicand at every poignancy tier (critical 1.00→3.00, high 0.70→2.10, medium/low 0.15→0.45) and ResLog item 5's 3× always has something real to act on. **VALENCE_UNCERTAIN no longer closes arcs** (2026-08-20): only POSITIVE/NEUTRAL closes, per Addendum §1's literal wording — see the Closed table for why this was not a one-line change. **New public predicate `has_distress_markers()`**: the disjunction of `_distress_marker` and `_emergency_cue_kind`, exposed for the Daemon's STEP 4b distress gate; read-only, lexical, invents no lexicon. **Connection need-pref narrowed** (2026-08-20): `_need_prefs` keys Connection on `neglected` ALONE per Addendum §3 (*"When Connection is **neglected**, Stage 1 surfaces 'We'-perspective and Connection-positive edges first"*); it previously fired on `due` too — unavoidable while Needs System could not emit `neglected`, but it applied the strong preference at the weak state. Growth/Purpose/Continuity prefs are untouched; §3 exemplifies only Connection's profile. |
-| 5 | Soul Filter | ✅ Implemented + tested (subagent build→audit, APPROVED 1st pass) | `daemon/soul_filter.py` + `daemon/moral_schema.py` (shared resource: 4 values + 7 doc-cited anti-patterns) + `tests/test_soul_filter.py` (51 tests) + `.kiro/specs/soul-filter/{requirements,design,tasks}.md`. Full suite **535 passed**. Auditor independently verified 5 philosophy proofs: no numbers/state cross the LLM boundary (Behavioral Register = PAD-vs-baseline categorical words, Relational Register = stage→NL no label, only user message crosses); Output Gate = exactly 4 checks {honesty,consistency,manipulation,care}, ZERO LLM (proven w/ RaisingLLM), no 5th check, no numeric score, verify-not-decide (Principle 27); emergency REPLACES the five fields; moral-violation → corrective retry → minimum-safe; Field 4 = HOW-clause only (memory sentinel proven never to cross). F-5a/F-5b RESOLVED; OQ-M1 anti-pattern-list closure flagged (taxonomy not invented). NeedStates/LLMClient are injected contracts (M2/M9 pending). LOW follow-up: post-emergency re-entry instruction (needs Daemon cross-turn state — defer to M8). **ENERGY_CRITICAL (&lt;20) instruction CLOSED 2026-08-20** — it is no longer a dead constant. ARCHITECT RULING: Field 5 (Constraints) carries behavioural instructions, not prohibitions only, formalising existing practice since the Energy&lt;30 row (`"do not overextend"`) already lived there. v4's soul_filter instruction table line 949 supplies the &lt;20 row — *"You are running low. Acknowledge it if it comes up naturally."* — now emitted in constraint form as `"acknowledge fatigue if it comes up naturally"`. v4's *"You are running low"* clause is deliberately NOT passed through: that half is Energy state rendered as a claim, and state never crosses (Addendum §9). MAX-3 and "always specific actions" unchanged. Verified end-to-end into Module 9's assembled prompt with no digit and no state claim. The two gates are checked MOST-SEVERE-FIRST (&lt;20 before &lt;30): every base branch yields 2 or 3 constraints so at most ONE slot is ever free, and since Energy&lt;20 implies Energy&lt;30 the milder instruction would otherwise always take it and the &lt;20 row could never be emitted at all. Both remain independent `if`s, so both fire if a future base branch leaves two slots. |
+| 5 | Soul Filter | ✅ Implemented + tested (subagent build→audit, APPROVED 1st pass) | `daemon/soul_filter.py` + `daemon/moral_schema.py` (shared resource: 4 values + 7 doc-cited anti-patterns) + `tests/test_soul_filter.py` (51 tests) + `.kiro/specs/soul-filter/{requirements,design,tasks}.md`. Full suite **535 passed**. Auditor independently verified 5 philosophy proofs: no numbers/state cross the LLM boundary (Behavioral Register = PAD-vs-baseline categorical words, Relational Register = stage→NL no label, only user message crosses); Output Gate = exactly 4 checks {honesty,consistency,manipulation,care}, ZERO LLM (proven w/ RaisingLLM), no 5th check, no numeric score, verify-not-decide (Principle 27); emergency REPLACES the five fields; moral-violation → corrective retry → minimum-safe; Field 4 = HOW-clause only (memory sentinel proven never to cross). F-5a/F-5b RESOLVED; OQ-M1 anti-pattern-list closure flagged (taxonomy not invented). NeedStates/LLMClient are injected contracts (M2/M9 pending). LOW follow-up: post-emergency re-entry instruction (needs Daemon cross-turn state — defer to M8). **ENERGY_CRITICAL (&lt;20) instruction CLOSED 2026-08-20** — it is no longer a dead constant. ARCHITECT RULING: Field 5 (Constraints) carries behavioural instructions, not prohibitions only, formalising existing practice since the Energy&lt;30 row (`"do not overextend"`) already lived there. v4's soul_filter instruction table line 949 supplies the &lt;20 row — *"You are running low. Acknowledge it if it comes up naturally."* — now emitted in constraint form as `"acknowledge fatigue if it comes up naturally"`. v4's *"You are running low"* clause is deliberately NOT passed through: that half is Energy state rendered as a claim, and state never crosses (Addendum §9). MAX-3 and "always specific actions" unchanged. Verified end-to-end into Module 9's assembled prompt with no digit and no state claim. The two gates are checked MOST-SEVERE-FIRST (&lt;20 before &lt;30): every base branch yields 2 or 3 constraints so at most ONE slot is ever free, and since Energy&lt;20 implies Energy&lt;30 the milder instruction would otherwise always take it and the &lt;20 row could never be emitted at all. Both remain independent `if`s, so both fire if a future base branch leaves two slots. **Item 34 (2026-08-26, ruling 2B):** the constructor gained `derived_anti_patterns: Tuple[AntiPattern, ...] = ()` and Output Gate Check 3 passes it — the gate now reads FLOOR + DERIVED, because it checks what she is about to SAY (behaviour), while DMN Step 4's narrative gate reads the FLOOR ALONE because it checks what she is about to BELIEVE ABOUT HERSELF (identity). Still exactly FOUR checks; nothing was added to the gate, only to what Check 3 compares against. Default is empty and nothing supplies it yet, so behaviour is unchanged today. The set is held HERE rather than in `moral_schema` on purpose: that module is a shared data source, and a mutable global in it would mean two daemons share one moral schema. |
 | 6 | DMN / Idle Consolidation | ✅ Implemented + tested (subagent build→audit, looped 1×) | `daemon/dmn.py` + `tests/test_dmn.py` (44 tests) + `.kiro/specs/dmn/{requirements,design,tasks}.md`. Full suite at approval **452 passed** (current 514 — see header), verified independently (dmn imports OK). Audit caught a stray-space IndentationError making the module unimportable (build report's pass-count was not reproducible) → looped → fixed. 3 headline constraints verified: DMN NEVER writes PAD (aha → `submit_aha_insight` EVENT to Appraisal Chain; live PADEngine tripwire byte-identical); relational_stage transitions CATEGORICAL (enum, ≤1 gate-step, rupture −1 floored at observing, no score); self-narrative MORAL-GATED (blocked even with no audience). Quality record from OBSERVED next-turn reaction (anti-flattery). Energy&lt;20/critical → shallow (Steps 1+4). F-6b/c/d resolved. FLAGGED for M8/integration: OQ-1 Appraisal needs `submit_aha_insight` event entry; OQ-2 Memory Graph needs highest-salience-unconnected + predictability/dependability predicates; LOW: post-rupture BONDED re-advance on pre-rupture edge (fresh-evidence unspecified). |
 | 7 | Audio Pipeline | ✅ Implemented + tested (subagent build→audit, APPROVED 1st pass) | `daemon/audio_pipeline.py` + `tests/test_audio_pipeline.py` (29 tests) + `.kiro/specs/audio-pipeline/{requirements,design,tasks}.md`. Single module (ResLog 15): input chain (capture→ring→wake→speaker≥0.75→VAD→Whisper→text) + output chain (PAD→prosody→cloud→Kokoro fallback), all backends injected Protocols. F4/barge-in ZERO internal effect (tripwire vs real PADEngine: PAD byte-identical AND never even read; each handler = one playback.stop()); never writes PAD (read-only prosody), never appraises. Prosody directions per v4 Layer 5 (arousal inverse, dominance→lower pitch); magnitudes flagged TODO(F-7-prosody). Satisfies Daemon AudioPipelinePort unchanged. |
 | 8 | Daemon / Soul Tick | ✅ Implemented + tested (subagent build→audit, APPROVED 1st pass) | **Public surface went 2026-08-22: new read-only property `session_buffer_fullness`**, added alongside the existing observability properties (`soul_tick_count`, `attentional_focus`, `state`, `started`, …). The Daemon constructs its own `SessionBuffer`, so a caller had no handle to ask `fullness_state()` — and that is the one piece of the buffer's state a caller has business seeing, since it is what drives STEP 4's cognitive-load trigger. Read-only, categorical, NOT a decision surface, crosses no model boundary; it replaced a `daemon._session_buffer` reach-in in `main.py`. Covered by 2 tests (read-through equality, no setter, and a non-vacuous check that it tracks live turns). `daemon/aria_daemon.py` + `tests/test_daemon.py` (57 tests) + `.kiro/specs/daemon/{requirements,design,tasks}.md`. Full suite **514 passed**, verified independently. Two clocks SEPARATE (soul_tick never runs DMN; dmn_tick never decays PAD); Daemon computes no feeling (no `apply_appraisal_delta` CALL SITE in its source — the string occurs twice in the module docstring describing the constraint, so grep for `\.apply_appraisal_delta\s*\(` to verify, not the bare name); F4/barge-in ZERO internal effect (tripwire: PAD/Energy/graph/state byte-identical; each handler = one stop_playback()); HANDOFF contract exact (initialize() once + guarded, consistency_flags cleared each session, last_applied_valence round-trips); initiative keys on 'due', fires once, no-nag, enters at soul_filter skipping wake/STT. ADDITIVELY closed DMN's contract gaps (baseline preserved exactly): appraisal_chain.submit_aha_insight (aha routes through appraisal, DMN still never writes PAD), graph_manager predictability/dependability_evidence (structural booleans) + highest_salience_unconnected. F-8b resolved (ResLog 10); F-8a cadences build-time. OQ-2 initiative-on-'due' flagged. **Energy&lt;30 → Appraisal Stage 2 CLOSED 2026-08-20**, in `route_inbound_turn` STEP 4 beside the existing buffer-fullness trigger: `if self._needs.get_energy() < ENERGY_LOW: self._appraisal.submit_cognitive_load("heavy")`. Addendum §3 keeps the *"reasoning degrades below 30"* rule as an operational threshold gate, and v4's mechanism table files the "Cognitive load effect" as an "Appraisal modifier" reaching "Stage 2 appraisal + DMN depth check" — so it routes through the EXISTING `submit_cognitive_load` entry point. No new mechanism, no new number (`ENERGY_LOW` imported from its canonical home `daemon/types.py`), and Energy never crosses the module boundary: the Appraisal Chain holds no Energy handle and only the categorical load state crosses, exactly as buffer fullness does. **It SKIPS NOTHING** — Stages 0–6 all still run, the Stage-1 social-signal pre-pass (vulnerability check included) is untouched, and the emergency gate is untouched, so a tired ARIA still detects a crisis (tested). Rejected en route: an earlier proposal to skip `coping_potential` and the vulnerability check at low Energy would have disabled crisis detection outright and contradicted v4, which says emotional weighting *increases* below 30, not that perception is reduced. |
@@ -904,7 +914,9 @@ This file mixes two kinds of claim. Know which you are reading.
 | No medium/low `base_salience` floor | `grep -c _MEDIUM_LOW_BASE_SALIENCE_PLACEHOLDER daemon/graph_manager.py` returns 0 |
 | Energy&lt;30 fires the load modifier; Energy&lt;20 emits its instruction | measured per-band: 30.0 → neither; 29.0 → `"do not overextend"`; 19.0 → `"acknowledge fatigue if it comes up naturally"`; verified through to Module 9's assembled prompt with no digit present |
 | `neglected` is a step function | 360-hour hourly sweep: exactly two transitions, both on a locked window boundary. Note the graph's window test is INCLUSIVE (`created >= now - window`), so evidence exactly one window old still qualifies and the flip is the hour after |
-| Moral schema = 4 values + 7 anti-patterns | 7 `AntiPattern(` instances in `moral_schema.py` |
+| Moral schema = 4 values + a 7-entry immutable FLOOR, plus a derived layer that is a PARAMETER (item 34) | 7 `AntiPattern(` instances in `CORE_ANTI_PATTERNS`; `CORE_ANTI_PATTERNS is NAMED_ANTI_PATTERNS`; `test_moral_schema.py` asserts all seven doc-cited keys are still PRESENT (a removal fails, a future cited addition does not — OQ-M1 leaves closure open) and that `moral_schema` holds no module-level `list` attribute at all |
+| Identity is floor-governed, behaviour is floor+derived (item 34's asymmetry is WIRED, not documented) | `matched_anti_patterns(text, derived=())` defaults to floor-only, so `dmn._moral_gate is matched_anti_patterns` still holds and DMN Step 4 needed NO change; `SoulFilter` holds `derived_anti_patterns` and Check 3 passes it. One test drives the SAME narrative text down both paths: the derived pattern fires on the behaviour gate and not on the identity gate |
+| The floor's real markers survived item 34 | `manufacture_emotional_urgency` still `violates=NON_MANIPULATION` with "you have to act now"; tests assert `"now"` and `"urgency"` are NOT markers, and that "I'll do that now." matches nothing — a rewrite to bare-word markers would have made the Manipulation gate reject ordinary speech |
 | Output Gate = exactly 4 checks | `GateCheck` enum + `run_output_gate` appends only HONESTY / CONSISTENCY / MANIPULATION / CARE |
 | Need windows 72h/14d/14d/60d | `WINDOW_CONNECTION` / `_GROWTH` / `_PURPOSE` / `_CONTINUITY` |
 | Precision decay 72h/14d/60d | `DECAY_VIVID_TO_PRESENT` / `_PRESENT_TO_SOFTENED` / `_SOFTENED_TO_FADED` |
@@ -922,7 +934,7 @@ This file mixes two kinds of claim. Know which you are reading.
 
 | Claim | Verified |
 |---|---|
-| Full suite **842** passed; soul layer **626**, adapters 199, cross-cutting **17** (was 812 / 602 / 11 — +9 ResLog 29, +6 item 30, +11 item 31, +4 item 32; items 31 and 32 are both SOUL-layer, so cross-cutting did not move) | `make check` (suite + bundle sync); per-file `pytest --collect-only -q` on 2026-08-26 |
+| Full suite **863 collected**; soul layer **647**, adapters 199, cross-cutting **17** (was 812 / 602 / 11 — +9 ResLog 29, +6 item 30, +11 item 31, +4 item 32, +21 item 34; all of 31/32/34 are SOUL-layer, so cross-cutting has not moved since item 30) | `make check` (suite + bundle sync); per-file `pytest --collect-only -q` on 2026-08-26. Read 860 passed + 3 skipped on that run because Ollama was down; COLLECTED is quoted since it does not depend on the machine |
 | `daemon/pad_engine.py` byte-unchanged by item 30 | `git diff --exit-code daemon/pad_engine.py` clean at commit `096c618`; plus `test_pad_engine_is_still_byte_unchanged_by_this_fix` |
 | `_save_state` writes aria_state.json exactly ONCE (was 3×) | `test_save_state_writes_pad_and_valence_in_one_atomic_write` counts `_write_json_atomic` calls; measured 3 before the change, 1 after |
 | `qwen3.5:9b-mlx` is installed, 8.9 GB, 262144 context, reports `vision` + `tools` + `thinking` | `ollama list` and `ollama show gemma4:e2b-it-qat` / `ollama show qwen3.5:9b-mlx` — note E2B reports `audio` and Qwen does not |
@@ -1015,7 +1027,7 @@ worldviews nobody chose.
 
 | Type | Example | Today | With the belief system |
 |---|---|---|---|
-| Moral | "honesty matters more than comfort" | hardcoded in the anti-pattern list | evolved from what she has read and lived |
+| Moral | "honesty matters more than comfort" | hardcoded in the anti-pattern list | **floor stays hardcoded (item 34); contextual constraints are derived, user-approved, and can only ADD** |
 | Factual | "the speed of light is 299,792,458 m/s" | not stored — no knowledge base | stored, confidence-graded |
 | Philosophical | "the self is an illusion (Anatta)" | not stored | synthesised from texts she has read |
 | Relational | "he values directness over diplomacy" | partly in graph edges | synthesised, confidence-graded |
@@ -1049,18 +1061,43 @@ context-shaping role mood-congruent retrieval and need-preference already play
 
 ### Rulings required before ANY code (Rule 1)
 
-None of this is in v4, the Addendum, or the Resolution Log. Blocked on:
+None of this is in v4 or the Addendum. **One of the five is now ANSWERED and in
+the Resolution Log — ruling 2, item 34.** Four remain:
 
 1. Is `EventNode(kind="belief")` acceptable reuse, or does this need a new table?
-2. **Does the moral schema accept EVOLVING anti-patterns, or must it stay
-   hardcoded?** — *the largest of the five, and the one that collides with an
-   existing lock rather than filling a gap.* v4's section is titled "Moral Schema
+2. ~~Does the moral schema accept EVOLVING anti-patterns, or must it stay
+   hardcoded?~~ **ANSWERED 2026-08-26 — ruling 2B, Resolution Log item 34, commit
+   `8d57605`. BOTH: an immutable floor with a derived layer beside it.** This was
+   the largest of the five and the only one that collided with an existing lock
+   rather than filling a gap — v4's section is titled "Moral Schema
    (**Hardcoded**)", `project-rules.md` calls the four values and the named
    anti-pattern list load-bearing, and Addendum §8 makes that same schema the gate
-   on DMN Step 4's self-narrative writes. So an evolving schema would let a belief
-   she formed from a text change the standard that governs what she may believe
-   about herself — a loop with no floor. Answering this is not a detail of the
-   belief system; the belief system's safety rests on it.
+   on DMN Step 4's self-narrative writes, so an evolving schema would have let a
+   belief she formed from a text change the standard governing what she may
+   believe about herself: a loop with no floor.
+
+   The ruling closes the loop by making it ASYMMETRIC. The 7 cited anti-patterns
+   are the FLOOR — immutable, a tuple, byte-identical to what they were, and
+   nothing in the derived layer can remove one. Derived patterns are
+   user-approved, add CONTEXTUAL constraints, and are a PARAMETER rather than
+   module state. **The Output Gate reads floor + derived (behaviour — what she is
+   about to say). DMN Step 4 reads the floor alone (identity — what she is about
+   to believe about herself).** So a constraint like "do not problem-solve when
+   grieving" shapes how she speaks and cannot block "I am becoming someone who
+   helps people find clarity". Hardcoded stays hardcoded where v4 meant it;
+   evolution happens beside it, never underneath it.
+
+   **What the ruling does NOT give you, and this is load-bearing for step 5:**
+   there is deliberately no automated floor-conflict detection.
+   `do_not_be_honest_when_it_hurts_him` is prohibition-shaped, has markers, a
+   source and a valid value — and licenses dishonesty by prohibiting honesty. No
+   lexical mechanism catches that without judging content, which is what Addendum
+   §4's zero-LLM checklist exists to avoid. **Conflict detection is the USER'S
+   judgment at the approval gate**, and a test pins that this candidate passes the
+   form check so nobody closes the gap with a deny-list and makes the docstring's
+   claim false. What the form check does enforce is mechanical: at least one
+   marker (or the pattern can never fire), a `violates` from the locked four, a
+   source citation, and a prohibition-shaped key.
 3. May beliefs influence APPRAISAL (a soul-layer process), or must they stay in the
    wiring layer?
 4. What is the ingestion interface — a Daemon method, a meta-command, a tool?
@@ -1100,7 +1137,12 @@ verified is the same failure as a count nobody re-derives.
 2. Ingestion: text → chunks → claims → candidate beliefs
 3. Review interface: approve / reject / modify
 4. Integration with appraisal (ruling 3)
-5. Integration with moral schema (**ruling 2 — do not start before this lands**)
+5. Integration with moral schema — **ruling 2 has LANDED (item 34), and the
+   scaffold is already in the code**: `validate_derived_candidate` for the form
+   check, `all_anti_patterns(derived=...)` for composition, and the floor/derived
+   asymmetry wired through `SoulFilter` and DMN. What step 5 still needs is
+   PERSISTENCE (nothing stores approved patterns, so both gates are floor-only in
+   practice today) and the user approval flow (ruling 5)
 6. Self-belief producer, writing to the self EntityNode, which closes the
    self-continuity gap as a side effect
 

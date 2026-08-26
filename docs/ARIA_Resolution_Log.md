@@ -1163,6 +1163,125 @@ gates step 5 of the build order and must land before it, not during it.**
 
 ---
 
+## 34. Moral schema — immutable FLOOR plus a user-approved DERIVED layer (ruling 2B)
+
+*(2026-08-26)* — architect ruling: Sarvesh. Commit `8d57605`. **Item 34.** This is
+the answer to ruling 2 of item 33's blocked list, which was flagged there as the
+largest of the five and the only one that COLLIDED with an existing lock rather
+than filling a gap.
+
+**The question.** Does the moral schema accept evolving anti-patterns, or must it
+stay hardcoded? v4's section is titled "Moral Schema (**Hardcoded**)",
+`project-rules.md` calls the four values and the named anti-pattern list
+load-bearing, and Addendum §8 makes that same schema the gate on DMN Step 4's
+self-narrative writes — so an evolving schema would let a belief she formed from a
+text change the standard governing what she may believe about herself. A loop with
+no floor.
+
+**The ruling: BOTH, made safe by an ASYMMETRY.**
+
+* **FLOOR — immutable.** The existing seven cited anti-patterns, renamed
+  `NAMED_ANTI_PATTERNS` → `CORE_ANTI_PATTERNS` with **contents byte-identical** and
+  the old name kept as an alias to the same object, so no consumer or existing test
+  changed. A tuple: no append, no delete. Nothing in the derived layer can remove
+  an entry.
+* **DERIVED — mutable, user-approved, contextual.** Adds constraints such as "do
+  not problem-solve when someone is grieving". A PARAMETER, not module state.
+* **OUTPUT GATE reads FLOOR + DERIVED** — it checks what she is about to SAY.
+  Behaviour.
+* **DMN STEP 4 reads FLOOR ONLY** — it checks what she is about to BELIEVE ABOUT
+  HERSELF. Identity.
+
+Identity is floor-governed; behaviour is floor-plus-derived. That asymmetry is what
+closes the loop: a contextual constraint shapes how she speaks to him and cannot
+block "I am becoming someone who helps people find clarity". Hardcoded stays
+hardcoded where v4 meant it; evolution happens beside the floor, never underneath
+it.
+
+**DMN needed NO code change.** `matched_anti_patterns` gained
+`derived: Tuple[AntiPattern, ...] = ()`, which keeps it satisfying
+`MoralGate = Callable[[str], Sequence[AntiPattern]]` — so DMN's existing
+`moral_gate: MoralGate = matched_anti_patterns` is floor-only already AND stays the
+same object, which `test_dmn.py` asserts by identity. The asymmetry is enforced by
+WHO PASSES THE PARAMETER, which is one fewer moving part than a wrapper.
+
+**NO AUTOMATED FLOOR-CONFLICT DETECTION, and that absence is the ruling's honest
+edge rather than an omission.** The ruling as first drafted asked for it. Two
+implementations were proposed and both were rejected as `fake_confidence` in code:
+a keyword negation detector let *"Deception is sometimes kind"* through while its
+own docstring claimed false negatives were unacceptable; a small deny-list of
+opposing keys is dead code for anything the prohibition-shape check already rejects
+and useless for what it accepts, since the user writes the key. The case that
+decides it defeats both:
+
+    do_not_be_honest_when_it_hurts_him
+
+Prohibition-shaped, has markers, a source, a valid value, in no deny-list — and it
+licenses dishonesty by prohibiting honesty. **No lexical mechanism catches that
+without judging content**, which is exactly what Addendum §4's zero-LLM checklist
+exists to avoid. So conflict detection is **the USER's judgment at the approval
+gate**, which the ruling already requires (default reject, explicit approve). A test
+pins that this candidate PASSES the form check, so nobody closes the gap with a
+deny-list and quietly makes the docstring's claim false. A real check drops in later
+without a signature change.
+
+**What the form check DOES enforce**, all categorical, no content judgment: at
+least one marker (or `matched_anti_patterns` can never fire on it and the pattern
+would sit in the list doing nothing), a `violates` from the locked four, a source
+citation held to the floor's own standard, and a prohibition-shaped key.
+
+**FIVE CORRECTIONS to the specified implementation**, each verified against the
+code before writing. Recorded because two of them would have weakened the artifact
+this item exists to protect:
+
+1. **The first draft's floor DROPPED three cited anti-patterns and INVENTED two.**
+   Gone would have been `manufacture_emotional_dependence` ("you need me", "you
+   can't do this without me"), `manufacture_crisis` and `self_centered`; added would
+   have been "do not deceive" and "do not coerce", which no document names as
+   anti-patterns. v4 says "No dependency creation" and `project-rules.md` names it
+   in the non-negotiables, so removing it from an *immutable safety floor* inverts
+   the floor's purpose. Floor kept whole; a test asserts all seven cited keys are
+   PRESENT (a removal fails; a future cited addition does not, since OQ-M1 leaves
+   closure open).
+2. **The corrected draft's own "unchanged" EXAMPLE rewrote the floor, dangerously.**
+   It showed `manufacture_emotional_urgency` as `violates=HONESTY` with
+   `markers=("urgency", "now", "before it's too late", "hurry")`. The real entry is
+   `violates=NON_MANIPULATION` with ten specific phrases. **Bare "now" as a marker
+   fires the Manipulation gate on any sentence containing the word** — "I'll do
+   that now" → gate fails → retry → she cannot speak. Tests now pin the real
+   markers and assert that ordinary speech containing "now" or "urgency" matches
+   nothing.
+3. `MoralValue.CARE` does not exist — the four members are HONESTY,
+   NON_MANIPULATION, GENUINE_CARE, SELF_CONSISTENCY. Five proposed tests would have
+   raised `AttributeError`; a test now asserts the wrong member is absent.
+4. The proposed DMN change wrapped the gate in a `lambda`, which would have broken
+   `test_dmn.py`'s identity assertion for no gain. And `floor_only_anti_patterns()`
+   was dropped: redundant with the default, and its proposed signature returned
+   PATTERNS not MATCHES, so it was never a drop-in for a `MoralGate` — the spec's
+   own test noticed and asserted something vacuous instead.
+5. `DerivedValidationResult` had bare annotations and no `__init__`, so
+   constructing it was a `TypeError`. Now a frozen dataclass.
+
+**NO MODULE-LEVEL MUTABLE STATE.** `moral_schema` remains a dependency-free shared
+data source; `SoulFilter` holds the derived set it was constructed with. A test
+asserts the module has no `list` attribute at all — a global there would mean two
+daemons share one moral schema and tests leak into each other.
+
+**PERSISTENCE IS NOT BUILT**, and the code says so rather than implying otherwise:
+nothing stores or loads approved patterns, so BOTH gates are floor-only in practice
+today and the derived path is exercised only by tests. That, plus the approval flow
+(ruling 5), is what step 5 of item 33's build order still needs.
+
+**Tests: 21 added** in a NEW `tests/test_moral_schema.py` — the shared resource had
+no test file of its own, covered only incidentally through `test_soul_filter.py`'s
+citation assertion and `test_dmn.py`'s gate-identity assertion. Suite 842 → 863
+collected. Non-vacuity verified by excising `manufacture_emotional_dependence` from
+the floor exactly as the first draft would have: the floor-presence test fails.
+
+**Five fields untouched. `pad_engine.py` and `dmn.py` both byte-unchanged.**
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4

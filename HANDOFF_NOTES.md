@@ -1624,6 +1624,30 @@ than a formatting one is a judgment about who she is. That is an architect's cal
 even under an instruction to fix the defect, and OQ-M1 being open means the list
 awaits a ruling rather than being open for editing.
 
+**UPDATED 2026-08-26 — the landscape changed, and NOT in this route's favour.**
+Two things happened. Item 31 closed the COMPOUNDING half of the defect at a
+different boundary entirely: `SessionBuffer.get_context()` now strips markers
+before her replies re-enter as LLM context, so warm sessions no longer climb above
+the 3/16 base rate. Item 34 then split the moral schema into an immutable FLOOR
+plus a user-approved DERIVED layer — which looks like it opens this route and
+does not, for a mechanical reason worth writing down:
+
+**a derived anti-pattern is detected by SUBSTRING MARKERS, and bracket narration
+has no substring to match.** Every marker in the schema is a phrase of address —
+"you need me", "you owe me", "you're always right". `[I lean forward]` is a
+SYNTAX, and matching it needs a line-anchored regex, which
+`matched_anti_patterns` does not do and which `daemon/format_markers.py` does
+instead. So the derived layer cannot express this defect without either changing
+the schema's detection mechanism from substring to regex — a change to the most
+protected module — or enumerating a bodily-narration lexicon ("i lean forward",
+"my gaze"), which invents a taxonomy and false-positives on legitimate speech
+("I pause when I'm not sure" is true of her; thinking sounds are real).
+
+So the route is still open in principle, still needs the architect, and now has a
+sharper objection against it than "the schema is protected". **What remains
+uncovered is the BASE RATE and unmarked prose narration** — item 31 explicitly did
+not touch either.
+
 **Known gap, recorded so the detector is not mistaken for a guard:** narration with
 no marker at all gets through. Measured on the same run — *"I am sitting still. My
 attention is focused entirely on the words you are saying."* No lexical pattern
