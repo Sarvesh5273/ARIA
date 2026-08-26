@@ -159,6 +159,26 @@ not start talking out loud. See "Adapter layer" below.
   Energy recovery, the DMN clock and the visual refresh all advance only when a
   turn completes. This is a REPL limitation, not a module one, and the DMN
   observation below shows it has a real cost.
+
+  **The modules are already shaped for a real host** (recorded 2026-08-26 so
+  whoever builds one does not have to rediscover it). Four public entry points on
+  `AriaDaemon` are designed to be driven from a timer thread or async loop, and
+  each takes an injectable `now` so the host owns the clock:
+  `soul_tick(now=None)`, `dmn_tick(now=None)`, `run_scheduler_step(now=None)`
+  (drives both and returns what fired), and `save_periodic()`. Nothing about the
+  soul layer needs to change for a real host — the REPL simply never calls them
+  between turns. Note the method is `soul_tick`, not `on_soul_tick`, and there is
+  no `on_idle_recovery`: idle recovery is one of the three Energy states *inside*
+  `soul_tick` (ResLog 29A), not a separate entry point.
+
+  **This is a host limitation AND it has a measured cost — both, not one instead
+  of the other.** It would be convenient to file this as "architecturally correct,
+  no code change needed" and close it, and that would erase a finding: under the
+  synchronous REPL, `_output_pending` is never True when a tick lands, so Energy
+  only ever HOLDS or RECOVERS and the depletion branch is unreachable (ResLog
+  29A's own left-open consequence). The DMN observation below is what surfaced it.
+  So the row stays as a known limitation of the development host rather than a
+  resolved question.
 - **`requirements.txt` is still pytest only, and the soul layer still has zero
   runtime dependencies.** The cloud adapter and both TTS paths use stdlib
   `urllib`/`subprocess`; the audio and visual providers are imported LAZILY, so
@@ -939,6 +959,7 @@ This file mixes two kinds of claim. Know which you are reading.
 | `_save_state` writes aria_state.json exactly ONCE (was 3×) | `test_save_state_writes_pad_and_valence_in_one_atomic_write` counts `_write_json_atomic` calls; measured 3 before the change, 1 after |
 | `qwen3.5:9b-mlx` is installed, 8.9 GB, 262144 context, reports `vision` + `tools` + `thinking` | `ollama list` and `ollama show gemma4:e2b-it-qat` / `ollama show qwen3.5:9b-mlx` — note E2B reports `audio` and Qwen does not |
 | The ~13–14 tok/s figure behind ResLog 24 is NOT project-measured | no harness run exists against that tag; `tools/compare_local_models.py qwen3.5:9b-mlx gemma4:e2b-it-qat` is what would produce one |
+| **Speed baseline for `qwen3.5:9b-mlx`: STILL UNMEASURED. Attempted 2026-08-26, blocked — not skipped.** | `tools/compare_local_models.py qwen3.5:9b-mlx` was run and REFUSED TO START, cleanly rather than crashing: *"cannot start: embedding backend unreachable at http://localhost:11434: [Errno 61] Connection refused"*, then printed the remedy (`ollama serve`, `ollama pull all-minilm`) and the consequence (without it, retrieval ordering, REALITY_CONTRADICTION, VULNERABILITY_DISCLOSURE and habituation are all inert). So the tool's own guard is verified working; what is missing is a host with Ollama running. **What still rests on the unmeasured number:** `session_buffer.py:76` sets the 10.0 tok/s floor explicitly "below the qwen3.5:9b-mlx baseline the architect reports (~13-14 tok/s)" — so if the real baseline is at or under 10.0, that floor is not a floor. Re-run on a machine with the daemon up and replace this row with the figure. |
 | A stage direction is no longer spoken | `_for_speech("(Aria listens…) Just the words.") == "Just the words."`, exact; plus rendered audio within a tenth of the narration's own length. NOT exact byte equality — `say` wobbles 94 bytes on ~12% of calls |
 | `say` is not byte-deterministic | 60 identical invocations returned 39,898 bytes 53 times and 39,804 bytes 7 times |
 | Prosody probe agrees with the gap report | `prosody_support` unsupported set == the field names in `unmapped_prosody`, both derived from one declaration; `_ProsodyRecorder(unmapped=["pitch_shft"])` raises |
