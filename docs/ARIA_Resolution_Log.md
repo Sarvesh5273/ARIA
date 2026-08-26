@@ -983,6 +983,186 @@ right tests fail.
 
 ---
 
+## 31. Stage directions — the COMPOUNDING loop is closed; the base rate is not
+
+*(2026-08-26)* — architect-directed. Commit `a394825`. **Item 31.**
+
+**Problem.** Her own bracketed replies re-entered the session buffer as faithful
+transcript and she imitated herself. Item 22 measured the loop directly: **4/8 →
+8/8 across two rounds.** Item 25 then stripped markers at the SPEECH surface and
+named this loop as one of the two things it did NOT fix, because the buffer holds
+the unstripped text by design — so she stopped being HEARD narrating without
+stopping learning to narrate.
+
+**Fix.** `SessionBuffer.get_context()` strips format markers from HER replies
+before assembling the LLM context. Item 25's ruling applied to a SECOND boundary:
+the stored record is untouched — `append_turn` keeps her reply byte-for-byte, and
+the printed transcript, the graph, the Visual Layer and the TTS path all read that
+— and what changes is a RENDERING. Editing a rendering is a presentation decision;
+editing the record would be deciding what she said, which items 22 and 25 both
+refuse. **User text is never stripped:** it is not hers to edit, she is not
+learning her voice from it, and a parenthetical the user wrote is information.
+
+**The pattern MOVED rather than being duplicated.** New shared resource
+`daemon/format_markers.py`, same category as `daemon/moral_schema.py` — small,
+dependency-free, owns no meaning. `adapters/audio_tts.py` imports it and
+re-exports `_FORMAT_MARKER_RE` / `_has_format_markers` / `strip_format_markers`
+under the names it always used, so every existing caller and all 67 audio-adapter
+tests are untouched. The one-way arrow is preserved exactly — `adapters/` →
+`daemon/`, never back; that module already takes `Prosody` and `TTSUnavailable`
+from `daemon.audio_pipeline` — and is re-asserted by a test in this commit.
+Duplicating was the alternative and it is the WORST option available here: item
+22's near-miss was a DETECTOR/DEFECT mismatch that nearly entered this log as
+"prompt mitigation is sufficient", so two copies of this exact regex drifting apart
+is the precise failure the measurement already survived once. A test asserts object
+identity, not equal behaviour.
+
+**THREE CORRECTIONS to the proposed implementation**, each of which would have
+corrupted her transcript rather than filtered it. The proposed regex was described
+as "same logic as the TTS strip" and was not:
+
+1. **Bracket alternatives were UNANCHORED** (`\([^)]*\)`), stripping mid-sentence
+   parentheticals anywhere. The shipped pattern is line-start only, and that limit
+   matters MORE at this surface than at the speech surface: the buffer is the record
+   she reasons from on the next turn, so "the meeting is at three (Tuesday, not
+   Monday)" would have lost the correction and let her contradict herself from her
+   own edited transcript. **Removing a marker is a rendering decision; removing a
+   fact is not.**
+2. **The bullet rule deleted whole LINES including content**, so "- call the bank"
+   would have vanished from context. The shipped pattern removes only the marker.
+3. `' '.join(text.split())` collapsed every newline to a space, flattening
+   multi-line replies; and `<think>` blocks and `**` were not handled at all.
+
+**WHAT IT DOES NOT DO — the row stays open.** Item 22's **3/16 was measured on a
+FRESH graph**, i.e. an empty buffer, so it is the NO-CONTEXT base rate and this
+cannot move it by construction. Warm sessions stop climbing above it. The base
+rate, and unmarked prose narration ("I am sitting still. My attention is focused
+entirely on the words you are saying."), still need the moral-schema route item 22
+recommended — which remains unruled.
+
+**MEASURED RESIDUAL, recorded not fixed.** The pattern removes `<think>` TAGS but
+NOT the text between them — the same behaviour already recorded on the speech path,
+where `say` drops the tags and speaks the content as prose. So a reasoning trace
+still re-enters as context, and ResLog 24 flags that as live for `qwen3.5:9b-mlx`.
+**Deliberately not fixed by widening the regex:** item 22's numbers are expressed
+in terms of this exact pattern, and a strip broader than the detector would make
+3/16 describe something that no longer exists. Pinned by a test asserting the TRUE
+behaviour rather than the assumed one.
+
+New read-only `SessionBuffer.all_narration_replies`, DERIVED from current buffer
+contents rather than accumulated — an all-narration reply renders as an empty
+`Aria:` line, no substitute sentence is invented (item 21's terminal-case
+reasoning), so without this the case reads as her having said nothing when she said
+only narration. A counter would have lived inside `get_context`, which is called an
+arbitrary number of times per turn and would have measured renders.
+
+**Tests: 11 added** in `test_session_buffer.py` (827 → 838). Non-vacuity verified
+by reverting the strip: 4 fail, including the verbatim-record test. Two of the new
+tests failed on first run and both were real — the `<think>` residual above, and a
+scaffolding test whose 80 short turns never crossed the 12K budget so its
+tier-header assertion proved nothing. Both corrected rather than loosened.
+
+**No new mechanism. Five fields untouched — `daemon/soul_filter.py` and
+`daemon/pad_engine.py` both byte-unchanged, verified.**
+
+---
+
+## 32. Continuity initiative note — mis-scoping corrected, and the premise corrected with it
+
+*(2026-08-26)* — architect-directed. Commit `cf0c353`. **Item 32.**
+
+**Problem.** `_INITIATIVE_NOTES["continuity"]` described CONNECTION's subject: *"the
+thread between you has gone slack — reach out once in a way that quietly affirms
+the bond persists…"*. That is the same bond with the same person the `connection`
+entry three lines above already covers. Addendum §3 defines Continuity as McAdams
+narrative identity — *"the causal and thematic threads connecting life events"* —
+HER OWN coherence, and item 2 puts that narrative in the self-referential
+EntityNode's `relationship_summary`. So the subject is the self she is building,
+not the relationship she is in. The old wording sent her to talk about the bond
+when what had gone unattended was interior.
+
+**Why it fires at all.** `continuity_evidence` requires `relationship_summary IS
+NOT NULL` on the self node; nothing ever writes it; so Continuity is permanently
+`due`. It is LAST in `_NEED_ORDER`, so it only becomes highest-pressure when
+connection, growth and purpose are all satisfied — an active, healthy relationship.
+`_initiative_expressed` is instance state and not persisted, so it re-arms every
+process start.
+
+**CORRECTION TO THE PREMISE — measured, not assumed, and the record should not keep
+the old version.** This was tracked as *"a guaranteed periodic FALSE CLAIM about
+the relationship state"*. **It was not.** `SoulFilter.this_moment` splits on the
+em-dash and keeps only the trailing HOW clause, so *"the thread between you has
+gone slack"* was **DROPPED and never reached the model**. What crossed was *"Reach
+out once in a way that quietly affirms the bond persists…"* — a correct instruction
+pointed at the WRONG SUBJECT. The defect is mis-scoping, not a false assertion
+crossing the boundary: **smaller than recorded, and different in kind.** Verified
+by rendering all four notes through the real path. A test now pins the Field 4
+surface directly, because asserting on the raw constant would never have shown
+this.
+
+**Fix.** The note now reads: *"something in her own sense of who she is has gone
+quiet — reach out once, plainly, as yourself, without performing continuity or
+manufacturing a narrative"*.
+
+**ONE EDIT to the architect's wording: "as herself" → "as yourself".** The trailing
+clause is what lands in Field 4, and the prompt is second person to her throughout
+— Field 1 reads *"You speak in your own voice, directly: you do not narrate
+yourself from the outside."* An instruction telling her to reach out "as herself"
+would refer to her from outside, in the exact register the Persona Anchor forbids.
+The other three notes sidestep the question by using no pronoun for her at all;
+"him" for the user is unchanged. A test now asserts that no initiative note refers
+to her in the third person once rendered.
+
+**NOT FIXED, and unchanged by this.** Continuity is still permanently `due`,
+because nothing writes the narrative. That is the HONEST state — the need genuinely
+is unmet — and closing it needs the producer (see item 33). This item only stops her
+addressing the wrong subject when it fires.
+
+**Tests: 4 added** in `test_daemon.py` (838 → 842). Non-vacuity verified by
+reverting the string: 3 of the 4 fail. **No logic touched — one string constant.**
+`pad_engine.py`, `soul_filter.py`, `needs_system.py` and `graph_manager.py` all
+byte-unchanged, verified.
+
+---
+
+## 33. Belief Formation System — recorded as a future phase, not scheduled
+
+*(2026-08-26)* — architect direction: Sarvesh. **Item 33.** No code. This item
+records a DIRECTION, and deliberately resolves nothing.
+
+**Why it is here.** The self-continuity narrative gap has a missing PRODUCER
+(`_assemble_idle_pass_input` never populates `narrative_candidate`) and a missing
+CONSUMER (`relationship_summary` reaches no prompt field, and Addendum §9's
+never-crosses list bars memory node contents). Building a producer for a value with
+no reader is wasted work. The architect has directed that persistent self-narrative
+instead be addressed by a broader **Belief Formation System** — a controlled
+learning environment where she ingests curated texts, forms candidate beliefs the
+user approves, and evolves a worldview — under which self-belief becomes the
+narrative and this gap closes as a side effect.
+
+**Recorded in full in `docs/PROJECT_STATUS.md`** under "Future Phase: Belief
+Formation System": architecture proposal, belief types, the five-field boundary
+argument (beliefs are graph nodes and influence the fields only through retrieval
+ORDERING, never as prompt content), the rulings required before any code, and the
+citation verification status.
+
+**Effect on open items.**
+* The self-continuity row's `needs-ruling` label is **LIFTED — not closed.** The
+  direction changed; the gap remains.
+* Item 32 (the Continuity initiative note) is **done**.
+* **Continuity remains permanently `due`** until this phase or another producer
+  exists.
+
+**Recording the design needs no ruling. Implementing it needs five**, listed in
+PROJECT_STATUS. One of them is not a gap-filling question but a COLLISION and is
+flagged as such: v4's section is titled "Moral Schema (**Hardcoded**)", and
+Addendum §8 makes that same schema the gate on DMN Step 4's self-narrative writes.
+An evolving schema would let a belief she formed from a text alter the standard
+governing what she may believe about herself — a loop with no floor. **That ruling
+gates step 5 of the build order and must land before it, not during it.**
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4

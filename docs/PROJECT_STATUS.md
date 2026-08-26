@@ -8,21 +8,28 @@ Counts and line numbers below were last measured against the code on
 **2026-08-26**. They are measured values, not estimates — if you change code,
 re-measure rather than assuming.
 
-Full suite: **827 passed** with an embedding backend reachable — soul layer
-**611**, adapter layer **199**, cross-cutting **17**. Re-measured per file on
-2026-08-26, and the arithmetic is split two ways deliberately, because the figure
-had drifted for a reason worth recording: this file read **812** while the suite
-actually ran **821** before the OQ4 commit. The 9-test gap was **ResLog 29's own
-commit** (`6582795`), which added 9 tests — daemon 66→71, audio_pipeline 29→32,
-session_buffer 40→41 — and never updated the tracker. The OQ4 commit
-(`096c618`, Resolution Log item 30) added the other **6**, all in
-`pad_restore_boundary` (11→17). So 812 → 827 is +9 owed to the previous commit
-and +6 to this one; recording it as one jump would credit the OQ4 fix with tests
-it did not write. Adapter layer did not move.
+Full suite: **842 passed** with an embedding backend reachable — soul layer
+**626**, adapter layer **199**, cross-cutting **17**. Re-measured per file on
+2026-08-26 with `pytest --collect-only -q`, and the arithmetic is split per commit
+deliberately, because the total had drifted once already and one jump would credit
+the wrong commit:
+
+| step | delta | commit | where |
+|---|---|---|---|
+| 812 → 821 | +9 | `6582795` (ResLog 29) | daemon 66→71, audio_pipeline 29→32, session_buffer 40→41 — **never recorded in this file at the time** |
+| 821 → 827 | +6 | `096c618` (item 30, PAD OQ4) | `pad_restore_boundary` 11→17 |
+| 827 → 838 | +11 | `a394825` (item 31, stage directions) | `session_buffer` 41→52 |
+| 838 → 842 | +4 | `cf0c353` (item 32, continuity note) | `daemon` 71→75 |
+
+Adapter layer did not move in any of the four. **Cross-cutting stayed at 17**:
+that bucket is `pad_restore_boundary` alone, which is a cross-module boundary file
+rather than one module's suite. Item 31's 11 tests are SOUL-LAYER — `session_buffer`
+is Module 12 — which is why soul went 611 → 626 rather than cross-cutting going
+17 → 28.
 
 Without an embedding backend reachable, the
 same 3 tests skip and the rest pass — measured directly at 723 + 3 skipped when
-the suite stood at 726, so the figure today is **824 + 3**. Stated that way because
+the suite stood at 726, so the figure today is **839 + 3**. Stated that way because
 the macOS Ollama.app restarts the daemon on its own, which makes the
 backend-down arm awkward to re-measure on demand. *(This read "755 + 3" until
 2026-08-26 — stale by a different amount again, since 755 + 3 describes a
@@ -37,11 +44,12 @@ made the output chain verifiable rather than only unit-tested.
 
 Per-file test counts as measured on 2026-08-26 — soul layer: appraisal_chain 64,
 **audio_pipeline 32** (+3, ResLog 29C's VAD reset),
-backend_router 25, **daemon 71** (+5, ResLog 29A's third Energy state),
+backend_router 25,
+**daemon 75** (+5 ResLog 29A's third Energy state, +4 item 32's Continuity note),
 dmn 44, graph_manager 63, llm_interface 41, needs_system 47, pad_engine 53,
-**session_buffer 41** (+1, ResLog 29B's latch re-arm),
+**session_buffer 52** (+11, item 31: the stage-direction compounding loop),
 **soul_filter 68**, state_manager 38,
-visual_layer 24 — **611**. Plus **`pad_restore_boundary` 17** (+6, item 30),
+visual_layer 24 — **626**. Plus **`pad_restore_boundary` 17** (+6, item 30),
 which is a cross-module boundary file rather than one module's suite.
 
 `pad_engine` stays at **53** and `daemon/pad_engine.py` is byte-unchanged by item
@@ -62,8 +70,8 @@ the Qwen family rung),
 **audio_adapters 67** (+5 on 08-24 for ResLog 25/27:
 the strip, the all-narration case, the probe, dormancy, and the refusal of an
 unrecognised direction), **visual_adapters 28** — 199. Cross-cutting:
-**pad_restore_boundary 17**. Soul layer 611 (llm_interface 41 included; +5 on
-08-24 for ResLog 26's routing values). Total 827.
+**pad_restore_boundary 17**. Soul layer 626 (llm_interface 41 included; +5 on
+08-24 for ResLog 26's routing values). Total 842.
 
 The 08-24 pass also fixed a latent FLAKY test rather than only adding: macOS
 `say` is not byte-deterministic — 39,898 bytes on 53 of 60 identical invocations
@@ -330,19 +338,33 @@ A row that is neither — a decision made and recorded — does not belong here.
 | v4 non-prohibition instruction rows with no home | `needs-ruling` · 🔓 OPEN — **3 of v4's 4 uncertainty rows now live; row 945 is NOT implementable** | v4 has FOUR uncertainty rows in the soul_filter table, not two. **Live:** 943 *"Uncertainty node unresolved → Don't fake confidence"* (base branch); **944** *"INPUT_UNCERTAIN active → Be present. Don't project onto what you don't know yet"* and **946** *"Uncertainty resolved this turn → Something just became clearer. You can let that show"* — both implemented 2026-08-20, both purely categorical off signals `AppraisalResult` already carried (`uncertainty_node_id` + a graph type read; `resolved_uncertainty_ids`). No lexicon, no threshold, no new quantity. **PARKED — row 945** *"Uncertainty weight above 0.5"*: the phrase `"uncertainty weight"` occurs **exactly once** in the entire precedence chain (v4 line 945); no `uncertainty_weight` symbol exists in `daemon/` or `tests/`; `UncertaintyNode`'s only numerics are `interaction_count` and the `catch_up_*` PAD fields, and repurposing either would invent a *meaning* for an existing number. There is no `0.5` to compare against. Implementing it requires a formula producing a number that decides what she says about her own interior — the protected chain's core prohibition, and it fails the percentage test on sight. Rule 1: flagged, not invented. This was mis-described as "ready, ~30 min" three times in handoff summaries; `test_v4_uncertainty_row_945_is_not_implemented` now pins the absence so it reads as a decision. **Still genuinely open:** v4's Energy<30 self-acknowledgment (*"I'm not thinking clearly right now"*), held back separately — it is a disclosure about internal state, which brushes §9 in a way the other permissions do not. |
 | OQ1-rate habituation magnitudes | `needs-runtime` · 🔓 DEFERRED — **first real data 2026-08-22** | `_HABITUATION_SIMILARITY_CUTOFF = 0.9`, `_HABITUATION_DECREMENT = 0.05`, `_HABITUATION_RECENT_FIRINGS = 5` — all carry `TODO(OQ1-rate)` and the module docstring lists them under "DEFERRED (explicit placeholder + TODO — do NOT treat as final)". Runtime-tuned. **This row previously appeared in the Closed table marked resolved, which contradicted both the code and the Module 3 row. The trigger shape is closed; the rate is not.** The CUTOFF now has a real measurement behind it — see "First real embedding calibration data" below: at 0.9 a near-duplicate (0.950) and a shared-word paraphrase (0.910) are indistinguishable. The decrement and window still need her running. |
 | Build-time tuning constants | `needs-runtime` · 🔓 OPEN | All still placeholders (intentional). Inventory re-measured 2026-08-20: `PAD_HISTORY_LENGTH`; `K_LOAD`/`K_REST` (F-2a/F-2b); OQ1-rate habituation (above); appraisal arc turn-counts (`_ARC_OPEN_CONSECUTIVE_NEGATIVE` = 2, `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD` = 5, aliased to the spec-named `_ARC_CLOSE_ABSENT_TURNS`) + distress/social lexicons (F-4d/F-4e); moral-schema anti-pattern markers (OQ-M1); soul-filter deflection markers; prosody magnitudes (F-7-prosody); zone precedence (F-10-zone-precedence); `TIER_2_KEYWORDS` + `HEALTH_CACHE_TTL_SECONDS`; soul-tick 3s / DMN-tick 30s (F-8a). **REMOVED from this inventory:** OQ2 medium/low `base_salience` (floors deleted) and the resolved-edge `base_salience` hint (now derived from the opening EventNode) — both were invented magnitudes, not tuning knobs. **ADDED 2026-08-22, adapter layer:** `embedding_local` timeout + cache size, `transport_ollama` generation timeout — transport plumbing, no soul meaning. **Three existing entries now have measured data rather than none:** `_VULNERABILITY_SIM_CUTOFF`, `_HABITUATION_SIMILARITY_CUTOFF`, `_REALITY_CONTRADICTION_SIM_CUTOFF` — see "First real embedding calibration data" below. One of the three looks wrong on the evidence; none was changed. |
-| The self-continuity narrative can never be written | `needs-ruling` · 🔓 OPEN — **observed 2026-08-22, previously only inferred** | Step 4 reported `narrative_status = no_candidate` on the real pass, and it always will: `AriaDaemon._assemble_idle_pass_input` never sets `DMNPassInput.narrative_candidate`. Module 6's design already flags generating the narrative text as an upstream concern and Module 6 correctly GATES rather than generates (moral gate + pattern-recurred gate, both verified). What is missing is the producer. Who writes "who she is becoming", and from what, is a design decision — not a wiring gap. |
+| Self-continuity narrative producer | **SUPERSEDED 2026-08-26** — `needs-ruling` LIFTED, direction changed (ResLog item 33). Not closed: still open, but no longer waiting on a ruling about *this* mechanism. The gap has a missing PRODUCER and a missing CONSUMER — `relationship_summary` reaches no prompt field, and Addendum §9's never-crosses list bars memory node contents — so building a producer for a value with no reader is wasted work. Architect direction: persistent self-narrative is addressed by the **Future Phase: Belief Formation System** (recorded at the end of this file), where beliefs about herself become the narrative and this closes as a side effect. **Item 3a is already done** (ResLog item 32, commit `cf0c353`): the Continuity initiative note now describes her own narrative instead of the relationship bond. **Continuity stays permanently `due`** until the belief system or some other producer exists — which is the honest state, because the need genuinely is unmet. · **observed 2026-08-22, previously only inferred** | Step 4 reported `narrative_status = no_candidate` on the real pass, and it always will: `AriaDaemon._assemble_idle_pass_input` never sets `DMNPassInput.narrative_candidate`. Module 6's design already flags generating the narrative text as an upstream concern and Module 6 correctly GATES rather than generates (moral gate + pattern-recurred gate, both verified). What is missing is the producer. Who writes "who she is becoming", and from what, is a design decision — not a wiring gap. |
 | v4's Layer 5 prosody: two of three directions reach nothing | `needs-ruling` · 🔓 OPEN — **narrowed 2026-08-24 by ResLog 27; still needs a provider or an approximation ruling.** All three directions stay COMPUTED (dormant ≠ deleted, so a provider limitation cannot become a spec change), and a capability PROBE now decides wiring: `PROSODY_DIRECTIONS` holds the locked set, each backend declares which fields it cannot express, and `prosody_support` + `unmapped_prosody` are both derived from that one declaration so they cannot disagree. An unrecognised field name is refused at construction, because accepting `"pitch_shft"` would silently report support for `pitch_shift`. `main.py` reads the probe instead of hard-coding "only length_scale". Nothing new was wired — no available backend exposes timbre or pitch — so what the row needs is unchanged. · **surfaced 2026-08-22 by building TTS** | v4 Layer 5 locks three directions — Pleasure→`noise_scale` (warmth), Arousal→`length_scale` (speed, inverse), Dominance→`pitch_shift` (lower, grounded). **Only `length_scale` has a counterpart in any available provider.** ElevenLabs, Kokoro and `say` all expose a speed control, which is the same physical quantity, so mapping it is a unit conversion (verified: 156 wpm calm → 208 wpm alert, direction holds). None exposes timbre or pitch. Mapping them onto adjacent knobs — ElevenLabs `stability`/`style` — was REJECTED: those control something else, the mapping would be invented, and it would make PAD appear to reach the voice while doing something unrelated to what v4 specifies. Each backend reports `unmapped_prosody` instead. Closing it needs either a provider with real pitch/timbre control or a ruling that the directions may be approximated. |
 | `serving_from_local` no longer means what it says | `needs-ruling` · 🔓 OPEN — **the readout is FIXED (ResLog 26, 2026-08-24); the design question behind it is not.** `serving_from_local` is gone, replaced by `LLMInterface.last_route` — categorical, five values (`no_turn_yet` / `cloud_chosen` / `cloud_unhealthy_fallback` / `local_chosen` / `no_cloud_adapter`), recorded per turn instead of read off `local.is_loaded`. The architect specified three; `local_chosen` was added because it is the ORDINARY Track A turn and none of the three can express it, and `no_turn_yet` because before the first turn any other value is a claim about something that has not happened. The substantive fix is a PRECEDENCE rule rather than the rename: an unconfigured tier raises `LLMTransportError` identically to a real outage, so `no_cloud_adapter` outranks `cloud_unhealthy_fallback` — a local-first bring-up is the intended state, not degradation. Seam is a duck-typed `is_configured` marker read via `getattr(..., True)`, so `daemon/` still imports nothing from `adapters/`. **What stays open:** whether "cloud unavailable" should drive a degradation face AT ALL, given v4 assumes cloud-primary and the design is local-primary. `visual_bridge.py` still triggers on `LLMUnavailableError` and now asserts by AST that NEITHER name is read. · **surfaced 2026-08-22 by wiring the Visual Layer** | `LLMInterface.serving_from_local` returns `self._local.is_loaded` and its docstring reads "True while the local fallback is resident (cloud is currently down)". That equivalence held under v4's Brain Structure, where the local model "loads on cloud failure, unloads on restore". Track A inverted it: `startup()` calls `ensure_local_loaded()`, Gemma is pinned resident from boot and is the DEFAULT voice, not a fallback. So it is True during entirely healthy operation, and Module 10 names it as the degradation trigger — wiring it would park her face in INWARD_WAITING permanently. `adapters/visual_bridge.py` uses `LLMUnavailableError` instead (the other trigger Module 10's docstring names, well-defined under either design) and asserts by AST that it never reads the stale one. Two things need deciding: the stale docstring, and the deeper question that v4's degradation state assumes CLOUD-PRIMARY while the current design is local-primary — under which "cloud unavailable" is the ordinary resting state and not a degradation at all. |
-| Stage directions: MARKED narration no longer spoken; the defect is not closed | `needs-ruling` · 🔓 OPEN — **RULED 2026-08-24 (ResLog 25): strip at the audio boundary only.** `adapters/audio_tts.strip_format_markers` removes bracket narration, `*action*` lines, headings, bullets, numbered lists, `<think>` blocks and bold markers immediately before synthesis. The printed transcript, session buffer, graph and Visual Layer keep the text byte-for-byte — so this edits a RENDERING, not her response, which is why it is not the "strip it in the adapter" option that was rejected: a synthesiser is a device for pronouncing words, and "[I lean forward]" is not pronounceable. No fifth gate check; Addendum §4's four comparisons untouched. Verified against the real `say` binary. **Two things it does NOT fix, so the row stays open:** unmarked plain-prose narration ("I am sitting still. My attention is focused entirely…") carries no marker and no regex reaches it, so the 3/16 figure counted MARKED narration only; and the COMPOUNDING loop is untouched, because the session buffer holds the unstripped text by design, so she stops being heard narrating but does not stop learning to narrate. The recommended moral-schema option is NOT foreclosed and remains the only route to the unmarked case. Side effect: an all-narration reply now renders as silence on item 21's existing floor, flagged by `last_text_was_only_format_markers`. · **narrowed 2026-08-22 with numbers (ResLog item 22)** | The Output Validation Gate has no FORMAT check — its four comparisons are about content, so nothing structurally stops a stage direction reaching TTS. Field 1 carried an anti-narration clause as mitigation and **nobody had measured it.** Measured now (`tools/measure_format_markers.py`, adversarial bait, real model, fresh graph per arm): **8/16** with the original abstract wording, **12/16** on a warm session, **3/16** after Field 1 was sharpened to name the bracket syntax. So prompt mitigation cuts it by roughly two thirds and **does not close it** — the "accept mitigation as sufficient" option is closed on evidence. Three findings: the failures were all **SQUARE** brackets, a form the original clause never named; the defect **COMPOUNDS** through the session buffer (4/8 → 8/8 as her own bracketed replies re-enter as context and she imitates herself); and a near-miss — the first run reported 0/16 because the marker detector matched only round brackets, so "mitigation is sufficient" was one step from entering the Resolution Log on a detector bug. **Recommended structural option, NOT implemented:** extend the moral schema's named anti-pattern list so the existing MANIPULATION check catches it. She has no body, so "[my gaze is calm, meeting yours without pressure]" is a false claim about herself made to produce an effect — the same shape as the already-named `fake_confidence`. It adds no fifth comparison, uses the existing mechanism, routes into the existing corrective-retry ladder, and extends a list the docs already mark OQ-M1 "not a doc-certified final set". Left to the architect because the moral schema is load-bearing and also gates DMN narrative updates (Addendum §8), so a wrong entry propagates into what she can believe about herself. |
+| Stage directions: the COMPOUNDING loop is closed; the BASE RATE is not | `needs-ruling` · 🔓 OPEN — **COMPOUNDING HALF CLOSED 2026-08-26 (ResLog item 31, commit `a394825`): strip at the LLM-context boundary too.** `SessionBuffer.get_context()` now strips format markers from HER replies before assembling the prompt surface — item 25's ruling applied to a second boundary. `append_turn` still stores her reply byte-for-byte, and the printed transcript, graph, Visual Layer and TTS path all read that stored text; user text is never stripped. The pattern MOVED to `daemon/format_markers.py` and `adapters/audio_tts.py` re-exports it, because duplicating this specific regex is the exact drift item 22's near-miss already punished — one pattern, asserted by object identity. 11 tests. **THE ROW STAYS OPEN, and marking it closed would be the tracker lying:** 3/16 was measured on a FRESH graph, so it is the NO-CONTEXT base rate and stripping the context cannot move it by construction. Warm sessions stop climbing above it; the base rate itself, and unmarked prose narration, still need the moral-schema ruling this row was opened for. Measured residual from the same commit: the pattern removes `<think>` TAGS but not the text between them, so a reasoning trace still re-enters — deliberately not fixed by widening the regex, because item 22's numbers are expressed in terms of this exact pattern. · **RULED 2026-08-24 (ResLog 25): strip at the audio boundary only.** `adapters/audio_tts.strip_format_markers` removes bracket narration, `*action*` lines, headings, bullets, numbered lists, `<think>` blocks and bold markers immediately before synthesis. The printed transcript, session buffer, graph and Visual Layer keep the text byte-for-byte — so this edits a RENDERING, not her response, which is why it is not the "strip it in the adapter" option that was rejected: a synthesiser is a device for pronouncing words, and "[I lean forward]" is not pronounceable. No fifth gate check; Addendum §4's four comparisons untouched. Verified against the real `say` binary. **Two things it does NOT fix, so the row stays open:** unmarked plain-prose narration ("I am sitting still. My attention is focused entirely…") carries no marker and no regex reaches it, so the 3/16 figure counted MARKED narration only; and the COMPOUNDING loop was untouched at that point, because the session buffer holds the unstripped text by design, so she stopped being heard narrating but did not stop learning to narrate — **that half is now CLOSED by item 31, which strips markers in `get_context()` before they re-enter as LLM context.** The recommended moral-schema option is NOT foreclosed and remains the only route to the unmarked case. Side effect: an all-narration reply now renders as silence on item 21's existing floor, flagged by `last_text_was_only_format_markers`. · **narrowed 2026-08-22 with numbers (ResLog item 22)** | The Output Validation Gate has no FORMAT check — its four comparisons are about content, so nothing structurally stops a stage direction reaching TTS. Field 1 carried an anti-narration clause as mitigation and **nobody had measured it.** Measured now (`tools/measure_format_markers.py`, adversarial bait, real model, fresh graph per arm): **8/16** with the original abstract wording, **12/16** on a warm session, **3/16** after Field 1 was sharpened to name the bracket syntax. So prompt mitigation cuts it by roughly two thirds and **does not close it** — the "accept mitigation as sufficient" option is closed on evidence. Three findings: the failures were all **SQUARE** brackets, a form the original clause never named; the defect **COMPOUNDS** through the session buffer (4/8 → 8/8 as her own bracketed replies re-enter as context and she imitates herself); and a near-miss — the first run reported 0/16 because the marker detector matched only round brackets, so "mitigation is sufficient" was one step from entering the Resolution Log on a detector bug. **Recommended structural option, NOT implemented:** extend the moral schema's named anti-pattern list so the existing MANIPULATION check catches it. She has no body, so "[my gaze is calm, meeting yours without pressure]" is a false claim about herself made to produce an effect — the same shape as the already-named `fake_confidence`. It adds no fifth comparison, uses the existing mechanism, routes into the existing corrective-retry ladder, and extends a list the docs already mark OQ-M1 "not a doc-certified final set". Left to the architect because the moral schema is load-bearing and also gates DMN narrative updates (Addendum §8), so a wrong entry propagates into what she can believe about herself. |
 
-**Ten rows, re-counted from the table above** (`needs-ruling` 8,
-`needs-runtime` 2, `needs-adapter` 0). The arithmetic across 2026-08-22, so nobody
-reads it as progress reversed: it started at 7; the §9 closure took it to **6**;
-the adapter phase surfaced the primary-entity row (**7**); the ruling pass closed
-that row (**6**) and surfaced the format-guard row (**7**); the boundary phase
-CLOSED the last `needs-adapter` row (**6**) and surfaced five more (**11**); the
-defect pass then CLOSED the empty-response row via Resolution Log item 21
-(**10**).
+**Nine rows, re-counted from the table above** (`needs-ruling` 6,
+`needs-runtime` 2, superseded-but-open 1, `needs-adapter` 0).
+
+**The previous line read "Ten rows … `needs-ruling` 8" and was already wrong
+against its own table** — re-counting the rows on 2026-08-26 found 9, with 7
+carrying `needs-ruling`, not 10 and 8. Recorded rather than quietly corrected,
+because "re-counted from the table above" is a provenance claim and it was false;
+a count nobody re-derives is how this file starts lying. The narrative arithmetic
+below was tracking deltas without a recount behind them.
+
+The arithmetic, so nobody reads it as progress reversed: it started at 7; the §9
+closure took it to **6**; the adapter phase surfaced the primary-entity row
+(**7**); the ruling pass closed that row (**6**) and surfaced the format-guard row
+(**7**); the boundary phase CLOSED the last `needs-adapter` row (**6**) and
+surfaced five more (**11**); the defect pass CLOSED the empty-response row via
+item 21 (**10**, though the table itself held 9 by then). **This pass:** item 31
+closed the COMPOUNDING half of the stage-directions row but that row STAYS —
+3/16 is the no-context base rate and stripping context cannot move it, so the
+ruling it was opened for is still needed, and counting it closed would be exactly
+the drift this file exists to catch. Item 33 lifted `needs-ruling` from the
+self-continuity row without closing it. So `needs-ruling` 7 → **6**, total
+**9** — unchanged, and honestly unchanged rather than by coincidence.
 
 **2026-08-24 moved three rows without changing the count, which is the honest
 result rather than a stall.** Resolution Log items 25, 26 and 27 ruled on the
@@ -900,7 +922,7 @@ This file mixes two kinds of claim. Know which you are reading.
 
 | Claim | Verified |
 |---|---|
-| Full suite **827** passed; soul layer **611**, adapters 199, cross-cutting **17** (was 812 / 602 / 11 — +9 owed to ResLog 29's own commit, which never updated this file, +6 to item 30) | `make check` (suite + bundle sync); per-file `pytest --collect-only -q` on 2026-08-26 |
+| Full suite **842** passed; soul layer **626**, adapters 199, cross-cutting **17** (was 812 / 602 / 11 — +9 ResLog 29, +6 item 30, +11 item 31, +4 item 32; items 31 and 32 are both SOUL-layer, so cross-cutting did not move) | `make check` (suite + bundle sync); per-file `pytest --collect-only -q` on 2026-08-26 |
 | `daemon/pad_engine.py` byte-unchanged by item 30 | `git diff --exit-code daemon/pad_engine.py` clean at commit `096c618`; plus `test_pad_engine_is_still_byte_unchanged_by_this_fix` |
 | `_save_state` writes aria_state.json exactly ONCE (was 3×) | `test_save_state_writes_pad_and_valence_in_one_atomic_write` counts `_write_json_atomic` calls; measured 3 before the change, 1 after |
 | `qwen3.5:9b-mlx` is installed, 8.9 GB, 262144 context, reports `vision` + `tools` + `thinking` | `ollama list` and `ollama show gemma4:e2b-it-qat` / `ollama show qwen3.5:9b-mlx` — note E2B reports `audio` and Qwen does not |
@@ -942,6 +964,147 @@ code state. Do not treat them as claims a reader can confirm by grepping.
 - **Direct coding** — used for Memory Graph (Module 3) at architect instruction, and for post-approval gap closures (SessionBuffer, session_context, meta-commands, cognitive_load).
 - **Subagent builds** — used for most modules (M2, M4, M5, M6, M7, M8, M9, M10).
 - **Claude.ai review** — all finished module code reviewed line-by-line against Build Plan contract.
+
+## Future Phase: Belief Formation System (recorded 2026-08-26)
+
+**Status: DESIGN PROPOSAL. No code. Not scheduled.** Recorded so the idea is not
+lost, and recorded HERE rather than in the Resolution Log's numbered items because
+it is a direction, not a resolution — nothing in it is implementable until the
+rulings at the bottom of this section land. Architect direction: Sarvesh.
+
+**Why it exists.** The self-continuity narrative gap has a missing PRODUCER and a
+missing CONSUMER. `_assemble_idle_pass_input` never populates
+`narrative_candidate`, so DMN Step 4 always reports `no_candidate` — but even with
+a producer, `relationship_summary` reaches no prompt field, and Addendum §9's
+never-crosses list bars memory node contents outright. Building a producer for a
+value with no reader is wasted work. So the direction changed: persistent
+self-narrative becomes a side effect of a broader **Belief Formation System**.
+
+### What it is
+
+A controlled learning environment where ARIA ingests curated texts — research
+papers, philosophy, mythology, technical documents, chosen by the user — and
+evolves her own beliefs from them over time. Not hardcoded beliefs. Not a vector
+database of facts. A belief formation subsystem that lets her develop a worldview
+the way a person does: by reading, reflecting, and integrating what she learns into
+her existing self-model.
+
+### Why it matters
+
+Current ARIA has memory — event nodes, emotion nodes, edges — but no persistent
+BELIEFS. She remembers what happened; she holds no position on what human nature
+is, whether honesty outranks comfort, what consciousness means, or who she is
+becoming. A being with a real interior life must have beliefs that persist, evolve
+and influence behaviour. A database remembers. A being believes.
+
+### The controlled environment
+
+**No internet access. She does not browse.** The user decides what she reads.
+
+1. User provides a text (PDF, paste)
+2. She ingests it in an isolated processing environment
+3. She forms CANDIDATE beliefs — synthesised understandings, with source attribution
+4. User reviews each candidate: approve, reject, modify
+5. Approved beliefs enter the graph as persistent structures
+6. Those beliefs influence appraisal, moral schema, and self-narrative
+
+The control is the gate, not the content: start safe, no accidental exposure to
+worldviews nobody chose.
+
+### Belief types
+
+| Type | Example | Today | With the belief system |
+|---|---|---|---|
+| Moral | "honesty matters more than comfort" | hardcoded in the anti-pattern list | evolved from what she has read and lived |
+| Factual | "the speed of light is 299,792,458 m/s" | not stored — no knowledge base | stored, confidence-graded |
+| Philosophical | "the self is an illusion (Anatta)" | not stored | synthesised from texts she has read |
+| Relational | "he values directness over diplomacy" | partly in graph edges | synthesised, confidence-graded |
+| Self | "I am becoming more patient" | **the gap** — no persistent self-narrative | written to the self EntityNode |
+
+### Proposed architecture (high level)
+
+New module `daemon/belief_engine.py`. **Ingestion:** chunk raw text, extract
+claims and evidence, map against the existing belief graph. **Formation:** compare
+new claims against held beliefs, detect conflict / confirmation / gap, emit
+candidate beliefs in natural language with source attribution, and assign
+confidence **categorically — certain / tentative / questioning, never a float
+percentage** (the percentage test applies: "70% believed" is a number in disguise).
+**Integration:** approved candidates become persistent graph nodes that feed
+appraisal, moral schema and self-narrative.
+
+Graph representation: reuse `EventNode` with `kind="belief"`, or a new
+`BeliefNode` table — a ruling, see below. Fields: `content`, `source`,
+`confidence` (categorical), `scope` (moral/factual/philosophical/relational/self),
+`created`, `modified`, `entity_id`.
+
+### How beliefs cross the five-field boundary
+
+**They don't.** Beliefs are graph nodes, not prompt fields. Field 1 is untouched —
+her core values stay hardcoded as the floor. The influence is INDIRECT, via
+**retrieval ordering**: high-confidence, recently-referenced beliefs get
+categorical priority in retrieval, changing what the appraisal is answered with
+rather than adding a coefficient to its output. That is the same indirect,
+context-shaping role mood-congruent retrieval and need-preference already play
+(Addendum §3's Stage 5), applied to a third source.
+
+### Rulings required before ANY code (Rule 1)
+
+None of this is in v4, the Addendum, or the Resolution Log. Blocked on:
+
+1. Is `EventNode(kind="belief")` acceptable reuse, or does this need a new table?
+2. **Does the moral schema accept EVOLVING anti-patterns, or must it stay
+   hardcoded?** — *the largest of the five, and the one that collides with an
+   existing lock rather than filling a gap.* v4's section is titled "Moral Schema
+   (**Hardcoded**)", `project-rules.md` calls the four values and the named
+   anti-pattern list load-bearing, and Addendum §8 makes that same schema the gate
+   on DMN Step 4's self-narrative writes. So an evolving schema would let a belief
+   she formed from a text change the standard that governs what she may believe
+   about herself — a loop with no floor. Answering this is not a detail of the
+   belief system; the belief system's safety rests on it.
+3. May beliefs influence APPRAISAL (a soul-layer process), or must they stay in the
+   wiring layer?
+4. What is the ingestion interface — a Daemon method, a meta-command, a tool?
+5. Is the review flow in-session or out-of-band?
+
+### Designable now, without a ruling
+
+The graph schema as a proposal; the ingestion pipeline architecture; the
+categorical confidence scheme; the user review flow; the retrieval-ordering
+mechanism.
+
+### Research backing — verification status recorded, not assumed
+
+Checked on 2026-08-26 rather than accepted as given, because a citation nobody
+verified is the same failure as a count nobody re-derives.
+
+| Source | Status |
+|---|---|
+| **McAdams, narrative identity** — self as a story integrating past, present and anticipated future | **VERIFIED as real and already load-bearing** — Addendum §3 cites McAdams directly as what Continuity maps to |
+| **Sophia: A Persistent Agent Framework of Artificial Life** — [arxiv 2512.18202](https://arxiv.org/abs/2512.18202) | **Paper VERIFIED real. Description CORRECTED.** It was recorded here as "agents develop creed associations from natural-language rewards"; the paper's own abstract describes process-supervised thought search, narrative memory, user and self modelling, and a hybrid reward system. The "creed" framing comes from a third-party response piece, not the paper. Still relevant — narrative identity and self-modelling are exactly this phase's subject — but cite it for what it says |
+| **Advaita Vedanta** — self as witness (Atman), independent of body/mind states | plausible and thematically apt; the specific PMC article was **not independently verified** |
+| **Bhagavad Gita** — identity as attention: the manner and object of attention define the self | plausible; the specific Cambridge JAPA article was **not independently verified** |
+| **"iBrain synthetic identity architecture", four-layered contextualisation incl. predictive self-model** (espjeta.org) | **COULD NOT VERIFY.** No search result matches this title or venue. Left in the record as an unresolved reference rather than deleted or presented as cited — if it is real, supply the DOI; if it came from a model, drop it |
+
+### Relation to current open items
+
+* **Supersedes** the `needs-ruling` label on the self-continuity narrative row —
+  direction changed, not blocked, and NOT closed.
+* **Item 3a is done** — ResLog item 32 fixed the Continuity initiative note to
+  describe her own narrative rather than the relationship bond.
+* **Continuity stays permanently `due`** until this phase or another producer
+  exists. That is the honest state: the need genuinely is unmet.
+
+### Build order when this phase starts
+
+1. Graph schema for beliefs (ruling 1)
+2. Ingestion: text → chunks → claims → candidate beliefs
+3. Review interface: approve / reject / modify
+4. Integration with appraisal (ruling 3)
+5. Integration with moral schema (**ruling 2 — do not start before this lands**)
+6. Self-belief producer, writing to the self EntityNode, which closes the
+   self-continuity gap as a side effect
+
+---
 
 ## How to resume review in a fresh chat
 

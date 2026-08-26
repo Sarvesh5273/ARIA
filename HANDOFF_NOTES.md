@@ -34,6 +34,18 @@ implementation decides this). If Daemon does not do both of these, PAD
 Engine's restore-boundary gap (Open Question 4) reverts to firing on every
 restart instead of the rare residual case it is designed for.
 
+**UPDATED 2026-08-26 — OQ4 is CLOSED (Resolution Log item 30, commit `096c618`).**
+This obligation still stands and the Daemon still does both, but the failure mode
+above is no longer a crash. Two wiring-layer changes: `_save_state` now writes PAD,
+Energy and `last_applied_valence` in ONE atomic record via
+`StateManager.save_all()` instead of three separate writes, and `startup()` treats a
+non-baseline PAD arriving with no valence as a HALF-WRITTEN record and restores
+baseline (item 18's precedent: an entry that cannot be trusted falls back to the
+spec default). `pad_engine.py` is byte-unchanged and no coefficient was invented.
+`AriaDaemon.pad_restore_was_reset` reports when the fallback fires, because a silent
+reset makes "resting at baseline" indistinguishable from "a corrupt file erased what
+she felt".
+
 ---
 
 ## Module 8 (Daemon) — known limitation, owed by Module 1
@@ -45,6 +57,15 @@ between the two initialize() calls. No current caller does this, but if
 Daemon ever calls initialize() outside of pure startup (e.g. a hot-reload
 or reconnect path), this will silently reintroduce the Open Question 4
 raise. Not fixed — no requirement addresses re-initialization semantics.
+
+**UPDATED 2026-08-26.** `AriaDaemon.startup()` now GUARDS this with a hard
+`RuntimeError` on a second call, and item 30's consistency check covers the
+file-borne route entirely. So this is the LAST live route to the restore-boundary
+raise, and it is in-process only: any caller that reaches
+`PADEngine.initialize()` WITHOUT going through `AriaDaemon.startup()` is
+unprotected, because `pad_engine.py` was deliberately left byte-unchanged. **The
+protection is Daemon-scoped — a future host must run the HANDOFF contract, not just
+the engine.**
 Daemon's implementation must call initialize() exactly once per process
 lifetime, or this gap needs to be revisited before Daemon is built.
 
@@ -1331,7 +1352,16 @@ CLOUD-PRIMARY, and the current design is local-primary with cloud proposed. Unde
 that design "cloud unavailable" is the ordinary resting state and not a degradation
 at all. What should trigger the inward/waiting loop is a design question.
 
-### 6. PAD OQ4: five occurrences, two raises, and only one is reachable
+### 6. PAD OQ4: five occurrences, two raises, and only one is reachable — CLOSED 2026-08-26
+
+> **CLOSED — Resolution Log item 30, commit `096c618`.** What follows is the
+> 2026-08-22 characterisation, kept as the dated record of what was measured before
+> the fix. The reachable raise is no longer reachable from any state FILE. Both
+> raises are still in `pad_engine.py`, still exactly two, still byte-unchanged, and
+> no coefficient was invented. What remains: the NEUTRAL branch (unreachable from
+> the wired path) and callers that bypass `AriaDaemon.startup()`. Note the residual
+> is NOT "hand-edited or truncated files" — those are exactly what the check
+> handles.
 
 The readiness list had it as "5 NotImplementedError in pad_engine.py, re-counted."
 Five is the OCCURRENCE count; three of them are the docstring explaining the other
@@ -1352,11 +1382,19 @@ module in `daemon/` raises it at all.
     save. A first-ever run cannot hit it: it starts at baseline, and the baseline
     case is a documented no-op.
 
-**`pad_engine.py` is byte-unchanged.** What was added is a startup WARNING in
-`main.py` naming the condition, the operator remedy, and the fact that neither
-remedy is a fix. No coefficient is chosen and no raise is caught — closing OQ4 is
-an architect decision, and inventing a decay coefficient is the one thing Rule 1
-forbids most directly.
+**`pad_engine.py` is byte-unchanged.** What was added at the time was a startup
+WARNING in `main.py` naming the condition, the operator remedy, and the fact that
+neither remedy is a fix. No coefficient was chosen and no raise was caught.
+
+**Since 2026-08-26 (item 30) that is no longer where it ends.** Closing it turned
+out not to require the architect decision this paragraph anticipated, because it
+never needed a coefficient: PAD and `last_applied_valence` are ONE record — PAD only
+leaves baseline through `apply_appraisal_delta`, which always sets a valence — so a
+non-baseline PAD with no valence is half a record, and item 18 had already ruled
+that class of case at the same boundary. `pad_engine.py` stayed byte-unchanged. The
+`main.py` warning now reports the RESET instead, since `startup()` runs before
+`report_startup()` and the original condition can no longer be true by the time it
+is read.
 
 ### Judgment calls, for the record
 
