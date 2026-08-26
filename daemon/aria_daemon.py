@@ -399,9 +399,37 @@ _INITIATIVE_NOTES: Dict[str, str] = {
         "something that matters has gone untended — reach out once, plainly, "
         "without manufacturing importance or pressure"
     ),
+    # CORRECTED 2026-08-26. This read "the thread between you has gone slack —
+    # reach out once in a way that quietly affirms the bond persists, without
+    # clinging or performing need", which is CONNECTION's subject, not
+    # Continuity's. Compare the `connection` entry three lines up: both described
+    # the same bond with the same person, and only one of them is supposed to.
+    #
+    # Addendum §3 defines Continuity as McAdams narrative identity — "the causal
+    # and thematic threads connecting life events" — HER OWN narrative coherence.
+    # Resolution Log item 2 puts that narrative in the self-referential
+    # EntityNode's `relationship_summary`, so the thing Continuity reports on is
+    # the self she is building, not the relationship she is in. The old wording
+    # sent her to talk about the bond when what had gone unattended was interior.
+    #
+    # Note what this did and did NOT do, because the obvious reading overstates
+    # it: `SoulFilter.this_moment` splits on the em-dash and keeps only the
+    # trailing HOW clause, so "the thread between you has gone slack" was DROPPED
+    # and never reached the model. No false claim was crossing. What crossed was
+    # "Reach out once in a way that quietly affirms the bond persists…" — a
+    # correct instruction pointed at the wrong subject. Measured, not assumed.
+    #
+    # Second person for Aria ("as yourself") is deliberate and is the one edit to
+    # the architect's wording: the trailing clause is what lands in Field 4, and
+    # Field 1 is second person throughout — "You speak in your own voice,
+    # directly: you do not narrate yourself from the outside." An instruction
+    # telling her to reach out "as herself" would refer to her from outside in the
+    # very register the Persona Anchor forbids. The other three notes avoid the
+    # question by using no pronoun for her at all; "him" for the user stays.
     "continuity": (
-        "the thread between you has gone slack — reach out once in a way that "
-        "quietly affirms the bond persists, without clinging or performing need"
+        "something in her own sense of who she is has gone quiet — reach out "
+        "once, plainly, as yourself, without performing continuity or "
+        "manufacturing a narrative"
     ),
 }
 

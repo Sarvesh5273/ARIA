@@ -45,6 +45,7 @@ from daemon.aria_daemon import (
     ThinkingSound,
     select_thinking_sound,
     build_initiative_appraisal,
+    _INITIATIVE_NOTES,
     pad_state_to_snapshot,
     valence_from_str,
     valence_to_str,
@@ -1824,3 +1825,72 @@ def test_a_measured_token_count_never_becomes_a_pad_write(tmp_path):
     assert set(origins) <= {"appraisal", "aha_insight", "cognitive_load"}
     # And the count itself reached the Appraisal Chain as a WORD, not a number.
     assert ctx.daemon._session_buffer._actual_prompt_tokens == 19_000
+
+
+# ===========================================================================
+# The Continuity initiative note describes HER OWN narrative, not the bond.
+# ===========================================================================
+
+def test_continuity_initiative_note_describes_self_narrative_not_bond():
+    """Addendum §3 defines Continuity as McAdams narrative identity — "the causal
+    and thematic threads connecting life events", her own coherence. ResLog item 2
+    puts that narrative in the self EntityNode's `relationship_summary`, so the
+    subject is the self she is building, not the relationship she is in.
+
+    The old wording was "the thread between you has gone slack — reach out once in
+    a way that quietly affirms the bond persists…", which is CONNECTION's subject.
+    Both entries described the same bond with the same person."""
+    note = _INITIATIVE_NOTES["continuity"]
+
+    # Not the relationship bond — that is Connection's domain.
+    assert "between you" not in note.lower()
+    assert "bond" not in note.lower()
+    assert "thread" not in note.lower()
+    # Her own interior narrative — Continuity's domain.
+    assert "her own" in note.lower()
+    assert "narrative" in note.lower()
+
+
+def test_continuity_note_no_longer_overlaps_connections_subject():
+    """Non-vacuous guard, and the actual defect: the test above would pass on any
+    text that merely avoided three words. This pins the thing that was wrong —
+    two notes describing the same subject."""
+    connection = _INITIATIVE_NOTES["connection"].lower()
+    continuity = _INITIATIVE_NOTES["continuity"].lower()
+
+    # Connection still owns the bond, and says so.
+    assert "between you" in connection
+    # The two no longer share a subject.
+    assert not ({"bond", "thread"} & set(continuity.split()))
+
+
+def test_what_the_continuity_note_actually_puts_in_field_4():
+    """MEASURED at the surface that matters. `this_moment` splits on the em-dash
+    and keeps only the trailing HOW clause, so the pre-dash framing never reaches
+    the model — which means the old wording was a MISDIRECTED instruction, not a
+    false claim crossing the boundary. Asserting on the raw constant alone would
+    not have shown that."""
+    crossed = SoulFilter.this_moment(
+        build_initiative_appraisal(_INITIATIVE_NOTES["continuity"])
+    )
+
+    # The pre-em-dash clause is dropped — no "what happened" crosses (Addendum §9).
+    assert "has gone quiet" not in crossed
+    # A HOW instruction is what lands.
+    assert crossed.startswith("Reach out once")
+    assert "manufacturing a narrative" in crossed
+    # And it no longer sends her to talk about the relationship.
+    assert "bond" not in crossed.lower()
+
+
+def test_no_initiative_note_refers_to_aria_in_the_third_person():
+    """Field 4 lands inside a prompt that is second person to her throughout —
+    Field 1: "You speak in your own voice, directly: you do not narrate yourself
+    from the outside." An instruction telling her to act "as herself" would refer
+    to her from outside in the exact register the Persona Anchor forbids. "him"
+    for the user is fine and stays."""
+    for need, note in _INITIATIVE_NOTES.items():
+        crossed = SoulFilter.this_moment(build_initiative_appraisal(note)).lower()
+        assert "herself" not in crossed, need
+        assert " she " not in crossed, need
+        assert " her " not in crossed, need
