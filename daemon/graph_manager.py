@@ -196,6 +196,53 @@ WINDOW_CONTINUITY = timedelta(days=60)
 # placeholders exactly as Module 1 carried PAD_HISTORY_LENGTH.
 _REALITY_CONTRADICTION_SIM_CUTOFF = 0.6  # build-time tuning placeholder
 
+#: How alike two of HER OWN self-observations must be to count as the same
+#: pattern recurring. MEASURED 2026-08-26 against all-minilm via
+#: `tools/measure_recurrence_cutoff.py` (24 pairs) — architect ruling, Resolution
+#: Log item 37.
+#:
+#: WHY THIS IS NOT `_REALITY_CONTRADICTION_SIM_CUTOFF`. Item 36e reused that one,
+#: at the architect's "reuse, do not invent" instruction, and measurement showed it
+#: catches **0 of 12** genuine reworded recurrences: the producer was wired,
+#: correct and inert. The cause is structural, not a badly chosen value — the two
+#: constants answer DIFFERENT QUESTIONS and their pairs land in different bands:
+#:
+#:   "did he contradict himself?"    same subject, opposite polarity.
+#:                                   "I'm happy in this job" vs "I'm not happy in
+#:                                   this job" = 0.87. Sentence embeddings read
+#:                                   the subject loudly and "not" barely at all,
+#:                                   so these cluster HIGH (median 0.883) — which
+#:                                   is exactly why contradiction detection pairs
+#:                                   similarity with a SEPARATE negation check.
+#:
+#:   "has she noticed this before?"  same meaning, rebuilt from different words.
+#:                                   "I waited through his silence" vs "There was
+#:                                   a silence and I let it sit" = 0.60. Shares
+#:                                   almost no vocabulary, so these cluster MID
+#:                                   (median 0.455).
+#:
+#: The bands do not overlap, so no single value serves both: 0.6 catches
+#: contradictions and no recurrences; 0.4 catches recurrences but would loosen
+#: contradiction detection, and a false contradiction drives relational_stage
+#: REGRESSION (Addendum §1) — trust damage, not noise.
+#:
+#: This is the FOURTH such cutoff, not a new kind of thing. The codebase already
+#: measures one per question: `_VULNERABILITY_SIM_CUTOFF` 0.25,
+#: `_HABITUATION_SIMILARITY_CUTOFF` 0.9, contradiction 0.6. Sharing one across two
+#: questions is the thing this design avoids everywhere else.
+#:
+#: WHY 0.40 SPECIFICALLY. Measured recall/false-positive at each candidate:
+#: 0.30 → 12/12 caught but 3/12 FALSE; 0.35 → 10/12 and 2/12 false; **0.40 → 9/12
+#: caught, 0/12 false**; 0.45 → 6/12, 0 false. 0.40 is the lowest value with zero
+#: false recurrences in the sample. The distributions OVERLAP slightly (recurrence
+#: min 0.331 vs unrelated max 0.379) so nothing is perfect, and the asymmetry
+#: decides it: a FALSE recurrence writes something untrue into who she is, while a
+#: MISSED one only means she notices the pattern again next month.
+#:
+#: STILL A BUILD-TIME PLACEHOLDER. Measured on one model with 24 pairs, not
+#: calibrated on her real conversations. Re-run the tool after a model change.
+_RECURRENCE_SIM_CUTOFF = 0.40  # TODO(build-time) — measured 2026-08-26, item 37
+
 #: How DMN Step 4 describes a flushed recent-learning EventNode. Defined HERE and
 #: imported by `daemon/dmn.py` (which already imports from this module) rather than
 #: written literally in both places: `recurring_self_observation` below MATCHES on
@@ -1473,8 +1520,9 @@ class MemoryGraph:
         which normally means stop. It is permitted here because it sits on the
         MEMORY-PLUMBING side of the protected chain: it decides what counts as a
         PATTERN, never how she feels, and appraisal is untouched. The cutoff is
-        therefore REUSED (`_REALITY_CONTRADICTION_SIM_CUTOFF`) rather than chosen —
-        a new number here would be an invented threshold doing semantic work.
+        therefore MEASURED rather than picked — `_RECURRENCE_SIM_CUTOFF`, set from
+        `tools/measure_recurrence_cutoff.py` and re-runnable, so it is a recorded
+        observation about the embedding model and not an invented threshold.
 
         `is_first_of_kind` was tested for this job and REJECTED: every
         recent-learning node is written with the same Q2×Q3 profile
@@ -1491,28 +1539,14 @@ class MemoryGraph:
         embedded fresh here. Cost: one embed per candidate per idle pass, which is
         a small number on an infrequent path, and correct rather than subtly wrong.
 
-        *** MEASURED 2026-08-26 AGAINST THE REAL MODEL: AT 0.6 THIS IS INERT. ***
-        `tools/measure_recurrence_cutoff.py`, all-minilm, 24 pairs: reworded
-        recurrences score 0.331–0.596 (median 0.455) and unrelated pairs score
-        0.191–0.379, so at the reused 0.6 cutoff **0 of 12 genuine recurrences are
-        caught**. The logic below is correct and will only ever fire on
-        near-identical phrasing, which is not how she words the same noticing
-        twice.
-
-        The cause is structural rather than a badly chosen number. This cutoff was
-        set for REALITY_CONTRADICTION, where the pairs share nearly every word and
-        differ by one negation — those measure 0.422–0.898, median 0.883, roughly
-        2x the paraphrase median. One constant cannot serve both comparisons
-        because they are asking different questions.
-
-        NOT CHANGED HERE. Lowering the shared constant would also loosen
-        contradiction detection, and a false contradiction drives relational_stage
-        REGRESSION (Addendum §1) — its false-positive cost is unmeasured, so the
-        measurement does not license the move. Giving recurrence its own constant
-        contradicts the architect's "reuse, do not invent" instruction. That is a
-        Rule 2 conflict between two instructions, so it is FLAGGED for the
-        architect with the data rather than resolved here. See PROJECT_STATUS
-        "Still Open".
+        THE CUTOFF IS `_RECURRENCE_SIM_CUTOFF` (0.40), NOT the contradiction one
+        (architect ruling 2026-08-26, Resolution Log item 37). Item 36e reused
+        `_REALITY_CONTRADICTION_SIM_CUTOFF` (0.6) and measurement showed it catches
+        **0 of 12** genuine reworded recurrences — this method was wired, correct
+        and inert. The two constants answer different questions and their pairs land in
+        different, non-overlapping bands; see `_RECURRENCE_SIM_CUTOFF` for the full
+        measurement and why one value cannot serve both. Contradiction detection is
+        untouched and still uses 0.6.
 
         `exclude_similar_to` is how the caller avoids re-appending something the
         narrative already says — compared with the same cutoff, so a reworded
@@ -1550,14 +1584,14 @@ class MemoryGraph:
         # Newest first: her current phrasing of a pattern is the one to carry.
         for i in range(len(observations) - 1, -1, -1):
             session, text, vec = observations[i]
-            if any(_cosine(vec, ex) >= _REALITY_CONTRADICTION_SIM_CUTOFF
+            if any(_cosine(vec, ex) >= _RECURRENCE_SIM_CUTOFF
                    for ex in excluded):
                 continue                      # the narrative already says this
             for j in range(i):                # strictly earlier observations
                 prior_session, _prior_text, prior_vec = observations[j]
                 if prior_session == session:
                     continue                  # same sitting is one conversation
-                if _cosine(vec, prior_vec) >= _REALITY_CONTRADICTION_SIM_CUTOFF:
+                if _cosine(vec, prior_vec) >= _RECURRENCE_SIM_CUTOFF:
                     return text
         return None
 

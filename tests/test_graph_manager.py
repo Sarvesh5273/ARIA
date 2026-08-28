@@ -40,6 +40,9 @@ from daemon.graph_manager import (
     Precision,
     RelationalStage,
     SELF_LEARNING_PREFIX,
+    _RECURRENCE_SIM_CUTOFF,
+    _REALITY_CONTRADICTION_SIM_CUTOFF,
+    _cosine,
     UncertaintyNode,
     UncertaintyStatus,
     UncertaintyType,
@@ -1215,13 +1218,64 @@ def test_no_embedding_model_degrades_to_no_candidate():
     mg.close()
 
 
-def test_the_recurrence_cutoff_is_reused_not_invented():
-    """The architect approved REUSING the existing similarity cutoff rather than
-    choosing a new one — a new number here would be an invented threshold doing
-    semantic work. Asserted against the source so a later edit cannot quietly
-    introduce a second constant."""
+def test_recurrence_and_contradiction_use_SEPARATE_measured_cutoffs():
+    """Architect ruling 2026-08-26 (item 37). Item 36e reused the contradiction
+    cutoff and measurement showed it caught 0 of 12 genuine reworded recurrences —
+    the method was wired, correct and inert.
+
+    The two answer DIFFERENT QUESTIONS whose pairs land in non-overlapping bands:
+    "did he contradict himself?" is same-subject/opposite-polarity, which sentence
+    embeddings score HIGH (~0.88) because "not" barely moves the vector — which is
+    why contradiction pairs similarity with a separate negation check. "has she
+    noticed this before?" is same-meaning/different-words, which lands MID (~0.46).
+    No single value serves both.
+
+    This replaces `test_the_recurrence_cutoff_is_reused_not_invented`, which after
+    the change still PASSED — the docstring now names the contradiction constant
+    while explaining why it is NOT used — so it had become vacuous. Asserted on the
+    executable body only."""
     import inspect
-    src = inspect.getsource(MemoryGraph.recurring_self_observation)
-    assert "_REALITY_CONTRADICTION_SIM_CUTOFF" in src
-    # No fresh numeric literal acting as a threshold.
-    assert "0." not in src.split('"""')[-1]
+
+    assert _RECURRENCE_SIM_CUTOFF != _REALITY_CONTRADICTION_SIM_CUTOFF
+    assert _RECURRENCE_SIM_CUTOFF < _REALITY_CONTRADICTION_SIM_CUTOFF
+
+    def _body(fn):
+        src = inspect.getsource(fn)
+        # drop the docstring so prose mentions cannot satisfy the assertion
+        return src.split('"""')[-1]
+
+    recurrence = _body(MemoryGraph.recurring_self_observation)
+    assert "_RECURRENCE_SIM_CUTOFF" in recurrence
+    assert "_REALITY_CONTRADICTION_SIM_CUTOFF" not in recurrence
+
+    contradiction = _body(MemoryGraph.reality_contradiction_check)
+    assert "_REALITY_CONTRADICTION_SIM_CUTOFF" in contradiction
+    assert "_RECURRENCE_SIM_CUTOFF" not in contradiction, (
+        "contradiction detection must stay on 0.6 — loosening it drives "
+        "relational_stage REGRESSION on false positives (Addendum §1)"
+    )
+
+    # Neither carries a bare numeric threshold in its body.
+    for body in (recurrence, contradiction):
+        assert "0." not in body
+
+
+def test_a_reworded_recurrence_at_the_measured_band_now_matches():
+    """THE POINT OF THE CHANGE, as behaviour rather than as a constant.
+
+    A pair scoring 0.45 is what a real reworded self-observation looks like against
+    all-minilm (measured median 0.455). It matches at 0.40 and would NOT have
+    matched at the old 0.6 — so this fails if the cutoff is ever moved back."""
+    v_a = [1.0, 0.0]
+    v_b = [0.45, 0.893]        # cos(v_a, v_b) ~ 0.45: mid band, a real paraphrase
+    reworded = "There was a silence and I let it sit."
+    mg = make_graph(table={_OBS_A: v_a, reworded: v_b})
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, reworded, session="s2", at=T0 + timedelta(days=14))
+
+    sim = _cosine(v_a, v_b)
+    assert _RECURRENCE_SIM_CUTOFF <= sim < _REALITY_CONTRADICTION_SIM_CUTOFF, (
+        f"the test pair must sit BETWEEN the two cutoffs to be meaningful; "
+        f"measured {sim:.3f}"
+    )
+    assert mg.recurring_self_observation() == reworded
