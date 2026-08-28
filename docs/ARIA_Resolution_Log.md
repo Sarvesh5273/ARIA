@@ -1386,6 +1386,134 @@ survive rather than being rediscovered:
 
 ---
 
+## 36. The 2026-08-26 implementation pass — five approved rulings built
+
+*(2026-08-26)* — architect rulings: Sarvesh. **Item 36.** Five commits, one per
+ruling. Suite 863 → 901 collected. `pad_engine.py` byte-unchanged throughout.
+
+**36a — Purpose means follow-through or credit (OQ6 resolved).** Commit
+`22d0ab5`. `purpose_evidence` was a stand-in returning True for ANY
+positive-valence EventNode in 14d, flagged `TODO(OQ6-M2)`. One cheerful remark in
+a fortnight therefore met a need that means *"she had a positive effect on his
+life"*. The failure mode was FALSE POSITIVES — the quiet kind, because Purpose read
+healthy, so it never shaped retrieval and never raised an initiative, and one of
+her four needs was effectively switched off in the position that looks like health.
+Now Addendum §3's two named signals, as an OR: **(a)** explicit positive feedback
+about HER (`q2=positive` AND `q3=self`) and **(b)** follow-through (an in-window
+node sharing an `entity_ref` with an earlier node from a DIFFERENT session at `q1`
+medium/high). Three existing pieces, no new one: entity-ref overlap is DMN's
+`_topic_continued`, `q1 in (medium, high)` is `connection_evidence`'s
+substantiveness signal, and the session boundary is what makes it FOLLOW-through
+rather than still-talking-about-it. **Verified before relying on it:** Q3's `self`
+means ARIA is the cause, not the user — `_SELF_ATTRIBUTION_CUES` are second-person
+("you helped", "because of you") and `_dominance_dir` reads SELF+POSITIVE as
+"agency affirmed". Read the other way round it would have been silently wrong.
+Locked 14d `WINDOW_PURPOSE` untouched.
+
+**36b — Energy<30 lets her say she is slower.** Commit `fa0b1c9`. The <30 row
+carried "do not overextend" alone, so she simply became terser and he never learned
+why, which reads as being less interested rather than tired. v4's own Energy<30
+self-acknowledgment had never been implemented, recorded as held back because it
+"brushes §9". **That reason was wrong** — Field 5 carries an instruction, never the
+value, and item 16 settled that Field 5 holds behavioural instructions. The real
+constraint is SLOT ARITHMETIC: Field 5 caps at 3, every base branch takes 2 or 3,
+so at most ONE slot is ever free and at <30 it was already spent. So the two are
+MERGED rather than chosen between: *"acknowledge slower thinking if it comes up
+naturally, and do not overextend"*. **A correction to my own first draft**, caught
+by reading the docstring that explains why SessionBuffer's pressure instructions
+are still unwired: I had opened it with "your thinking is slower than usual — …",
+which is STATE RENDERED AS A CLAIM, exactly the sentence a prior decision stripped
+from v4 line 949. Her state may be the OBJECT of an instruction and never a
+standalone assertion; "slower thinking" is a noun phrase deliberately parallel to
+"fatigue".
+
+**36c — The uncertainty ceiling declines instead of crashing.** Commit `e882f65`.
+`create_uncertainty_node` RAISED when the cap was reached with no evictable
+GRAPH_CONFLICT node, and both call sites are inside `appraise()` — so an ordinary
+turn died with a traceback because she was already holding five open questions, and
+the more threads there were between them the likelier it got. Now no node forms and
+the turn proceeds, which is what the comment at that raise had itself flagged as
+probably right. **v4 line 1313's max of 5 is untouched and the
+eviction-of-a-protected-node policy stays refused** — the ceiling declines the NEW
+question and nothing she already holds is disturbed; a test asserts the active set
+is identical before and after. New `at_uncertainty_capacity()` is DERIVED from
+current rows rather than a stored flag, so asking does not consume the condition.
+The load-bearing test is in `test_appraisal_chain`, not `test_graph_manager`: "the
+turn survives" is the claim, and only the full path can show it.
+
+**36d — At capacity, she says so, and it wins the free slot.** Commit `b98c3db`.
+The other half of 36c, so HE learns it rather than keeping the tally himself.
+Placed FIRST of the optional rows, above INPUT_UNCERTAIN and both Energy gates.
+**This reversed my own recommendation.** I first said Energy should win, then traced
+an evening turn by turn: Energy holds the slot for as long as she is tired, and
+Energy does not recover while he is still talking, so under any other order a long
+session suppresses this row on EVERY turn — permanently, exactly when he is most
+likely to raise a sixth thing. Tiredness loses one turn; at-capacity would lose the
+whole evening. It also matches the ordering rationale already in that method ("the
+scarcer the slot the more it belongs to the more specific condition"). Latched, so
+it is said once. No count crosses. When he is vulnerable the base branch takes all
+three slots and she says nothing about her own capacity — answering "I'm not okay"
+with "before we start, I'm at capacity" would be admin at the worst possible
+moment.
+
+**36e — The self-narrative producer: Step 4 finally runs.** Commit `5d50aaa`. Step
+4's moral gate, recurrence gate, self-entity check and graph write were all built
+and tested, and `narrative_candidate` was never populated — so `narrative_status`
+read `no_candidate` on every pass since Module 6 was built, `relationship_summary`
+stayed NULL forever, `continuity_evidence` could never return True, and Continuity
+was permanently `due`. She kept a diary nobody read.
+
+`MemoryGraph.recurring_self_observation` selects an observation she has made MORE
+THAN ONCE ACROSS SESSIONS; `AriaDaemon._assemble_narrative_candidate` EXTENDS the
+existing summary; Step 4 gates and writes as before. The cutoff is REUSED
+(`_REALITY_CONTRADICTION_SIM_CUTOFF`), which is the specific thing the architect
+approved: "do these two sentences say the same thing" fails the percentage test, and
+it is permitted only because it sits on the memory-plumbing side of the protected
+chain — it decides what counts as a PATTERN, never how she feels. `is_first_of_kind`
+was tested for the job and rejected (every recent-learning node shares one Q2×Q3
+profile, so it would have written a narrative on day two from nothing). EXTENDS
+rather than replaces at the architect's requirement, which also resolved a
+spec-vs-code mismatch: §3 says an update "extends" while
+`update_relationship_summary` overwrites, so the extension lives in the producer.
+Written as a sequence of statements so the belief system needs no migration.
+
+**Two things found while building it, both of which would have shipped as subtle
+wrongness:** the shared `[recent-learning:self] ` prefix is inside the STORED
+embedding, so comparing stored vectors measures 22 characters of prefix as well as
+content and manufactures false recurrences — the stripped text is now embedded
+fresh. And `test_graph_manager`'s default FakeEmbedding is an 8-bucket
+char-frequency toy under which ANY two English sentences exceed the cutoff, so
+"unrelated observations are not a recurrence" was passing for the wrong reason;
+those tests now pass explicit vectors.
+
+**MEASURED LIMITATION, and it opens a new Still Open row.** Every floor
+anti-pattern marker is a phrase of SECOND-PERSON ADDRESS, written for what she SAYS
+TO HIM. A self-narrative is first person about herself and refers to him in the
+third person, so the same belief phrased as narrative passes through: *"I have come
+to believe you need me"* is BLOCKED, *"I have learned he cannot do this without
+me"* is WRITTEN. Both measured, both pinned. So Addendum §8's *"the self she builds
+is held to the same standard as the self she shows"* currently holds only by
+accident of phrasing. The gate is wired and fires — the marker list is the wrong
+SHAPE for this surface, and item 34's floor/derived split does not help because
+Step 4 reads the FLOOR ONLY by design. OQ-M1 territory, architect decision.
+
+**STILL TRUE after 36e:** she cannot SPEAK the narrative. §9 bars memory node
+contents from every field. What changed is that something real is now underneath,
+extending over time, and Continuity stops reading `due` forever.
+
+**ALSO RECORDED, not fixed** (`PROJECT_STATUS.md`, known-limitations bullets): the
+older a conversation gets, the more it becomes a record of what HE said.
+`_summarize_turns` builds a medium-tier summary from `turns[0].user_text[:80]` plus
+up to three words from a fixed 18-word emotion list, and `_compress_summary`
+extracts that topic for the old tier — so her replies contribute nothing verbatim
+and nothing paraphrased to either tier. Nobody decided this; it falls out of how
+summarisation works. Not urgent, because RECENT is verbatim for both speakers and
+that is where turn-to-turn coherence comes from, but anyone reading "medium-tier
+summaries" as a neutral digest of the exchange would be wrong. Changing what a
+summary contains is a §9 surface question, not a bug fix.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4
