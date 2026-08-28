@@ -639,10 +639,74 @@ def test_growth_evidence_window():
     assert mg2.growth_evidence(now=T0) is False
 
 
-def test_purpose_evidence_window():
+def test_purpose_evidence_half_a_explicit_positive_feedback_about_her():
+    """OQ6 resolved 2026-08-26, Addendum §3 half (a). `q3='self'` is ARIA as the
+    cause: Q3's self-cues are second-person ("you helped", "because of you") and
+    `_dominance_dir` reads SELF+POSITIVE as "agency affirmed"."""
     mg = make_graph()
-    add_event(mg, appraisal_q2="positive", timestamp=T0 - timedelta(days=1))
+    add_event(mg, appraisal_q1="none", appraisal_q2="positive",
+              appraisal_q3="self", timestamp=T0 - timedelta(days=1))
     assert mg.purpose_evidence(now=T0) is True
+
+
+def test_purpose_no_longer_satisfied_by_any_positive_turn():
+    """THE DEFECT THIS CLOSED, pinned. The old stand-in was "any positive-valence
+    EventNode in-window", so one cheerful remark met Purpose — a need meaning "she
+    had a positive effect on his life" instead meant "the fortnight contained a
+    good moment". False positives are the quiet failure: Purpose read healthy, so
+    it never shaped retrieval and never raised an initiative."""
+    mg = make_graph()
+    add_event(mg, appraisal_q1="none", appraisal_q2="positive",
+              appraisal_q3="user", timestamp=T0 - timedelta(days=1))
+    assert mg.purpose_evidence(now=T0) is False
+
+
+def test_purpose_evidence_half_b_follow_through_across_sessions():
+    """Half (b): an in-window turn returning to a SUBSTANTIVE topic from an
+    EARLIER session. Entity-ref overlap is DMN's existing categorical
+    topic-continuation test; `q1 in (medium, high)` is `connection_evidence`'s
+    existing substantiveness signal."""
+    mg = make_graph()
+    thesis = mg.write_entity_node(entity_type="concept", name="thesis")
+    add_event(mg, session_id="s1", appraisal_q1="high", appraisal_q2="neutral",
+              entity_refs=[thesis], timestamp=T0 - timedelta(days=6))
+    add_event(mg, session_id="s2", appraisal_q1="low", appraisal_q2="neutral",
+              entity_refs=[thesis], timestamp=T0 - timedelta(days=1))
+    assert mg.purpose_evidence(now=T0) is True
+
+
+def test_purpose_follow_through_needs_a_LATER_session_not_the_same_one():
+    """The session boundary is what makes it FOLLOW-through rather than
+    still-talking-about-it: returning to a subject in a later session is the
+    return; mentioning it twice in one sitting is one conversation."""
+    mg = make_graph()
+    thesis = mg.write_entity_node(entity_type="concept", name="thesis")
+    add_event(mg, session_id="s1", appraisal_q1="high", appraisal_q2="neutral",
+              entity_refs=[thesis], timestamp=T0 - timedelta(days=1, hours=2))
+    add_event(mg, session_id="s1", appraisal_q1="low", appraisal_q2="neutral",
+              entity_refs=[thesis], timestamp=T0 - timedelta(days=1))
+    assert mg.purpose_evidence(now=T0) is False
+
+
+def test_purpose_follow_through_needs_the_earlier_turn_to_be_substantive():
+    """§3 says "something SUBSTANTIVE Aria helped with". A low-relevance earlier
+    mention is not something she helped with."""
+    mg = make_graph()
+    thesis = mg.write_entity_node(entity_type="concept", name="thesis")
+    add_event(mg, session_id="s1", appraisal_q1="low", appraisal_q2="neutral",
+              entity_refs=[thesis], timestamp=T0 - timedelta(days=6))
+    add_event(mg, session_id="s2", appraisal_q1="low", appraisal_q2="neutral",
+              entity_refs=[thesis], timestamp=T0 - timedelta(days=1))
+    assert mg.purpose_evidence(now=T0) is False
+
+
+def test_purpose_evidence_respects_the_locked_window():
+    """WINDOW_PURPOSE (14d, item 7) is untouched — only the predicate changed."""
+    mg = make_graph()
+    add_event(mg, appraisal_q1="none", appraisal_q2="positive",
+              appraisal_q3="self", timestamp=T0 - timedelta(days=20))
+    assert mg.purpose_evidence(now=T0) is False
+    assert mg.purpose_evidence(now=T0, window=timedelta(days=30)) is True
 
 
 def test_continuity_evidence_measures_extension_recency_not_age():

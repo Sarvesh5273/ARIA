@@ -170,11 +170,17 @@ def add_growth_evidence(mg, at=T0):
 
 
 def add_purpose_evidence(mg, at=T0):
-    """Beneficence: a positive-valence EventNode (the graph's current stand-in
-    query, TODO(OQ6-M2)). Q1 none so it is not also Connection evidence."""
+    """Beneficence: EXPLICIT POSITIVE FEEDBACK ABOUT HER (Addendum §3, half (a);
+    OQ6 resolved 2026-08-26). `q3='self'` is ARIA as the cause — Q3's self-cues
+    are second-person ("you helped", "because of you") — so this is the user
+    crediting her, not the user crediting himself.
+
+    This used to seed ANY positive-valence node, which was the stand-in query
+    (`TODO(OQ6-M2)`) that made Purpose satisfiable by one cheerful remark. Q1
+    stays `none` so it is not also Connection evidence."""
     return mg.write_event_node(
-        description="thanks, that helped", session_id="s",
-        appraisal_q1="none", appraisal_q2="positive", appraisal_q3="user",
+        description="thanks, you helped", session_id="s",
+        appraisal_q1="none", appraisal_q2="positive", appraisal_q3="self",
         poignancy_category=PoignancyCategory.LOW, timestamp=at,
     )
 

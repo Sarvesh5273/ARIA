@@ -62,7 +62,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import List, Optional, Protocol, Sequence, Union, runtime_checkable
+from typing import (
+    Dict, List, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable,
+)
 
 # ===========================================================================
 # Task 2 — Enums (exact string domains from v4 Layer 3 / Addendum §2)
@@ -1271,26 +1273,89 @@ class MemoryGraph:
     def purpose_evidence(
         self, now: Optional[datetime] = None, window: timedelta = WINDOW_PURPOSE
     ) -> bool:
-        """Purpose: user follow-through / explicit positive feedback within
-        14d.
+        """Purpose: user follow-through / explicit positive feedback within 14d.
 
-        OQ6 (architect: NOT this module's decision — defer to Needs System /
-        Module 2). Memory Graph only answers whatever query it is given over
-        existing Appraisal_Chain fields; it does not define what "follow-through"
-        structurally means. The current query (a positive-valence EventNode
-        in-window) is a stand-in over existing fields, to be superseded by
-        whatever query Module 2 specifies. Not invented here, not this module's
-        call. Kept as TODO(OQ6-M2).
+        OQ6 RESOLVED 2026-08-26 (architect ruling). This was a STAND-IN: "any
+        positive-valence EventNode in-window", explicitly flagged as
+        `TODO(OQ6-M2)` and awaiting a structural definition of "follow-through".
+
+        WHY THE STAND-IN HAD TO GO. It made Purpose almost always satisfied — one
+        cheerful remark in a fortnight met it — so a need that is supposed to mean
+        "she had a positive effect on his life" instead meant "the last two weeks
+        contained a good moment". The failure mode was FALSE POSITIVES, which is
+        the quiet kind: Purpose reads healthy, so it never shapes retrieval and
+        never raises an initiative, and one of her four needs is effectively
+        switched off in the position that looks like health.
+
+        WHAT IT IS NOW. Addendum §3 names two qualifying signals and this
+        implements both, as an OR — either is sufficient:
+
+        (a) **Explicit positive feedback about HER.** `appraisal_q2 = 'positive'`
+            AND `appraisal_q3 = 'self'`. Q3's `self` is ARIA as the cause, not the
+            user: `_SELF_ATTRIBUTION_CUES` are second-person ("you helped",
+            "because of you"), and `_dominance_dir` reads `SELF + POSITIVE` as
+            "agency affirmed". So this is the user crediting her, which is exactly
+            §3's "explicit positive feedback".
+
+        (b) **Follow-through.** An in-window EventNode sharing at least one
+            `entity_ref` with an EARLIER node from a DIFFERENT session whose
+            `appraisal_q1` was medium or high. Three existing pieces, no new one:
+            entity-ref overlap is the categorical topic-continuation test DMN
+            already uses (`_topic_continued`); `q1 in (medium, high)` is the
+            substantiveness signal `connection_evidence` already uses, standing
+            for §3's "something substantive"; and the session boundary is what
+            makes it FOLLOW-through rather than still-talking-about-it — returning
+            to a subject in a later session is the return, whereas mentioning it
+            twice in one sitting is one conversation.
+
+        NO NEW NUMBER, NO NEW FIELD, and the locked `WINDOW_PURPOSE` (14d, item 7)
+        is untouched — only the predicate changed.
+
+        WHAT IS STILL THIS MODULE'S BOUNDARY: it answers the query, it does not
+        decide the need state. `NeedsSystem` still owns satisfied/due/neglected
+        (Req 11.5).
+
+        COST, stated rather than hidden: (b) needs `entity_refs`, which is stored
+        as JSON text, so it is resolved in Python over one pass rather than in SQL
+        — the same shape `retrieve` and `is_first_of_kind` already use. Bounded by
+        graph size, single pass, indexed by ref.
         """
         self._require_ready()
         now = now or _now()
         cutoff = _iso(now - window)
+
+        # (a) Explicit positive feedback attributed to HER.
         row = self._conn.execute(
             "SELECT 1 FROM event_nodes WHERE appraisal_q2 = 'positive' "
-            "AND timestamp >= ? LIMIT 1",
+            "AND appraisal_q3 = 'self' AND timestamp >= ? LIMIT 1",
             (cutoff,),
         ).fetchone()
-        return row is not None
+        if row is not None:
+            return True
+
+        # (b) Follow-through: an in-window turn returning to a substantive topic
+        # from an EARLIER session.
+        helped: Dict[str, List[Tuple[str, str]]] = {}   # ref -> [(timestamp, session)]
+        recent: List[Tuple[str, str, List[str]]] = []   # (timestamp, session, refs)
+        for r in self._conn.execute(
+            "SELECT timestamp, session_id, appraisal_q1, entity_refs FROM event_nodes"
+        ).fetchall():
+            refs = json.loads(r["entity_refs"] or "[]")
+            if not refs:
+                continue
+            stamp, session = r["timestamp"], r["session_id"] or ""
+            if r["appraisal_q1"] in ("medium", "high"):
+                for ref in refs:
+                    helped.setdefault(ref, []).append((stamp, session))
+            if stamp is not None and stamp >= cutoff:
+                recent.append((stamp, session, refs))
+
+        for stamp, session, refs in recent:
+            for ref in refs:
+                for prior_stamp, prior_session in helped.get(ref, ()):
+                    if prior_stamp < stamp and prior_session != session:
+                        return True
+        return False
 
     def continuity_evidence(
         self,
