@@ -1491,6 +1491,29 @@ class MemoryGraph:
         embedded fresh here. Cost: one embed per candidate per idle pass, which is
         a small number on an infrequent path, and correct rather than subtly wrong.
 
+        *** MEASURED 2026-08-26 AGAINST THE REAL MODEL: AT 0.6 THIS IS INERT. ***
+        `tools/measure_recurrence_cutoff.py`, all-minilm, 24 pairs: reworded
+        recurrences score 0.331–0.596 (median 0.455) and unrelated pairs score
+        0.191–0.379, so at the reused 0.6 cutoff **0 of 12 genuine recurrences are
+        caught**. The logic below is correct and will only ever fire on
+        near-identical phrasing, which is not how she words the same noticing
+        twice.
+
+        The cause is structural rather than a badly chosen number. This cutoff was
+        set for REALITY_CONTRADICTION, where the pairs share nearly every word and
+        differ by one negation — those measure 0.422–0.898, median 0.883, roughly
+        2x the paraphrase median. One constant cannot serve both comparisons
+        because they are asking different questions.
+
+        NOT CHANGED HERE. Lowering the shared constant would also loosen
+        contradiction detection, and a false contradiction drives relational_stage
+        REGRESSION (Addendum §1) — its false-positive cost is unmeasured, so the
+        measurement does not license the move. Giving recurrence its own constant
+        contradicts the architect's "reuse, do not invent" instruction. That is a
+        Rule 2 conflict between two instructions, so it is FLAGGED for the
+        architect with the data rather than resolved here. See PROJECT_STATUS
+        "Still Open".
+
         `exclude_similar_to` is how the caller avoids re-appending something the
         narrative already says — compared with the same cutoff, so a reworded
         restatement is caught too, not just an exact repeat.
