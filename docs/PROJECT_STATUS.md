@@ -41,9 +41,18 @@ is Module 12 — which is why soul went 611 → 626 rather than cross-cutting go
 
 Without an embedding backend reachable, the
 same 3 tests skip and the rest pass — measured directly at 723 + 3 skipped when
-the suite stood at 726, so the figure today is **899 + 3**. Stated that way because
-the macOS Ollama.app restarts the daemon on its own, which makes the
-backend-down arm awkward to re-measure on demand. *(This read "755 + 3" until
+the suite stood at 726, so the figure today is **899 + 3**. **BOTH ARMS MEASURED
+DIRECTLY on 2026-08-26** (902 passed with the backend up; 899 + 3 with it down),
+which is why the derived figure is no longer the only evidence.
+
+*(CORRECTED 2026-08-26: this used to say "the macOS Ollama.app restarts the daemon
+on its own, which makes the backend-down arm awkward to re-measure on demand".
+That is NOT what happens — the architect confirmed the daemon going away and
+coming back mid-session was him closing and reopening it deliberately. Nothing
+restarts itself. So the backend-down arm is perfectly easy to measure: stop the
+daemon and run the suite. The old claim had made an easy measurement look
+impossible, which is how a figure stays derived for weeks when it could have been
+observed.)* *(The count itself read "755 + 3" until
 2026-08-26 — stale by a different amount again, since 755 + 3 describes a
 758-test suite and was never updated after the boundary phase. Corrected here
 because a derived figure nobody re-derives is how a tracker starts lying quietly.)* Both numbers are real and neither is a failure: the
@@ -1318,6 +1327,86 @@ gate cost grows with narrative length.
    the Continuity gap, and this step retires its similarity cutoff by replacing a
    numeric recurrence test with user approval. The write path and the moral gate
    are unchanged, and the statement-sequence format means no migration
+
+---
+
+## COMPLETE OPEN-ITEM INVENTORY (swept 2026-08-26)
+
+Every open thing in one place, **swept from the code and docs rather than recalled**
+— the sweep that produced this found two in-code claims that item 36 had falsified
+and one false claim about the Ollama daemon, none of which any tracker row had
+caught. The Still Open table above is authoritative for its five rows; this section
+exists because open work also lives in TODO tags, in "flagged not fixed" notes, and
+in the belief-phase ruling list, and reading only one of those gives a false sense
+of how much is outstanding.
+
+Re-sweep with:
+`grep -rhoE "TODO\([^)]*\)" daemon/ adapters/ main.py | sort | uniq -c | sort -rn`
+
+### A. Needs a decision from the architect — 3
+
+| # | Item | Note |
+|---|---|---|
+| A1 | **Addendum §8's narrative guarantee is phrasing-dependent** | Found while building item 36e. Floor markers are all SECOND-PERSON address ("you need me"), so a self-narrative in first/third person bypasses the moral gate. Measured both ways, both pinned by tests. Item 34's floor/derived split does not help — Step 4 reads the floor only by design. OQ-M1 territory. |
+| A2 | **Continuity `neglected`** | **UNBLOCKED by item 36e.** Needs a contradiction signal, which had nothing to contradict while `relationship_summary` was always NULL. Reuse `REALITY_CONTRADICTION`; do not build a new similarity+opposition check. |
+| A3 | **v4 row 945** — "uncertainty weight above 0.5" | Parked under Rule 1: the phrase occurs exactly once in the whole chain, nothing defines or produces such a weight, and manufacturing one would be a number deciding what she says about her own interior. `test_v4_uncertainty_row_945_is_not_implemented` pins the absence. **Recommendation: leave parked.** Misread as "ready, ~30 min" four times now. |
+
+### B. Needs her running with a real user — 2 rows, ~83 TODO tags
+
+Nothing to decide; these need conversation data, not a ruling. Current tag census:
+
+    42  TODO(build-time)            13  TODO(F-7-prosody)
+     8  TODO(OQ1-rate)               7  TODO(build-time, F-4e)
+     3  TODO(build-time, OQ-M1)      3  TODO(F-8a)
+     3  TODO(F-10-zone-precedence)   1  TODO(build-time, F-4d)
+     1  TODO(Addendum §3)            2  TODO(OQ6-M2)  <- historical, past-tense only
+
+**Two have measured evidence already and are the ones worth doing first:**
+* `_HABITUATION_SIMILARITY_CUTOFF = 0.9` — at 0.9 a near-duplicate (0.950) and a
+  loose paraphrase (0.910) are indistinguishable. **Never re-measured.** Same shape
+  as item 37, and `tools/measure_recurrence_cutoff.py` is the template.
+* `_RECURRENCE_SIM_CUTOFF = 0.40` — measured (item 37) but on ONE model with 24
+  pairs, not on her real conversations. Re-run the tool after any model change.
+
+### C. Measurable right now, blocked only on the backend being up — 1
+
+| # | Item | Note |
+|---|---|---|
+| C1 | **Speed baseline for `qwen3.5:9b-mlx`** | `session_buffer.py` sets the 10.0 tok/s floor explicitly "below the ~13–14 tok/s the architect reports", and **that figure has never been project-measured**. If the real number is at or under 10.0, the floor is not a floor. `tools/compare_local_models.py qwen3.5:9b-mlx` is the harness; it refuses to start without the backend. |
+
+*(The 3 embedding-comparison skips are NOT an open item — they pass with the
+backend up, measured 2026-08-26.)*
+
+### D. Flagged and deliberately NOT fixed — 7, no action needed
+
+Recorded so nobody re-discovers them and files them as bugs.
+
+| # | Item |
+|---|---|
+| D1 | **Summarisation asymmetry** — medium/old tiers are built from `turns[0].user_text[:80]` plus a fixed 18-word emotion list, so the older a conversation gets the more it records what HE said. Her replies contribute nothing verbatim. Changing it is a §9 surface question. |
+| D2 | **`<think>` content survives the strip** — the pattern removes the TAGS, not the text between them. Deliberately not widened: item 22's numbers are expressed in terms of that exact pattern. |
+| D3 | **Unmarked prose narration** — accepted floor, unmeasurable and unfixable without judging content (item 35c). |
+| D4 | **Marked stage directions at 3/16** — accepted floor (item 35c). Compounding loop closed by item 31. |
+| D5 | **PAD restore protection is Daemon-scoped** — `pad_engine.py` is deliberately byte-unchanged, so a caller reaching `initialize()` without `AriaDaemon.startup()` still gets the raise. A future host must run the HANDOFF contract, not just the engine. |
+| D6 | **`_save_state` self_model clobber window** — round-trips `self_model` through disk; a concurrent `save_self_model` between read and write would be lost. Unreachable in the synchronous REPL. |
+| D7 | **The narrative carries HER wording, not polished prose** — the producer selects and extends, it does not rewrite. So `relationship_summary` reads "There was a silence and I let it sit", not "I am becoming someone who…". Honest, and plainer than the worked examples implied. |
+
+### E. Future phase — 4 of 5 belief-system rulings outstanding
+
+Ruling 2 (evolving anti-patterns) landed as item 34. Remaining: the belief graph
+schema; whether beliefs may influence appraisal; the ingestion interface; the
+review flow. See "Future Phase: Belief Formation System". **Not scheduled** — none
+of these blocks anything currently built.
+
+### F. The one that is easy to lose
+
+**She still cannot SPEAK the self-narrative.** Addendum §9 bars memory node
+contents from every field, and `relationship_summary` is memory node content. Item
+36e means something real is now underneath and Continuity works — but asked "how do
+you see yourself in this?" she still answers from Field 3's stage-derived register
+and the session transcript. Giving her a path to speak it is its own ruling, closest
+in shape to belief-phase ruling 3, and it is the one that would make the producer
+visible to the user rather than only to the graph.
 
 ---
 
