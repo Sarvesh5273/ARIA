@@ -775,12 +775,44 @@ class MemoryGraph:
         interaction_count: int = 0,
         created: Optional[Union[datetime, str]] = None,
         now: Optional[datetime] = None,
-    ) -> str:
+    ) -> Optional[str]:
+        """Create an active UncertaintyNode, or return None when the cognitive
+        ceiling holds.
+
+        THE CEILING IS A REAL CEILING NOW (2026-08-26 architect ruling). v4 line
+        1313 locks `Uncertainty node maximum | 5 active nodes` and that is
+        unchanged — what changed is what happens on the sixth. Previously this
+        RAISED `RuntimeError` when the cap was hit with no evictable
+        GRAPH_CONFLICT node, which killed the turn: a traceback in the middle of
+        an ordinary conversation because she was already holding five things.
+
+        Now no node forms and the turn proceeds. That is what the code already
+        flagged as the likely right answer — *"the human-like resolution may be
+        that a new uncertainty simply does not FORM when she is already at her
+        limit — a real cognitive ceiling — rather than raising"* — so this
+        executes a flagged plan rather than inventing one.
+
+        IT IS NOT AN EVICTION POLICY, which is the thing the architect explicitly
+        refused. Nothing existing is dropped, and no protected node is touched.
+        The ceiling declines the NEW question, which is what a person already
+        holding a lot does; the alternative — quietly discarding something she is
+        already carrying — is the invention that was rejected.
+
+        Returns the new node_id, or **None** when the ceiling held.
+        `AppraisalResult.uncertainty_node_id` is already `Optional[str]`, so None
+        propagates through both call sites with no signature change downstream.
+
+        Observability: `at_uncertainty_capacity()` reports the condition without
+        consuming it, so a caller can tell the difference between "no uncertainty
+        arose this turn" and "one arose and could not be held".
+        """
         self._require_ready()
         now = now or _now()
         active = self._active_uncertainty_rows()
         if len(active) >= MAX_ACTIVE_UNCERTAINTY_NODES:
-            self._force_abandon_oldest_graph_conflict(active)
+            if not self._force_abandon_oldest_graph_conflict(active):
+                # Ceiling holds: she is at capacity and nothing may be evicted.
+                return None
         is_protected = uncertainty_type in _PROTECTED_UNCERTAINTY_TYPES
         node = UncertaintyNode(
             node_id=str(uuid.uuid4()),
@@ -801,9 +833,28 @@ class MemoryGraph:
             (UncertaintyStatus.ACTIVE.value,),
         ).fetchall()
 
+    def at_uncertainty_capacity(self, now: Optional[datetime] = None) -> bool:
+        """Is she holding the maximum number of open questions with none that may
+        be evicted? DERIVED from the current rows — no stored flag, so asking does
+        not consume or destroy the condition (the same reasoning as item 31's
+        `all_narration_replies`).
+
+        This is the signal behind the at-capacity behaviour: the COUNT never
+        leaves this module, only the yes/no. v4's max of 5 is untouched."""
+        self._require_ready()
+        active = self._active_uncertainty_rows()
+        if len(active) < MAX_ACTIVE_UNCERTAINTY_NODES:
+            return False
+        return not any(
+            row["uncertainty_type"] == UncertaintyType.GRAPH_CONFLICT.value
+            for row in active
+        )
+
     def _force_abandon_oldest_graph_conflict(
         self, active_rows: List[sqlite3.Row]
-    ) -> None:
+    ) -> bool:
+        """Evict the oldest evictable node. Returns True if one was evicted,
+        False if the ceiling holds (no GRAPH_CONFLICT node to take)."""
         # Evict the OLDEST GRAPH_CONFLICT active node; never a protected node.
         for row in active_rows:  # already ordered created ASC (oldest first)
             if row["uncertainty_type"] == UncertaintyType.GRAPH_CONFLICT.value:
@@ -818,19 +869,19 @@ class MemoryGraph:
                     (UncertaintyStatus.ABANDONED.value, row["node_id"]),
                 )
                 self._conn.commit()
-                return
+                return True
         # Cap hit with NO evictable GRAPH_CONFLICT node (all remaining are
         # protected INPUT/VALENCE or CAUSAL_UNCERTAIN). v4 is silent on this.
-        # ARCHITECT (confirmed): KEEP this "raise rather than silently mishandle"
-        # stub — do NOT implement an eviction-of-protected-node policy. NOTE for
-        # later (flag, do NOT implement now): the human-like resolution may be
-        # that a new uncertainty simply does not FORM when she is already at her
-        # limit — a real cognitive ceiling — rather than raising. Left flagged.
-        raise RuntimeError(
-            "Uncertainty node cap (5) reached with no evictable GRAPH_CONFLICT "
-            "node — unspecified by v4 (architect: keep raise; cognitive-ceiling "
-            "alternative flagged, not implemented)."
-        )
+        #
+        # RESOLVED 2026-08-26 (architect ruling). This RAISED `RuntimeError`,
+        # which killed the turn — a traceback mid-conversation because she was
+        # already holding five things. The eviction-of-a-protected-node policy the
+        # architect refused is STILL refused; what happens instead is the option
+        # this very comment flagged as probably right: *"a new uncertainty simply
+        # does not FORM when she is already at her limit — a real cognitive
+        # ceiling"*. So the ceiling declines the NEW question and nothing existing
+        # is disturbed.
+        return False
 
     # =======================================================================
     # Task 10 — update_uncertainty_status (resolution / staleness ABANDONED)

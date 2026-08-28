@@ -391,16 +391,64 @@ def test_uncertainty_protected_flag_set():
     assert c.is_protected is False
 
 
-def test_uncertainty_cap_no_evictable_raises():
-    # OQ6 edge case: cap hit with no evictable GRAPH_CONFLICT → raise, don't
-    # evict a protected/CAUSAL node or drop the new one.
-    mg = make_graph()
+def _fill_to_capacity_with_no_evictable(mg):
+    """Five active nodes, none of them GRAPH_CONFLICT, so nothing may be evicted."""
     _mk_unc(mg, UncertaintyType.INPUT_UNCERTAIN, T0)
     _mk_unc(mg, UncertaintyType.VALENCE_UNCERTAIN, T0 + timedelta(minutes=1))
     for i in range(3):
         _mk_unc(mg, UncertaintyType.CAUSAL_UNCERTAIN, T0 + timedelta(minutes=2 + i))
-    with pytest.raises(RuntimeError):
-        _mk_unc(mg, UncertaintyType.CAUSAL_UNCERTAIN, T0 + timedelta(minutes=30))
+
+
+def test_uncertainty_ceiling_declines_the_new_node_instead_of_raising():
+    """2026-08-26 architect ruling. This used to raise `RuntimeError`, which
+    killed the turn — a traceback mid-conversation because she was already holding
+    five things. Now no node forms and the turn proceeds.
+
+    This is what the code itself had flagged as probably right: "a new uncertainty
+    simply does not FORM when she is already at her limit — a real cognitive
+    ceiling — rather than raising"."""
+    mg = make_graph()
+    _fill_to_capacity_with_no_evictable(mg)
+    result = _mk_unc(mg, UncertaintyType.CAUSAL_UNCERTAIN, T0 + timedelta(minutes=30))
+    assert result is None
+
+
+def test_the_ceiling_is_not_an_eviction_policy():
+    """The load-bearing half. The architect explicitly refused
+    eviction-of-a-protected-node, so the ceiling must decline the NEW question and
+    leave everything she is already carrying untouched. Quietly discarding one of
+    those is the invention that was rejected."""
+    mg = make_graph()
+    _fill_to_capacity_with_no_evictable(mg)
+    before = {r["node_id"] for r in mg._active_uncertainty_rows()}
+
+    _mk_unc(mg, UncertaintyType.CAUSAL_UNCERTAIN, T0 + timedelta(minutes=30))
+
+    after = {r["node_id"] for r in mg._active_uncertainty_rows()}
+    assert after == before          # nothing evicted, nothing added
+    assert len(after) == 5          # v4 line 1313's max is unchanged
+
+
+def test_at_uncertainty_capacity_reports_without_consuming():
+    """The signal behind the at-capacity behaviour. DERIVED from current rows, so
+    asking twice gives the same answer — a stored flag would be read once and then
+    destroy the condition it reported."""
+    mg = make_graph()
+    assert mg.at_uncertainty_capacity() is False
+    _fill_to_capacity_with_no_evictable(mg)
+    assert mg.at_uncertainty_capacity() is True
+    assert mg.at_uncertainty_capacity() is True
+
+
+def test_not_at_capacity_when_something_is_evictable():
+    """Non-vacuous: five active nodes alone is not the ceiling. The ceiling is five
+    AND nothing evictable — a GRAPH_CONFLICT node can still be taken, so a sixth
+    question is holdable."""
+    mg = make_graph()
+    for i in range(5):
+        _mk_unc(mg, UncertaintyType.GRAPH_CONFLICT, T0 + timedelta(minutes=i))
+    assert mg.at_uncertainty_capacity() is False
+    assert _mk_unc(mg, UncertaintyType.GRAPH_CONFLICT, T0 + timedelta(minutes=30))
 
 
 # ===========================================================================

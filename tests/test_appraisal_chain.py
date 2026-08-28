@@ -14,7 +14,7 @@ PROPERTIES (ordering, sign, categorical outcome), exactly as Module 3 handled
 OQ1-rate/OQ2.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -1059,3 +1059,52 @@ def test_resolved_uncertainty_ref_skipped_silently(tmp_path):
     chain.appraise(user_text="something normal", session_id="s1",
                    active_uncertainty_refs=[nid])
     g.close()
+
+
+# ===========================================================================
+# The cognitive ceiling, end to end: a real turn survives it (2026-08-26).
+# ===========================================================================
+
+def test_a_real_turn_survives_the_uncertainty_ceiling():
+    """THE USER-VISIBLE FIX. `create_uncertainty_node` used to raise
+    `RuntimeError` when she was holding five open questions with none evictable,
+    and both call sites are inside `appraise()` — so an ordinary turn died with a
+    traceback because she was already carrying a lot.
+
+    Driven through the REAL AppraisalChain and the REAL graph rather than asserting
+    on the graph method alone, because "the turn survives" is the claim and only
+    the full path can show it."""
+    chain, _pad, graph, _emb = make_chain()
+
+    # Fill to capacity with nothing evictable (no GRAPH_CONFLICT node).
+    ev = graph.write_event_node(
+        description="seed", session_id="s", appraisal_q1="low",
+        appraisal_q2="neutral", appraisal_q3="user",
+        poignancy_category=PoignancyCategory.LOW, now=T0,
+    )
+    for i, utype in enumerate((
+        UncertaintyType.INPUT_UNCERTAIN,
+        UncertaintyType.VALENCE_UNCERTAIN,
+        UncertaintyType.CAUSAL_UNCERTAIN,
+        UncertaintyType.CAUSAL_UNCERTAIN,
+        UncertaintyType.CAUSAL_UNCERTAIN,
+    )):
+        assert graph.create_uncertainty_node(
+            uncertainty_type=utype, trigger_event_ref=ev,
+            created=T0 + timedelta(minutes=i), now=T0,
+        ) is not None
+    assert graph.at_uncertainty_capacity() is True
+
+    # A turn she cannot fully parse would have tried to open a sixth node.
+    result = chain.appraise(
+        user_text="mmm not sure why, can't tell",
+        session_id="s",
+        now=T0 + timedelta(hours=1),
+    )
+
+    # The turn COMPLETED, and produced a real appraisal.
+    assert result is not None
+    assert result.event_node_id
+    # No sixth question was taken on, and nothing she held was dropped.
+    assert result.uncertainty_node_id is None
+    assert len(graph._active_uncertainty_rows()) == 5
