@@ -1514,6 +1514,93 @@ summary contains is a §9 surface question, not a bug fix.
 
 ---
 
+## 37. Recurrence gets its own measured cutoff — one number per QUESTION
+
+*(2026-08-26)* — architect ruling: Sarvesh. Commit `61548ad`. **Item 37.**
+Amends item 36e's "reuse the contradiction cutoff" instruction on measured
+evidence.
+
+**The problem.** Item 36e reused `_REALITY_CONTRADICTION_SIM_CUTOFF` (0.6) as the
+recurrence test, at the architect's "reuse, do not invent" instruction — the right
+instinct, since a fresh threshold doing semantic work is what Rule 1 forbids. But
+the tests that shipped with it use EXPLICIT vectors, so they prove the selection
+logic and say nothing about whether 0.6 is the right line. Measured against the
+real model once Ollama was available: **0 of 12 genuine reworded recurrences
+caught.** The producer was wired, correct, and INERT — it would only ever have
+fired on near-identical phrasing, which is not how she words the same noticing
+twice. My own smoke test used identical text, which is precisely why it looked
+fine.
+
+**Why one number could not serve both, and it is structural.** The two answer
+different questions and their pairs land in non-overlapping bands:
+
+| question | shape of the pair | measured |
+|---|---|---|
+| did he contradict himself? | same subject, opposite polarity | 0.422–0.898, **median 0.883** |
+| has she noticed this before? | same meaning, different words | 0.331–0.596, **median 0.455** |
+| (control) unrelated observations | different meanings | 0.191–0.379 |
+
+*"I'm happy in this job"* vs *"I'm not happy in this job"* scores **0.87** — opposite
+meanings, near-identical vectors, because sentence embeddings read the subject
+loudly and "not" barely at all. **The code already knew this**: contradiction
+detection pairs similarity with a SEPARATE `_has_negation` check precisely because
+the embedding cannot hear the flip. Paraphrases are the mirror case — same meaning,
+almost no shared vocabulary — so they land far lower. Roughly 2× apart, with no
+overlap, so no single value sits in both bands.
+
+**Three options, and why (c).**
+* **(a) leave 0.6** — the producer stays inert. Rejected.
+* **(b) lower the shared constant** — would also loosen contradiction detection,
+  and a false contradiction drives relational_stage REGRESSION (Addendum §1):
+  trust damage, not noise. Its false-positive cost is UNMEASURED — the sample has
+  no same-topic-negated pairs that are NOT real contradictions — so the measurement
+  does not license this move, and `tools/measure_recurrence_cutoff.py` says so
+  explicitly rather than letting its CONTRA column read as an argument for it.
+* **(c) a recurrence-specific measured constant** — taken.
+
+**(c) is not a new kind of thing, which is what settles the Rule 1 tension.** The
+codebase already measures ONE CUTOFF PER QUESTION: `_VULNERABILITY_SIM_CUTOFF`
+0.25, recurrence 0.40, contradiction 0.6, `_HABITUATION_SIMILARITY_CUTOFF` 0.9.
+Sharing one across two questions is the thing this design avoids everywhere else,
+and 0.25 was itself moved from 0.6 on exactly this kind of real-model measurement.
+So "reuse, do not invent" was taken more literally than the surrounding code takes
+it.
+
+**Why 0.40.** Measured recall against false positives: 0.30 → 12/12 caught but
+3/12 FALSE; 0.35 → 10/12 and 2/12 false; **0.40 → 9/12 caught, 0/12 false**; 0.45 →
+6/12, 0 false. 0.40 is the lowest value with zero false recurrences. The
+distributions overlap slightly (recurrence min 0.331 vs unrelated max 0.379) so
+nothing is perfect, and the asymmetry decides it: a **FALSE** recurrence writes
+something untrue into who she is, a **MISSED** one only means she notices the
+pattern again next month.
+
+**Verified live** on the real model, real DMN and real graph, with the
+three-moment scene the ruling was argued from:
+
+    March  "I waited through his silence instead of filling it."    -> no_candidate
+    May    "There was a silence and I let it sit."                  -> WRITTEN
+    July   "He went quiet and I didn't reach for something to say." -> no_candidate
+                                                       (correctly not duplicated)
+    continuity_evidence -> True
+
+What gets written is HER wording, not polished prose — the producer carries the
+observation, it does not rewrite it.
+
+**A test that was passing for the wrong reason was replaced.**
+`test_the_recurrence_cutoff_is_reused_not_invented` asserted the contradiction
+constant appeared in the method's source, and it STILL PASSED after the change,
+because the new docstring names that constant while explaining why it is not used.
+The replacement asserts on the executable BODY only, checks each method uses its own
+constant and not the other's, and carries the reason contradiction must stay at 0.6
+in an assertion message.
+
+**Still a build-time placeholder.** One model, 24 pairs, not calibrated on her real
+conversations. `tools/measure_recurrence_cutoff.py` is re-runnable and is the thing
+to run after a model change — the same role `measure_format_markers.py` plays for
+Field 1.
+
+---
+
 ## Resolved during build-plan review (post-approval, GLM's own flags)
 
 - **relational_stage transition-gate evaluator** → DMN Step 4
