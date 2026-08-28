@@ -294,11 +294,20 @@ class NeedsEvaluator:
         neglected once nothing qualifies within 60d (the next rung up).
 
         Addendum §3 flags this as the WEAKEST, lowest-confidence signal of the
-        four, and Memory_Graph's purpose_evidence carries its own TODO(OQ6-M2):
-        its current query is a stand-in over existing fields. Module 2 calls it
-        as-is; it does not invent a richer follow-through query (OQ-3). That
-        weakness now propagates to a NEGLECTED verdict as well as a DUE one —
-        flagged, not resolved here. (Req 10.3)"""
+        four, and that remains true — outcome visibility is genuinely limited
+        in-session.
+
+        OQ6 RESOLVED 2026-08-26 (Resolution Log item 36a), so the stale note that
+        used to sit here is gone: `purpose_evidence` is no longer a stand-in with
+        a `TODO(OQ6-M2)`. It now implements §3's two named signals as an OR —
+        explicit positive feedback about HER (`q2=positive` AND `q3=self`) or
+        follow-through (an in-window node sharing an `entity_ref` with an earlier
+        node from a DIFFERENT session at `q1` medium/high). Module 2 still calls
+        it as-is and still does not define what follow-through means; the
+        definition lives in Module 3 where the query does.
+
+        The residual weakness §3 names propagates to a NEGLECTED verdict as well
+        as a DUE one — flagged, not resolved here. (Req 10.3)"""
         return self._state(
             self._graph.purpose_evidence(now=now),
             self._graph.purpose_evidence(now=now, window=WINDOW_CONTINUITY),

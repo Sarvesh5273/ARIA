@@ -44,9 +44,16 @@ Open Questions — architect resolutions applied (2026-07-05):
   DEFERRED (explicit placeholder + TODO — do NOT treat as final):
     OQ1-rate → habituation decrement/cutoff/window magnitudes (runtime-tuned).
   NOT THIS MODULE'S DECISION:
-    OQ6 → Purpose evidence definition defers to Needs System (Module 2).
-    max-5 no-evictable-GRAPH_CONFLICT → keep raise (cognitive-ceiling
-        alternative flagged, not implemented).
+  RESOLVED 2026-08-26 (Resolution Log item 36) — listed because both used to sit
+  under "NOT THIS MODULE'S DECISION" above and no longer do:
+    OQ6 → `purpose_evidence` now implements Addendum §3's two named signals
+        (credit attributed to her, or cross-session follow-through) instead of
+        the any-positive-node stand-in. Item 36a.
+    max-5 no-evictable-GRAPH_CONFLICT → the raise is GONE. v4 line 1313's
+        maximum stays and eviction-of-a-protected-node stays refused, but the
+        ceiling now DECLINES the sixth question (returns None) instead of
+        killing the turn — the cognitive-ceiling option this file had itself
+        flagged as probably right. Item 36c.
 THE BOUNDARY (architect): salience/habituation are SUBSTRATE — they may be
 numeric and adjusted, but are NEVER wired to compute a feeling. The protected
 chain is memory-mechanics → retrieval ORDERING (never a weighted score) →
