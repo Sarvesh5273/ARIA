@@ -370,7 +370,7 @@ A row that is neither — a decision made and recorded — does not belong here.
 | v4 non-prohibition instruction rows with no home | `needs-ruling` · 🔓 OPEN — **3 of v4's 4 uncertainty rows now live; row 945 is NOT implementable** | v4 has FOUR uncertainty rows in the soul_filter table, not two. **Live:** 943 *"Uncertainty node unresolved → Don't fake confidence"* (base branch); **944** *"INPUT_UNCERTAIN active → Be present. Don't project onto what you don't know yet"* and **946** *"Uncertainty resolved this turn → Something just became clearer. You can let that show"* — both implemented 2026-08-20, both purely categorical off signals `AppraisalResult` already carried (`uncertainty_node_id` + a graph type read; `resolved_uncertainty_ids`). No lexicon, no threshold, no new quantity. **PARKED — row 945** *"Uncertainty weight above 0.5"*: the phrase `"uncertainty weight"` occurs **exactly once** in the entire precedence chain (v4 line 945); no `uncertainty_weight` symbol exists in `daemon/` or `tests/`; `UncertaintyNode`'s only numerics are `interaction_count` and the `catch_up_*` PAD fields, and repurposing either would invent a *meaning* for an existing number. There is no `0.5` to compare against. Implementing it requires a formula producing a number that decides what she says about her own interior — the protected chain's core prohibition, and it fails the percentage test on sight. Rule 1: flagged, not invented. This was mis-described as "ready, ~30 min" three times in handoff summaries; `test_v4_uncertainty_row_945_is_not_implemented` now pins the absence so it reads as a decision. **Still genuinely open:** v4's Energy<30 self-acknowledgment (*"I'm not thinking clearly right now"*), held back separately — it is a disclosure about internal state, which brushes §9 in a way the other permissions do not. |
 | OQ1-rate habituation magnitudes | `needs-runtime` · 🔓 DEFERRED — **first real data 2026-08-22** | `_HABITUATION_SIMILARITY_CUTOFF = 0.9`, `_HABITUATION_DECREMENT = 0.05`, `_HABITUATION_RECENT_FIRINGS = 5` — all carry `TODO(OQ1-rate)` and the module docstring lists them under "DEFERRED (explicit placeholder + TODO — do NOT treat as final)". Runtime-tuned. **This row previously appeared in the Closed table marked resolved, which contradicted both the code and the Module 3 row. The trigger shape is closed; the rate is not.** The CUTOFF now has a real measurement behind it — see "First real embedding calibration data" below: at 0.9 a near-duplicate (0.950) and a shared-word paraphrase (0.910) are indistinguishable. The decrement and window still need her running. |
 | Build-time tuning constants | `needs-runtime` · 🔓 OPEN | All still placeholders (intentional). Inventory re-measured 2026-08-20: `PAD_HISTORY_LENGTH`; `K_LOAD`/`K_REST` (F-2a/F-2b); OQ1-rate habituation (above); appraisal arc turn-counts (`_ARC_OPEN_CONSECUTIVE_NEGATIVE` = 2, `_CONFLICT_ARC_ABSENT_TURN_THRESHOLD` = 5, aliased to the spec-named `_ARC_CLOSE_ABSENT_TURNS`) + distress/social lexicons (F-4d/F-4e); moral-schema anti-pattern markers (OQ-M1); soul-filter deflection markers; prosody magnitudes (F-7-prosody); zone precedence (F-10-zone-precedence); `TIER_2_KEYWORDS` + `HEALTH_CACHE_TTL_SECONDS`; soul-tick 3s / DMN-tick 30s (F-8a). **REMOVED from this inventory:** OQ2 medium/low `base_salience` (floors deleted) and the resolved-edge `base_salience` hint (now derived from the opening EventNode) — both were invented magnitudes, not tuning knobs. **ADDED 2026-08-22, adapter layer:** `embedding_local` timeout + cache size, `transport_ollama` generation timeout — transport plumbing, no soul meaning. **Three existing entries now have measured data rather than none:** `_VULNERABILITY_SIM_CUTOFF`, `_HABITUATION_SIMILARITY_CUTOFF`, `_REALITY_CONTRADICTION_SIM_CUTOFF` — see "First real embedding calibration data" below. One of the three looks wrong on the evidence; none was changed. |
-| Self-continuity narrative producer | **SUPERSEDED 2026-08-26** — `needs-ruling` LIFTED, direction changed (ResLog item 33). Not closed: still open, but no longer waiting on a ruling about *this* mechanism. The gap has a missing PRODUCER and a missing CONSUMER — `relationship_summary` reaches no prompt field, and Addendum §9's never-crosses list bars memory node contents — so building a producer for a value with no reader is wasted work. Architect direction: persistent self-narrative is addressed by the **Future Phase: Belief Formation System** (recorded at the end of this file), where beliefs about herself become the narrative and this closes as a side effect. **Item 3a is already done** (ResLog item 32, commit `cf0c353`): the Continuity initiative note now describes her own narrative instead of the relationship bond. **Continuity stays permanently `due`** until the belief system or some other producer exists — which is the honest state, because the need genuinely is unmet. · **observed 2026-08-22, previously only inferred** | Step 4 reported `narrative_status = no_candidate` on the real pass, and it always will: `AriaDaemon._assemble_idle_pass_input` never sets `DMNPassInput.narrative_candidate`. Module 6's design already flags generating the narrative text as an upstream concern and Module 6 correctly GATES rather than generates (moral gate + pattern-recurred gate, both verified). What is missing is the producer. Who writes "who she is becoming", and from what, is a design decision — not a wiring gap. |
+| Self-continuity narrative producer | **APPROVED 2026-08-26, NOT YET BUILT** — an INTERIM producer is ruled in: read `[recent-learning:self]` observations back on the idle pass, treat a RECURRING one as the candidate (recurrence by embedding similarity against the **reused** `_REALITY_CONTRADICTION_SIM_CUTOFF`, because `is_first_of_kind` was tested and rejected — every recent-learning node shares one Q2×Q3 profile, so it would fire on the second observation ever), and **EXTEND rather than replace**, since Addendum §3 says "extends" while `update_relationship_summary` overwrites. Written as a SEQUENCE OF STATEMENTS so the belief system needs no migration. **This closes Continuity but does NOT let her speak the narrative** — §9 bars memory node contents from every field, so asked "how do you see yourself in this?" she still answers from Field 3 and the transcript; what changes is that something real is now underneath, and Continuity stops reading `due` forever. Full before/after and the belief-system handoff: see "The self-narrative producer" under Future Phase. · **was SUPERSEDED 2026-08-26** — `needs-ruling` LIFTED, direction changed (ResLog item 33). Not closed: still open, but no longer waiting on a ruling about *this* mechanism. The gap has a missing PRODUCER and a missing CONSUMER — `relationship_summary` reaches no prompt field, and Addendum §9's never-crosses list bars memory node contents — so building a producer for a value with no reader is wasted work. Architect direction: persistent self-narrative is addressed by the **Future Phase: Belief Formation System** (recorded at the end of this file), where beliefs about herself become the narrative and this closes as a side effect. **Item 3a is already done** (ResLog item 32, commit `cf0c353`): the Continuity initiative note now describes her own narrative instead of the relationship bond. **Continuity stays permanently `due`** until the belief system or some other producer exists — which is the honest state, because the need genuinely is unmet. · **observed 2026-08-22, previously only inferred** | Step 4 reported `narrative_status = no_candidate` on the real pass, and it always will: `AriaDaemon._assemble_idle_pass_input` never sets `DMNPassInput.narrative_candidate`. Module 6's design already flags generating the narrative text as an upstream concern and Module 6 correctly GATES rather than generates (moral gate + pattern-recurred gate, both verified). What is missing is the producer. Who writes "who she is becoming", and from what, is a design decision — not a wiring gap. |
 
 **Six rows, re-counted from the table above** (`needs-ruling` 3,
 `needs-runtime` 2, superseded-but-open 1, `needs-adapter` 0).
@@ -1155,10 +1155,103 @@ verified is the same failure as a count nobody re-derives.
 | **Bhagavad Gita** — identity as attention: the manner and object of attention define the self | plausible; the specific Cambridge JAPA article was **not independently verified** |
 | **"iBrain synthetic identity architecture", four-layered contextualisation incl. predictive self-model** (espjeta.org) | **COULD NOT VERIFY.** No search result matches this title or venue. Left in the record as an unresolved reference rather than deleted or presented as cited — if it is real, supply the DOI; if it came from a model, drop it |
 
+### The self-narrative producer: what ships now, and what this phase changes
+
+**Architect approval 2026-08-26.** An INTERIM producer is approved and will be
+built before this phase. It is deliberately interim — the belief system supersedes
+its mechanism, not its purpose — and it is recorded here so the handoff is designed
+rather than discovered.
+
+**What the interim producer does.** DMN Step 4 already writes her self-observations
+to the graph every idle pass as `[recent-learning:self]` EventNodes. Nothing reads
+them back, so `narrative_candidate` is never populated and the whole Step 4
+pipeline — moral gate, recurrence gate, self-entity check, graph write — has never
+executed once. The producer closes that: on the idle pass, read the self-observations
+back, and when the same observation has RECURRED, hand it to Step 4 as the candidate.
+
+Three properties of the interim version, each an explicit architect decision:
+
+1. **Recurrence is decided by embedding similarity, REUSING the existing cutoff**
+   (`_REALITY_CONTRADICTION_SIM_CUTOFF`), not a new one. `is_first_of_kind` was
+   tested for this job and REJECTED: every recent-learning node is written with the
+   same Q2×Q3 profile (`q2="neutral"`, `q3="self"`), so it would report "seen
+   before" for every observation after the first and a narrative would be written on
+   day two from nothing.
+2. **It EXTENDS rather than replaces.** Addendum §3 says Continuity is satisfied
+   "when an update **extends** the narrative coherently", but
+   `update_relationship_summary` is a SQL `UPDATE` that overwrites. The extension
+   therefore happens in the PRODUCER — read the current summary, append, hand back
+   the whole text — which needs no graph change and mirrors `_append_text`'s existing
+   accretion for the recent-learning fields. Architect requirement: the answer to
+   "how do you see yourself in this?" must be able to change over time.
+3. **It writes a SEQUENCE OF STATEMENTS, not one paragraph.** Purely so this phase
+   needs no migration — see below.
+
+**Why a number is permitted here at all.** "Do these two sentences say the same
+thing?" is a text question on the memory-plumbing side of the protected chain: it
+decides what COUNTS AS A PATTERN, never how she feels. Appraisal is untouched. It
+does fail the percentage test — sentence similarity is genuinely a matter of degree —
+which is normally the signal to stop, and it is allowed only because it sits in the
+sanctioned substrate zone alongside salience and the existing similarity checks. That
+is also exactly why the cutoff is REUSED rather than chosen: a new number here would
+be an invented threshold doing semantic work.
+
+**WHAT THE PRODUCER DOES NOT DO, stated because the examples make it easy to assume
+otherwise.** It does not let her SPEAK the narrative. Addendum §9's never-crosses
+list bars memory node contents from every field, and `relationship_summary` is memory
+node content. So after the producer ships, three things become true and one does not:
+
+| | After the interim producer |
+|---|---|
+| Continuity can reach `satisfied` | ✅ — `continuity_evidence` finds a non-NULL summary |
+| A durable self-understanding exists on disk, extending over time | ✅ |
+| The belief system has a foundation to attach to | ✅ |
+| She can recite it when asked "how do you see yourself in this?" | ❌ **still blocked by §9** |
+
+Asked that question, she will still answer from Field 3's stage-derived register and
+the current session transcript. What changes is that there is now something real
+underneath, being carried — and that Continuity stops lying. Giving her a path to
+SPEAK it is a separate ruling, adjacent to ruling 3 below.
+
+### What this phase changes about it
+
+| | Interim producer (ships first) | After the belief system |
+|---|---|---|
+| **Source of the narrative** | her own recurring self-observations, from idle passes only | self-beliefs, formed from curated texts AND experience |
+| **How a candidate qualifies** | embedding similarity against a reused cutoff | belief formation with **explicit user approval** — a human judgment replaces the similarity number |
+| **Confidence** | none; a pattern either recurred or did not | categorical (certain / tentative / questioning), per the belief schema |
+| **Provenance** | the observation's own EventNode | source attribution — which text, which experience |
+| **Failure mode** | too-loose cutoff merges distinct observations into something vague | a bad candidate is rejected at the approval gate before it exists |
+| **Moral gate** | unchanged — runs on the whole accumulated text | unchanged |
+| **Write path** | unchanged — `update_relationship_summary`, extend-not-replace | unchanged |
+
+**The similarity cutoff is the part this phase RETIRES.** Once beliefs are
+user-approved, the reason for a numeric recurrence test disappears: a human decides
+whether an observation has become part of who she is. That is strictly better, and it
+is why the interim producer's cutoff is a reused placeholder rather than something
+worth calibrating.
+
+**Why no migration will be needed.** Because the interim producer writes a sequence
+of statements rather than one block, the belief system can attach beliefs to, extend,
+or supersede individual statements without parsing a paragraph or rewriting the
+column. That is the only reason the format is specified now.
+
+**Two things flagged rather than solved.** The summary grows without bound — harmless
+while §9 keeps it out of the prompt, awkward once the belief system reads it, and the
+statement-sequence format is what keeps that tractable. And the moral gate re-checking
+the whole accumulated story every pass is a deliberate benefit (a new statement that
+contradicts an older one is caught by the self-consistency check, free) but it means
+gate cost grows with narrative length.
+
 ### Relation to current open items
 
 * **Supersedes** the `needs-ruling` label on the self-continuity narrative row —
-  direction changed, not blocked, and NOT closed.
+  direction changed, not blocked, and NOT closed. **Updated 2026-08-26:** an INTERIM
+  producer is now approved and ships before this phase, so the row is no longer
+  waiting on this phase either — see "The self-narrative producer: what ships now,
+  and what this phase changes" above. This phase supersedes its mechanism (a reused
+  similarity cutoff) with user-approved belief formation; it does not supersede its
+  purpose.
 * **Item 3a is done** — ResLog item 32 fixed the Continuity initiative note to
   describe her own narrative rather than the relationship bond.
 * **Continuity stays permanently `due`** until this phase or another producer
@@ -1176,8 +1269,12 @@ verified is the same failure as a count nobody re-derives.
    asymmetry wired through `SoulFilter` and DMN. What step 5 still needs is
    PERSISTENCE (nothing stores approved patterns, so both gates are floor-only in
    practice today) and the user approval flow (ruling 5)
-6. Self-belief producer, writing to the self EntityNode, which closes the
-   self-continuity gap as a side effect
+6. Self-belief producer, writing to the self EntityNode — which SUPERSEDES the
+   interim producer approved 2026-08-26 rather than building from nothing. See
+   "The self-narrative producer" above: the interim version ships first and closes
+   the Continuity gap, and this step retires its similarity cutoff by replacing a
+   numeric recurrence test with user approval. The write path and the moral gate
+   are unchanged, and the statement-sequence format means no migration
 
 ---
 
