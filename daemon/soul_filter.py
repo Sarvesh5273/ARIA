@@ -364,6 +364,27 @@ _ENERGY_LOW_INSTRUCTION: str = (
     "acknowledge slower thinking if it comes up naturally, and do not overextend"
 )
 
+#: The cognitive ceiling, spoken (2026-08-26 architect ruling).
+#:
+#: v4 line 1313 caps her at 5 active uncertainty nodes — five open questions she
+#: is holding about him. Item on 2026-08-26 stopped a sixth from CRASHING the
+#: turn; this is the other half, so he learns it from HER instead of keeping the
+#: tally himself. A person already carrying a lot says "can we come back to
+#: that?" — they do not silently drop it and say nothing.
+#:
+#: NO COUNT CROSSES. `MemoryGraph.at_uncertainty_capacity()` answers yes/no and
+#: the number never leaves that module — the same discipline as the Energy gates,
+#: where "the NUMBER never crosses, only the instruction". "several" is
+#: deliberately vague for that reason.
+#:
+#: Two behaviours in one string, as the merged Energy<30 row already does, because
+#: Field 5 caps at 3 (Addendum §9) and there was never a spare slot to split them
+#: across.
+_AT_CAPACITY_INSTRUCTION: str = (
+    "say that you are already holding several open threads, and do not take on "
+    "another silently"
+)
+
 # --- Emergency instruction sets (v4 "The Three Emergency Instruction Sets") --
 # VERBATIM. These REPLACE the entire normal output (no zone, no stage, no needs,
 # no PAD — nothing else is sent).
@@ -517,6 +538,14 @@ class SoulFilter:
             derived_anti_patterns
         )
 
+        # NO-NAG LATCH for the at-capacity instruction (2026-08-26 ruling). Being
+        # at capacity persists across turns, so an unlatched row would repeat every
+        # turn until something resolved — which is performance, not expression, and
+        # the same reason SessionBuffer latches heavy pressure and the Daemon
+        # latches initiative. Re-arms when she is no longer at capacity, mirroring
+        # `_initiative_expressed` resetting on a need becoming satisfied again.
+        self._at_capacity_expressed: bool = False
+
     # =======================================================================
     # Field translators (state → natural language; NUMBERS/STATE NEVER CROSS)
     # =======================================================================
@@ -616,7 +645,8 @@ class SoulFilter:
         against each other, and the MAX-3 cap means order decides which survives.
         FLAGGED as a build-time presentation choice, not a spec reading:
 
-            base branch  →  944 INPUT_UNCERTAIN  →  Energy<20  →  Energy<30
+            base branch  →  AT CAPACITY  →  944 INPUT_UNCERTAIN
+                         →  Energy<20  →  Energy<30
                          →  946 uncertainty resolved
 
         The rationale: highest-stakes PROHIBITION first (944 guards against her
@@ -651,11 +681,30 @@ class SoulFilter:
             # named moral-schema anti-patterns (non-manipulation + genuine care).
             constraints = ["do not flatter to be liked", "do not manufacture urgency"]
 
+        # AT CAPACITY (2026-08-26 architect ruling). Placed FIRST of the added
+        # rows, above INPUT_UNCERTAIN and both Energy gates, and the reason is the
+        # ordering rationale this method already uses — "the scarcer the slot the
+        # more it belongs to the more specific condition". At-capacity is the most
+        # specific of the five: exactly five held AND a sixth arriving AND nothing
+        # evictable. Energy<30 is the least: any long conversation.
+        #
+        # The asymmetry of losing decides it. Energy holds the slot for as long as
+        # she is tired, and Energy does not recover while he is still talking — so
+        # under any other order a long session suppresses this row on EVERY turn,
+        # permanently, exactly when he is most likely to raise a sixth thing. This
+        # row LATCHES, so it costs another instruction one turn and no more.
+        at_capacity = self._at_uncertainty_capacity()
+        if not at_capacity:
+            self._at_capacity_expressed = False      # re-arm once she has room
+        elif not self._at_capacity_expressed and len(constraints) < 3:
+            constraints.append(_AT_CAPACITY_INSTRUCTION)
+            self._at_capacity_expressed = True
+
         # v4 line 944: "INPUT_UNCERTAIN active → 'Be present. Don't project onto
         # what you don't know yet.'" Categorical — the active uncertainty node
-        # either IS that type or it is not. Placed FIRST of the added rows: it is
-        # the highest-stakes prohibition here, guarding against her inventing
-        # content for a turn she could not parse.
+        # either IS that type or it is not. The highest-stakes PROHIBITION here,
+        # guarding against her inventing content for a turn she could not parse, so
+        # it sits above the Energy block and below at-capacity.
         if self._input_uncertain_active(appraisal) and len(constraints) < 3:
             constraints.append("do not project onto what you do not know yet")
 
@@ -702,6 +751,23 @@ class SoulFilter:
         if node is None:
             return False
         return node.uncertainty_type is UncertaintyType.INPUT_UNCERTAIN
+
+    def _at_uncertainty_capacity(self) -> bool:
+        """Whether she is holding the maximum open questions with none evictable
+        (v4 line 1313's max of 5). Read from the graph as a yes/no — the COUNT
+        never leaves Module 3, the same discipline the Energy gates follow.
+
+        Tolerates a graph that does not implement it, for the same reason
+        `_input_uncertain_active` tolerates a missing node: an absent signal is
+        "no such signal", not an error worth failing a turn over. Test doubles
+        predating this row are the realistic case."""
+        probe = getattr(self._graph, "at_uncertainty_capacity", None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:
+            return False
 
     # =======================================================================
     # Assembly — emergency branch is checked FIRST, before field assembly

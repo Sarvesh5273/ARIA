@@ -24,7 +24,7 @@ OQ-M1 and Modules 3/4 precedent.
 import dataclasses
 import inspect
 import textwrap
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -32,6 +32,7 @@ from daemon.types import ENERGY_LOW, ENERGY_CRITICAL
 from daemon.pad_engine import PADEngine, PADSnapshot, PADDelta, Valence, PAD_BASELINE
 from daemon.graph_manager import (
     MemoryGraph, RelationalStage, PoignancyCategory, UncertaintyType,
+    UncertaintyStatus,
 )
 from daemon.appraisal_chain import (
     AppraisalResult,
@@ -611,6 +612,7 @@ def test_constraints_never_exceed_three():
 from daemon.soul_filter import (
     _ENERGY_CRITICAL_INSTRUCTION as _FATIGUE,
     _ENERGY_LOW_INSTRUCTION as _OVEREXTEND,
+    _AT_CAPACITY_INSTRUCTION,
 )
 
 
@@ -1260,3 +1262,159 @@ def test_field5_was_not_spent_on_formatting():
         for formatting in ("bracket", "stage direction", "asterisk",
                            "markdown", "narrate"):
             assert formatting not in joined, (formatting, constraints)
+
+
+# ===========================================================================
+# AT CAPACITY — she says she is already holding a lot (2026-08-26 ruling).
+# ===========================================================================
+
+def _fill_uncertainty_to_capacity(graph):
+    """Five active nodes, none GRAPH_CONFLICT, so nothing may be evicted — the
+    condition `MemoryGraph.at_uncertainty_capacity()` reports."""
+    ev = graph.write_event_node(
+        description="seed", session_id="s", appraisal_q1="low",
+        appraisal_q2="neutral", appraisal_q3="user",
+        poignancy_category=PoignancyCategory.LOW, now=T0)
+    for i, utype in enumerate((
+        UncertaintyType.INPUT_UNCERTAIN,
+        UncertaintyType.VALENCE_UNCERTAIN,
+        UncertaintyType.CAUSAL_UNCERTAIN,
+        UncertaintyType.CAUSAL_UNCERTAIN,
+        UncertaintyType.CAUSAL_UNCERTAIN,
+    )):
+        graph.create_uncertainty_node(
+            uncertainty_type=utype, trigger_event_ref=ev,
+            created=T0 + timedelta(minutes=i), now=T0)
+    assert graph.at_uncertainty_capacity() is True
+    return ev
+
+
+def test_at_capacity_she_says_she_is_already_holding_a_lot():
+    """v4 line 1313 caps her at five open questions. The crash on a sixth is fixed
+    separately; this is the other half, so HE learns it from her instead of keeping
+    the tally himself."""
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+    constraints = _constraints_at(filt, 100.0)
+    assert _AT_CAPACITY_INSTRUCTION in constraints
+    assert len(constraints) <= 3
+
+
+def test_at_capacity_is_absent_when_she_has_room():
+    """Non-vacuous other half."""
+    filt, *_ = make_filter()
+    assert _AT_CAPACITY_INSTRUCTION not in _constraints_at(filt, 100.0)
+
+
+def test_at_capacity_beats_tiredness_for_the_single_free_slot():
+    """THE ARCHITECT'S RULING, and the asymmetry behind it. Energy holds the slot
+    for as long as she is tired, and Energy does not recover while he is still
+    talking — so under any other order a long session suppresses this row on EVERY
+    turn, permanently, exactly when he is most likely to raise a sixth thing.
+    Tiredness loses one turn; at-capacity would lose the whole evening."""
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+    constraints = _constraints_at(filt, 25.0)       # Energy<30 also wants the slot
+    assert _AT_CAPACITY_INSTRUCTION in constraints
+    assert _OVEREXTEND not in constraints
+
+
+def test_at_capacity_beats_critical_tiredness_too():
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+    constraints = _constraints_at(filt, 15.0)
+    assert _AT_CAPACITY_INSTRUCTION in constraints
+    assert _FATIGUE not in constraints
+
+
+def test_at_capacity_latches_and_tiredness_gets_the_slot_back():
+    """It is said ONCE. Being at capacity persists across turns, so an unlatched
+    row would repeat every turn until something resolved — performance, not
+    expression. Same reason SessionBuffer latches heavy pressure and the Daemon
+    latches initiative."""
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+
+    first = _constraints_at(filt, 25.0)
+    assert _AT_CAPACITY_INSTRUCTION in first
+
+    for _ in range(3):
+        later = _constraints_at(filt, 25.0)
+        assert _AT_CAPACITY_INSTRUCTION not in later
+        assert _OVEREXTEND in later            # the slot is handed back
+
+
+def test_at_capacity_re_arms_once_she_has_room_again():
+    """Mirrors `_initiative_expressed` resetting when a need becomes satisfied
+    again: recovering room means she may say it the next time she fills up."""
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+    assert _AT_CAPACITY_INSTRUCTION in _constraints_at(filt, 100.0)
+    assert _AT_CAPACITY_INSTRUCTION not in _constraints_at(filt, 100.0)   # latched
+
+    # Something resolves, so she has room — and the latch re-arms.
+    active = graph._active_uncertainty_rows()
+    graph.update_uncertainty_status(
+        active[0]["node_id"], UncertaintyStatus.RESOLVED_CONFIRMED, resolved=T0)
+    assert graph.at_uncertainty_capacity() is False
+    assert _AT_CAPACITY_INSTRUCTION not in _constraints_at(filt, 100.0)
+
+    _fill_uncertainty_to_capacity(graph)
+    assert _AT_CAPACITY_INSTRUCTION in _constraints_at(filt, 100.0)
+
+
+def test_at_capacity_stays_silent_when_he_is_vulnerable():
+    """The case where the MAX-3 cap protects the right thing. A 3-item base branch
+    leaves no slot, so she says nothing about her own capacity and stays with him.
+    Someone who answers "I'm not okay" with "before we start, I'm at capacity" is
+    doing admin at the worst possible moment."""
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+    constraints = _constraints_at(
+        filt, 15.0, social_signals=make_social(vulnerability_disclosure=True))
+    assert len(constraints) == 3
+    assert _AT_CAPACITY_INSTRUCTION not in constraints
+    assert _FATIGUE not in constraints
+
+
+def test_the_at_capacity_count_never_crosses():
+    """`at_uncertainty_capacity()` answers yes/no; the number stays in Module 3.
+    Same discipline as the Energy gates — "the NUMBER never crosses, only the
+    instruction"."""
+    filt, pad, graph, emb = make_filter()
+    _fill_uncertainty_to_capacity(graph)
+    instr = filt.assemble_instruction(
+        appraisal_result=make_appraisal(), user_message="m",
+        need_states=NeedStates(energy=100.0))
+    assert not any(ch.isdigit() for ch in instr.all_field_text())
+    assert "5" not in _AT_CAPACITY_INSTRUCTION
+    assert "five" not in _AT_CAPACITY_INSTRUCTION
+
+
+def test_at_capacity_is_first_in_the_optional_queue():
+    """Structural, asserted against the source: the row order is what the ruling
+    decided, and the two-free-slot state that would show it behaviourally is
+    unreachable today (no base branch yields fewer than 2 constraints), so a test
+    must not fake a state the code cannot reach."""
+    src = textwrap.dedent(inspect.getsource(SoulFilter._derive_constraints))
+    capacity = "constraints.append(_AT_CAPACITY_INSTRUCTION)"
+    no_project = 'constraints.append("do not project onto what you do not know yet")'
+    fatigue = "constraints.append(_ENERGY_CRITICAL_INSTRUCTION)"
+    low = "constraints.append(_ENERGY_LOW_INSTRUCTION)"
+    for line in (capacity, no_project, fatigue, low):
+        assert line in src, line
+    assert src.index(capacity) < src.index(no_project) < src.index(fatigue) < src.index(low)
+
+
+def test_a_graph_without_the_capacity_probe_does_not_fail_a_turn():
+    """An absent signal is "no such signal", not an error worth failing a turn
+    over — the same tolerance `_input_uncertain_active` gives a missing node. Test
+    doubles predating this row are the realistic case."""
+    filt, *_ = make_filter()
+
+    class _NoProbe:
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    filt._graph = _NoProbe()
+    assert filt._at_uncertainty_capacity() is False
