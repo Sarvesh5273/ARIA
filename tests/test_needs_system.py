@@ -57,6 +57,7 @@ from daemon.soul_filter import (
     NeedStates,
     SoulFilter,
     FiveFieldInstruction,
+    _ENERGY_LOW_INSTRUCTION,
 )
 from daemon.graph_manager import (
     MemoryGraph,
@@ -792,19 +793,19 @@ def test_soul_filter_derive_constraints_reads_produced_energy():
     appraisal = make_appraisal()
     mg = make_graph()
 
-    # Low Energy (< 30) -> 'do not overextend' appended.
+    # Low Energy (< 30) -> the merged <30 instruction is appended.
     ns_low = NeedsSystem(mg, clock=fixed_clock(T0))
     ns_low.initialize(25.0)
     low = ns_low.get_need_states()
     c_low = filt._derive_constraints(appraisal, low)
-    assert "do not overextend" in c_low
+    assert _ENERGY_LOW_INSTRUCTION in c_low
 
     # Normal Energy (>= 30) -> no energy constraint.
     ns_hi = NeedsSystem(mg, clock=fixed_clock(T0))
     ns_hi.initialize(100.0)
     hi = ns_hi.get_need_states()
     c_hi = filt._derive_constraints(appraisal, hi)
-    assert "do not overextend" not in c_hi
+    assert _ENERGY_LOW_INSTRUCTION not in c_hi
 
 
 def test_soul_filter_assemble_instruction_consumes_produced_needstates():

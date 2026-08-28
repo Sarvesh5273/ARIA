@@ -585,7 +585,7 @@ def test_constraints_energy_gate_translates_number_to_words():
     # CRITICAL band and selects the <20 instruction instead.
     instr = filt.assemble_instruction(
         appraisal_result=appr, user_message="m", need_states=NeedStates(energy=25.0))
-    assert "do not overextend" in instr.constraints  # Energy<30 gate, in NL
+    assert _OVEREXTEND in instr.constraints  # Energy<30 gate, in NL
     assert len(instr.constraints) <= 3
     assert not any(ch.isdigit() for ch in " ".join(instr.constraints))  # number never crosses
 
@@ -605,8 +605,13 @@ def test_constraints_never_exceed_three():
 # instructions (formalising the pre-existing <30 row).
 # ---------------------------------------------------------------------------
 
-_FATIGUE = "acknowledge fatigue if it comes up naturally"
-_OVEREXTEND = "do not overextend"
+# Imported from the module rather than duplicated: the source-order test below
+# compares against the exact append lines, and a second copy of these strings
+# would drift from the ones actually emitted.
+from daemon.soul_filter import (
+    _ENERGY_CRITICAL_INSTRUCTION as _FATIGUE,
+    _ENERGY_LOW_INSTRUCTION as _OVEREXTEND,
+)
 
 
 def _constraints_at(filt, energy, **appraisal_kw):
@@ -625,11 +630,56 @@ def test_energy_critical_produces_the_acknowledge_fatigue_instruction():
 
 
 def test_energy_low_still_produces_do_not_overextend():
-    # (b) the pre-existing <30 row is unchanged in the band it owns.
+    # (b) the pre-existing <30 row still owns its band. Its TEXT changed on
+    # 2026-08-26 — it now carries a disclosure alongside "do not overextend" —
+    # which is why this compares against the module constant rather than a literal.
     filt, *_ = make_filter()
     constraints = _constraints_at(filt, 25.0)
     assert _OVEREXTEND in constraints
     assert _FATIGUE not in constraints
+
+
+def test_energy_low_now_also_permits_her_to_say_it(): 
+    """2026-08-26 ruling. The <30 row carried "do not overextend" ALONE, so she
+    just became terser and the user never learned why — which reads as being less
+    interested rather than tired. v4's own Energy<30 self-acknowledgment had never
+    been implemented. Both now ride in ONE constraint, because Field 5 caps at 3
+    and the single free slot was already spent."""
+    filt, *_ = make_filter()
+    constraint = next(c for c in _constraints_at(filt, 25.0) if c == _OVEREXTEND)
+    assert "acknowledge" in constraint          # she may say it
+    assert "do not overextend" in constraint    # and the original behaviour holds
+    assert "if it comes up naturally" in constraint   # never forced
+
+
+def test_neither_energy_instruction_asserts_her_state_as_a_claim():
+    """v4 line 949 is "You are running low. Acknowledge it if it comes up
+    naturally." Only the SECOND sentence is carried — the first is Energy state
+    rendered as a CLAIM, and state never crosses (Addendum §9).
+
+    So her state may be the OBJECT of an instruction ("acknowledge fatigue",
+    "acknowledge slower thinking") and never a standalone assertion. This is the
+    rule the merged <30 wording had to satisfy: an earlier draft opened with
+    "your thinking is slower than usual — ..." which is exactly the sentence the
+    prior decision stripped."""
+    for instruction in (_FATIGUE, _OVEREXTEND):
+        assert instruction.startswith("acknowledge"), instruction
+        assert instruction.islower(), instruction
+        # No declarative state sentence: no "you are", no "your X is".
+        assert "you are" not in instruction, instruction
+        assert "is slower" not in instruction, instruction
+        assert "running low" not in instruction, instruction
+
+
+def test_the_merged_low_instruction_is_still_one_constraint_not_two():
+    """The whole reason for merging: Field 5 is MAX 3 (Addendum §9) and every base
+    branch takes 2 or 3, so adding a fourth entry was not available. One slot, two
+    behaviours."""
+    filt, *_ = make_filter()
+    constraints = _constraints_at(filt, 25.0)
+    assert len(constraints) <= 3
+    assert sum(1 for c in constraints if "overextend" in c) == 1
+    assert sum(1 for c in constraints if "acknowledge" in c) == 1
 
 
 def test_normal_energy_produces_neither_energy_instruction():
@@ -680,8 +730,8 @@ def test_the_two_energy_gates_are_independent_not_exclusive_tiers():
     base branch yields fewer than 2 constraints), and a test must not fake a
     state the code cannot reach."""
     src = textwrap.dedent(inspect.getsource(SoulFilter._derive_constraints))
-    fatigue_line = f'constraints.append("{_FATIGUE}")'
-    overextend_line = f'constraints.append("{_OVEREXTEND}")'
+    fatigue_line = "constraints.append(_ENERGY_CRITICAL_INSTRUCTION)"
+    overextend_line = "constraints.append(_ENERGY_LOW_INSTRUCTION)"
     assert fatigue_line in src and overextend_line in src
     # The severe gate is checked first, so it wins the scarce slot.
     assert src.index(fatigue_line) < src.index(overextend_line)

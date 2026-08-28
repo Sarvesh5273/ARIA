@@ -324,6 +324,46 @@ POST_EMERGENCY_THIS_MOMENT: str = (
     "unless he does. Stay present. Let him lead."
 )
 
+# --- The two Energy operational-gate instructions (Field 5) -----------------
+# Module constants rather than inline literals, the same shape SessionBuffer uses
+# for `_HEAVY_PRESSURE_INSTRUCTION`, because the <30 string no longer fits on one
+# source line and because the tests that pin these compare against the exact
+# text — a literal split across two source lines cannot be matched.
+#
+# BOTH ARE INSTRUCTION-ONLY. v4 line 949 reads "You are running low. Acknowledge
+# it if it comes up naturally." and only the second sentence is carried: the first
+# is Energy state rendered as a CLAIM, and state never crosses (Addendum §9). Her
+# state may be the OBJECT of an instruction ("acknowledge fatigue") and never a
+# standalone assertion. The number never crosses either — only the instruction.
+
+#: v4 line 949, Energy < 20.
+_ENERGY_CRITICAL_INSTRUCTION: str = "acknowledge fatigue if it comes up naturally"
+
+#: v4 line 948, Energy < 30: "Be concise. Don't overextend."
+#:
+#: AMENDED 2026-08-26 (architect ruling). This carried "do not overextend" alone,
+#: which is invisible to the user — she simply became terser, which reads as being
+#: less interested rather than tired. The architect's intent is that she says it,
+#: the way a person does. v4 also has an Energy<30 self-acknowledgment ("I'm not
+#: thinking clearly right now") that had never been implemented, recorded as held
+#: back because it "brushes §9".
+#:
+#: That reason was wrong: Field 5 carries an instruction, never the value, and
+#: item 16 already established Field 5 holds behavioural instructions. The REAL
+#: constraint was slot arithmetic — Field 5 caps at 3 (Addendum §9), every base
+#: branch takes 2 or 3, so at most ONE slot is ever free, and at <30 it was
+#: already spent on "do not overextend". So this MERGES the two rather than
+#: choosing: one slot, two behaviours, no fourth constraint invented. The
+#: initiative notes already put several instructions in one string, so the form
+#: has precedent.
+#:
+#: "slower thinking" is a NOUN PHRASE, deliberately parallel to "fatigue" above,
+#: so it is the object of an instruction rather than a declarative claim. The
+#: escalation to <20 is in the noun, not in an added assertion.
+_ENERGY_LOW_INSTRUCTION: str = (
+    "acknowledge slower thinking if it comes up naturally, and do not overextend"
+)
+
 # --- Emergency instruction sets (v4 "The Three Emergency Instruction Sets") --
 # VERBATIM. These REPLACE the entire normal output (no zone, no stage, no needs,
 # no PAD — nothing else is sent).
@@ -554,6 +594,15 @@ class SoulFilter:
         through: that half is Energy state rendered as a claim, and state never
         crosses (Addendum §9). Only the instruction half crosses.
 
+        ENERGY<30 NOW DISCLOSES TOO (2026-08-26 architect ruling). It carried
+        "do not overextend" alone, which the user never saw — she just became
+        terser, which reads as less interested rather than tired. v4's own
+        Energy<30 self-acknowledgment had never been implemented. Rather than
+        choose between them for the single free slot, the two are MERGED into one
+        constraint string (`_ENERGY_LOW_INSTRUCTION`): one slot, two behaviours,
+        no fourth constraint against the MAX-3 cap. The state stays the OBJECT of
+        an instruction ("acknowledge slower thinking"), never an assertion.
+
         Both Energy gates are independent and either may fire, but they are
         checked MOST-SEVERE-FIRST. In practice the base branches leave at most
         one free slot (every branch yields 2 or 3), and the scarcer the slot the
@@ -618,11 +667,13 @@ class SoulFilter:
             # low. Acknowledge it if it comes up naturally.'" Constraint form
             # keeps the instruction and drops the state claim.
             if need_states.energy < ENERGY_CRITICAL and len(constraints) < 3:
-                constraints.append("acknowledge fatigue if it comes up naturally")
+                constraints.append(_ENERGY_CRITICAL_INSTRUCTION)
             # v4 line 948: "Energy low (below 30) → 'Be concise. Don't
-            # overextend.'"
+            # overextend.'" — now MERGED with v4's Energy<30 self-acknowledgment,
+            # because one slot cannot hold two constraints but one constraint can
+            # carry two behaviours. See _ENERGY_LOW_INSTRUCTION.
             if need_states.energy < ENERGY_LOW and len(constraints) < 3:
-                constraints.append("do not overextend")
+                constraints.append(_ENERGY_LOW_INSTRUCTION)
 
         # v4 line 946: "Uncertainty resolved this turn → 'Something just became
         # clearer. You can let that show.'" Categorical — the appraisal either
