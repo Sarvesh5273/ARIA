@@ -39,6 +39,7 @@ from daemon.graph_manager import (
     PoignancyCategory,
     Precision,
     RelationalStage,
+    SELF_LEARNING_PREFIX,
     UncertaintyNode,
     UncertaintyStatus,
     UncertaintyType,
@@ -1071,3 +1072,156 @@ def test_increment_raises_for_resolved_or_absent_node():
     with pytest.raises(KeyError):
         g.increment_uncertainty_interaction_count("does-not-exist")
     g.close()
+
+
+# ===========================================================================
+# The self-narrative producer's selection step (architect ruling 2026-08-26).
+# ===========================================================================
+
+def _observe(mg, text, session="s1", at=None):
+    """Write a self-observation the way DMN Step 4 flushes one."""
+    return mg.write_event_node(
+        description=SELF_LEARNING_PREFIX + text, session_id=session,
+        appraisal_q1="medium", appraisal_q2="neutral", appraisal_q3="self",
+        poignancy_category=PoignancyCategory.MEDIUM, now=at or T0)
+
+
+_OBS_A = "I waited through his silence instead of filling it."
+_OBS_A_REWORD = "There was a silence and I let it sit."
+_OBS_B = "I grew more careful when the subject mattered to him."
+
+#: EXPLICIT vectors, because this file's default `FakeEmbedding` is an 8-bucket
+#: char-frequency toy — the one `test_daemon`'s docstring calls "too coarse" — and
+#: under it ANY two English sentences score well above the cutoff. Testing against
+#: that would assert the fake's bluntness rather than this code's selection.
+#: A and its reword are near-identical (cos ~0.99); B is orthogonal (cos 0).
+_OBS_VECTORS = {
+    _OBS_A:        [1.0, 0.0, 0.0, 0.0],
+    _OBS_A_REWORD: [0.9, 0.1, 0.0, 0.0],
+    _OBS_B:        [0.0, 1.0, 0.0, 0.0],
+}
+
+
+def _narrative_graph():
+    """A graph whose embedding model genuinely separates these three texts. Note
+    the table is keyed on the STRIPPED texts, which is itself load-bearing — see
+    `test_the_prefix_is_stripped_before_comparing`."""
+    return make_graph(table=dict(_OBS_VECTORS))
+
+
+def test_a_single_self_observation_is_not_a_pattern():
+    """v4 Step 4: single instances do not update the narrative. Noticing something
+    once is a Tuesday; noticing it repeatedly is character."""
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    assert mg.recurring_self_observation() is None
+
+
+def test_a_recurring_self_observation_across_sessions_is_a_pattern():
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_A, session="s2", at=T0 + timedelta(days=14))
+    assert mg.recurring_self_observation() == _OBS_A
+
+
+def test_a_REWORDED_recurrence_still_counts_and_the_newest_phrasing_wins():
+    """THE REASON THE APPROACH IS SIMILARITY RATHER THAN EXACT MATCH. She will not
+    phrase the same noticing identically twice. "I waited through his silence
+    instead of filling it" and "There was a silence and I let it sit" are the same
+    pattern in different words, and exact matching would miss it entirely.
+
+    The NEWEST phrasing is returned, because her current wording of a pattern is
+    the one worth carrying."""
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_A_REWORD, session="s2", at=T0 + timedelta(days=14))
+    assert mg.recurring_self_observation() == _OBS_A_REWORD
+
+
+def test_recurrence_must_cross_a_session_boundary():
+    """The same observation twice in one sitting is one conversation — the same
+    reason `purpose_evidence`'s follow-through half requires a later session."""
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_A, session="s1", at=T0 + timedelta(minutes=20))
+    assert mg.recurring_self_observation() is None
+
+
+def test_two_unrelated_observations_are_not_a_recurrence():
+    """Non-vacuous: it is not just "two self-observations exist". THIS is what
+    `is_first_of_kind` could not do — every recent-learning node shares one Q2xQ3
+    profile, so it would have called this pair a recurrence and written a
+    self-narrative on day two from nothing."""
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_B, session="s2", at=T0 + timedelta(days=14))
+    assert mg.recurring_self_observation() is None
+
+
+def test_the_prefix_is_stripped_before_comparing():
+    """THE SUBTLE ONE. Every self-observation node begins with
+    "[recent-learning:self] " and the STORED embedding covers the whole
+    description — so comparing stored vectors would measure a shared 22-character
+    prefix as well as the content, inflating similarity between UNRELATED
+    observations and manufacturing false recurrences. The stripped text is embedded
+    fresh instead.
+
+    Asserted two ways: the returned text carries no prefix, and two unrelated
+    observations (which share ONLY the prefix) are still not a recurrence."""
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_A, session="s2", at=T0 + timedelta(days=1))
+    result = mg.recurring_self_observation()
+    assert result == _OBS_A
+    assert SELF_LEARNING_PREFIX not in result
+    assert "recent-learning" not in result
+
+    mg2 = _narrative_graph()
+    _observe(mg2, _OBS_A, session="s1", at=T0)
+    _observe(mg2, _OBS_B, session="s2", at=T0 + timedelta(days=1))
+    assert mg2.recurring_self_observation() is None
+
+
+def test_exclude_similar_to_prevents_re_appending_what_the_narrative_says():
+    """Without this the same pattern would be appended on every idle pass forever.
+    Compared with the SAME cutoff, so a reworded restatement is caught too, not
+    only an exact repeat."""
+    mg = _narrative_graph()
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_A, session="s2", at=T0 + timedelta(days=1))
+    assert mg.recurring_self_observation() == _OBS_A
+    assert mg.recurring_self_observation(exclude_similar_to=[_OBS_A]) is None
+
+
+def test_only_self_observations_are_considered():
+    """`[recent-learning:user]` nodes are about HIM. They must not become part of
+    who SHE is."""
+    mg = make_graph()
+    for session, at in (("s1", T0), ("s2", T0 + timedelta(days=1))):
+        mg.write_event_node(
+            description="[recent-learning:user] He goes quiet when overwhelmed.",
+            session_id=session, appraisal_q1="medium", appraisal_q2="neutral",
+            appraisal_q3="self", poignancy_category=PoignancyCategory.MEDIUM, now=at)
+    assert mg.recurring_self_observation() is None
+
+
+def test_no_embedding_model_degrades_to_no_candidate():
+    """A graph without an embedding model reports "nothing recurred" rather than
+    failing — the recurrence test needs one and its absence is not an error."""
+    mg = MemoryGraph(":memory:", embedding_model=None)
+    _observe(mg, _OBS_A, session="s1", at=T0)
+    _observe(mg, _OBS_A, session="s2", at=T0 + timedelta(days=1))
+    assert mg.recurring_self_observation() is None
+    mg.close()
+
+
+def test_the_recurrence_cutoff_is_reused_not_invented():
+    """The architect approved REUSING the existing similarity cutoff rather than
+    choosing a new one — a new number here would be an invented threshold doing
+    semantic work. Asserted against the source so a later edit cannot quietly
+    introduce a second constant."""
+    import inspect
+    src = inspect.getsource(MemoryGraph.recurring_self_observation)
+    assert "_REALITY_CONTRADICTION_SIM_CUTOFF" in src
+    # No fresh numeric literal acting as a threshold.
+    assert "0." not in src.split('"""')[-1]

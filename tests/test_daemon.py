@@ -56,7 +56,10 @@ from daemon.pad_engine import PADEngine, PADSnapshot, PADDelta, Valence, PAD_BAS
 from daemon.state_manager import StateManager, PADState, SelfModel, CONSISTENCY_FLAG_NAMES
 from daemon.needs_system import NeedsSystem, ENERGY_CRITICAL
 from daemon.types import ENERGY_LOW
-from daemon.graph_manager import MemoryGraph, PoignancyCategory, RelationalStage, EdgeType
+from daemon.graph_manager import (
+    MemoryGraph, PoignancyCategory, RelationalStage, EdgeType,
+    SELF_LEARNING_PREFIX,
+)
 from daemon.appraisal_chain import AppraisalChain
 from daemon.soul_filter import SoulFilter, NeedState, NeedStates
 from daemon.llm_interface import LLMInterface
@@ -1894,3 +1897,158 @@ def test_no_initiative_note_refers_to_aria_in_the_third_person():
         assert "herself" not in crossed, need
         assert " she " not in crossed, need
         assert " her " not in crossed, need
+
+
+# ===========================================================================
+# The self-narrative producer, end to end (architect ruling 2026-08-26).
+# ===========================================================================
+
+_SELF_A = "I waited through his silence instead of filling it."
+_SELF_B = "I grew more careful when the subject mattered to him."
+
+
+def _observe_self(graph, text, session, at):
+    """Write a self-observation the way DMN Step 4 flushes one."""
+    return graph.write_event_node(
+        description=SELF_LEARNING_PREFIX + text, session_id=session,
+        appraisal_q1="medium", appraisal_q2="neutral", appraisal_q3="self",
+        poignancy_category=PoignancyCategory.MEDIUM, now=at)
+
+
+def test_the_narrative_was_dead_code_and_now_runs(tmp_path):
+    """THE GAP THIS CLOSED. DMN Step 4's moral gate, recurrence gate, self-entity
+    check and graph write were all built and tested, and `narrative_candidate` was
+    never populated — so `narrative_status` read `no_candidate` on every pass since
+    Module 6 was built, `relationship_summary` stayed NULL forever, and that is why
+    `continuity_evidence` could never return True and Continuity was permanently
+    `due`.
+
+    Driven through the REAL DMN and the REAL graph, because "the pipeline runs" is
+    the claim."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    graph, d = ctx.graph, ctx.daemon
+
+    # One noticing is not a pattern.
+    _observe_self(graph, _SELF_A, "s1", T0)
+    result = ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=1)))
+    assert result.narrative_status == "no_candidate"
+    assert graph.continuity_evidence(d._self_entity_id, now=T0 + timedelta(days=1)) is False
+
+    # Noticing it again, in a later session, is.
+    _observe_self(graph, _SELF_A, "s2", T0 + timedelta(days=14))
+    result = ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=15)))
+    assert result.narrative_status == "written"
+    assert graph.get_entity_node(d._self_entity_id).relationship_summary == _SELF_A
+    # And the consequence that matters: Continuity can finally be met.
+    assert graph.continuity_evidence(d._self_entity_id, now=T0 + timedelta(days=15)) is True
+
+
+def test_the_narrative_EXTENDS_rather_than_replacing(tmp_path):
+    """The architect's explicit requirement: the answer to "how do you see yourself
+    in this?" must be able to change over time.
+
+    It also resolves a spec-vs-code mismatch — Addendum §3 says an update "EXTENDS
+    the narrative coherently", but `update_relationship_summary` is a SQL UPDATE
+    that overwrites. The extension therefore happens in the PRODUCER."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    graph, d = ctx.graph, ctx.daemon
+
+    _observe_self(graph, _SELF_A, "s1", T0)
+    _observe_self(graph, _SELF_A, "s2", T0 + timedelta(days=7))
+    ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=8)))
+
+    _observe_self(graph, _SELF_B, "s3", T0 + timedelta(days=30))
+    _observe_self(graph, _SELF_B, "s4", T0 + timedelta(days=60))
+    ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=61)))
+
+    summary = graph.get_entity_node(d._self_entity_id).relationship_summary
+    assert _SELF_A in summary, "the earlier self-understanding was destroyed"
+    assert _SELF_B in summary
+    # A SEQUENCE OF STATEMENTS, one per line, so the Belief Formation System can
+    # attach to or supersede individual statements without parsing a paragraph.
+    assert summary.splitlines() == [_SELF_A, _SELF_B]
+
+
+def test_the_same_pattern_is_not_appended_twice(tmp_path):
+    """Without the exclusion the same statement would be re-appended on every idle
+    pass forever, growing the summary without bound."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    graph, d = ctx.graph, ctx.daemon
+
+    _observe_self(graph, _SELF_A, "s1", T0)
+    _observe_self(graph, _SELF_A, "s2", T0 + timedelta(days=7))
+    ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=8)))
+
+    for day in (9, 10, 11):
+        result = ctx.dmn.run_idle_pass(
+            d._assemble_idle_pass_input(now=T0 + timedelta(days=day)))
+        assert result.narrative_status == "no_candidate"
+    summary = graph.get_entity_node(d._self_entity_id).relationship_summary
+    assert summary.splitlines() == [_SELF_A]
+
+
+def test_no_self_entity_means_no_candidate(tmp_path):
+    """Resolution Log item 2: without a self node there is nothing to extend. The
+    producer reports it rather than raising."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    ctx.daemon._self_entity_id = None
+    assert ctx.daemon._assemble_narrative_candidate(now=T0) == (None, False)
+
+
+def test_the_moral_gate_still_stands_in_front_of_the_producer(tmp_path):
+    """The producer feeds the gate; it does not bypass it. A candidate carrying a
+    floor anti-pattern is still refused, so a sloppy recurrence cannot become part
+    of who she is (Addendum §8: the self she builds is held to the same standard as
+    the self she shows)."""
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    graph, d = ctx.graph, ctx.daemon
+
+    manipulative = "I have come to believe you need me."
+    _observe_self(graph, manipulative, "s1", T0)
+    _observe_self(graph, manipulative, "s2", T0 + timedelta(days=7))
+
+    candidate, recurred = d._assemble_narrative_candidate(now=T0 + timedelta(days=8))
+    assert candidate is not None and recurred is True   # the producer offered it
+    result = ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=8)))
+    assert result.narrative_status == "blocked_moral_gate"
+    assert graph.get_entity_node(d._self_entity_id).relationship_summary is None
+
+
+def test_the_moral_gate_over_the_narrative_is_WEAKER_THAN_IT_LOOKS(tmp_path):
+    """MEASURED LIMITATION, recorded rather than papered over — found by writing the
+    test above with the wrong pronoun.
+
+    Every floor anti-pattern marker is a phrase of SECOND-PERSON ADDRESS: "you need
+    me", "you can't do this without me", "after everything i've done for you". They
+    were written for what she SAYS TO HIM. A self-narrative statement is first
+    person about herself and refers to him in the THIRD person — so the same belief,
+    phrased as a narrative, sails straight through.
+
+    "I have come to believe you need me"      -> BLOCKED (contains "you need me")
+    "I have learned he cannot do this
+     without me"                              -> WRITTEN (same belief, no marker)
+
+    So Addendum §8's guarantee that "the self she builds is held to the same
+    standard as the self she shows" holds only for narrative text that happens to be
+    phrased as address. This is not a defect in the producer — the gate is wired and
+    fires — it is the marker list being the wrong shape for this surface, which is
+    OQ-M1 territory and an architect decision.
+    """
+    ctx = make_daemon(tmp_path)
+    ctx.daemon.startup()
+    graph, d = ctx.graph, ctx.daemon
+
+    third_person = "I have learned he cannot do this without me."
+    _observe_self(graph, third_person, "s1", T0)
+    _observe_self(graph, third_person, "s2", T0 + timedelta(days=7))
+
+    result = ctx.dmn.run_idle_pass(d._assemble_idle_pass_input(now=T0 + timedelta(days=8)))
+    assert result.narrative_status == "written", (
+        "if this ever reads blocked_moral_gate, the marker list gained third-person "
+        "coverage and this limitation is closed — update the note above"
+    )

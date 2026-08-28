@@ -1447,15 +1447,76 @@ class AriaDaemon:
             ConnectionCandidate(**rec)
             for rec in self._graph.highest_salience_unconnected_candidates(now=now)
         ]
+        narrative, recurred = self._assemble_narrative_candidate(now=now)
         return DMNPassInput(
             buffer=list(self._self_monitoring_buffer),
             connection_candidates=candidates,
             active_uncertainty_refs=list(self._active_uncertainty_refs),
             entity_refs=list(self._session_entity_refs),
             rupture_entity_refs=list(self._rupture_entity_refs),
+            narrative_candidate=narrative,
+            narrative_pattern_recurred=recurred,
             session_id=self._session_id,
             now=now,
         )
+
+    def _assemble_narrative_candidate(
+        self, now: Optional[datetime] = None
+    ) -> Tuple[Optional[str], bool]:
+        """The self-narrative PRODUCER (architect ruling 2026-08-26). Returns
+        `(candidate, pattern_recurred)` for DMN Step 4, or `(None, False)`.
+
+        This closes the gap that made the whole of Step 4 dead code: the moral gate,
+        the recurrence gate, the self-entity check and the graph write were all
+        built and tested, and `narrative_candidate` was never populated, so
+        `narrative_status` read `no_candidate` on every pass since Module 6 was
+        built and `relationship_summary` on her self node stayed NULL forever —
+        which in turn is why `continuity_evidence` could never return True and
+        Continuity was permanently `due`.
+
+        IT EXTENDS, IT DOES NOT REPLACE, and that was the architect's explicit
+        requirement: the answer to "how do you see yourself in this?" must be able
+        to change over time. It also resolves a spec-vs-code mismatch — Addendum §3
+        says Continuity is satisfied when an update "EXTENDS the narrative
+        coherently", but `update_relationship_summary` is a SQL `UPDATE` that
+        overwrites. So the extension happens HERE, in the producer: read the current
+        summary, append the new statement, hand back the whole text. No graph change
+        needed, and it mirrors `_append_text`'s existing accretion for the
+        recent-learning fields.
+
+        A SEQUENCE OF STATEMENTS, one per line — purely so the Belief Formation
+        System can later attach to, extend or supersede individual statements
+        without parsing a paragraph or migrating the column.
+
+        WHAT IS PACKAGING AND WHAT IS NOT. The Daemon still decides no meaning:
+        selecting WHICH observation has recurred is `MemoryGraph`'s
+        (`recurring_self_observation`, where the embedding comparison lives), and
+        gating and writing are DMN's. What happens here is a graph read and a
+        string join.
+
+        FREE CONSISTENCY CHECK, worth naming because it is the reason to extend
+        rather than send only the new line: the moral gate runs on the WHOLE
+        candidate, so every pass re-checks the entire accumulated self-story. A new
+        statement that contradicts an older one is caught by the self-consistency
+        check at no extra cost. And it cannot deadlock — DMN Step 4 reads the moral
+        FLOOR ONLY (item 34's asymmetry), and the floor is immutable, so a statement
+        that passed once always passes.
+        """
+        if self._self_entity_id is None:
+            return None, False        # no self node to extend (item 2)
+
+        node = self._graph.get_entity_node(self._self_entity_id)
+        existing = (getattr(node, "relationship_summary", None) or "") if node else ""
+        statements = [ln.strip() for ln in existing.splitlines() if ln.strip()]
+
+        statement = self._graph.recurring_self_observation(
+            exclude_similar_to=statements, now=now,
+        )
+        if not statement:
+            # Either nothing has recurred yet, or the narrative already says it.
+            return None, False
+
+        return "\n".join(statements + [statement]), True
 
     def _consume_dmn_result(self, result) -> None:
         """Clear the buffer items DMN consumed (so they are not re-processed)

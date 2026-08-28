@@ -117,6 +117,7 @@ from typing import (
 # file (constraint 1); the aha routes to the Appraisal Chain as an EVENT.
 from daemon.graph_manager import (
     EdgeType,
+    LEARNING_PREFIX_FMT,
     Perspective,
     PoignancyCategory,
     RelationalStage,
@@ -707,7 +708,10 @@ class DMN:
         for kind, text in (("user", sm.recent_learning_user), ("self", sm.recent_learning_self)):
             if text:
                 node_id = self._graph.write_event_node(
-                    description=f"[recent-learning:{kind}] {text}",
+                    # The `self` prefix is the one `MemoryGraph` matches on to
+                    # find recurring self-observations, so it comes from there
+                    # rather than being written literally in two places.
+                    description=LEARNING_PREFIX_FMT.format(kind=kind) + text,
                     session_id=session_id,
                     # Meta-learning node has no per-turn appraisal; neutral
                     # profile at medium poignancy (flagged, not a re-appraisal).

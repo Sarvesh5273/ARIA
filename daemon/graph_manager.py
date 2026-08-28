@@ -188,6 +188,15 @@ WINDOW_CONTINUITY = timedelta(days=60)
 # duration as tuning constants (not architectural gaps). Carried as
 # placeholders exactly as Module 1 carried PAD_HISTORY_LENGTH.
 _REALITY_CONTRADICTION_SIM_CUTOFF = 0.6  # build-time tuning placeholder
+
+#: How DMN Step 4 describes a flushed recent-learning EventNode. Defined HERE and
+#: imported by `daemon/dmn.py` (which already imports from this module) rather than
+#: written literally in both places: `recurring_self_observation` below MATCHES on
+#: the self form, so two copies drifting apart would silently stop the
+#: self-narrative producer finding anything — the same failure mode that made item
+#: 31 move the format-marker regex instead of duplicating it.
+LEARNING_PREFIX_FMT = "[recent-learning:{kind}] "
+SELF_LEARNING_PREFIX = LEARNING_PREFIX_FMT.format(kind="self")
 _REALITY_CONTRADICTION_WINDOW = timedelta(days=7)  # build-time tuning placeholder
 # "basic negation detection" tokens — Addendum §1. Minimal lexical set; the
 # exact criterion is a build-time tuning item.
@@ -1427,6 +1436,100 @@ class MemoryGraph:
             (self_entity_id, cutoff),
         ).fetchone()
         return row is not None
+
+    # =======================================================================
+    # The self-narrative producer's selection step (architect ruling 2026-08-26)
+    # =======================================================================
+    def recurring_self_observation(
+        self,
+        exclude_similar_to: Sequence[str] = (),
+        now: Optional[datetime] = None,
+    ) -> Optional[str]:
+        """A self-observation she has made MORE THAN ONCE, across sessions — or
+        None. This is the selection half of the self-narrative producer; DMN Step 4
+        still gates and writes, and this decides nothing about meaning.
+
+        WHAT IT READS. DMN Step 4 already flushes her self-observations to the
+        graph as EventNodes described `"[recent-learning:self] <text>"`. Nothing
+        ever read them back, which is why `narrative_candidate` was always None and
+        the entire Step 4 pipeline had never executed once. This reads them.
+
+        WHY "MORE THAN ONCE". v4 Step 4: single instances do not update the
+        narrative. Noticing something once is a Tuesday; noticing it repeatedly is
+        character. Recurrence must also cross a SESSION boundary — the same
+        observation twice in one sitting is one conversation, the same reason
+        `purpose_evidence`'s follow-through half requires a different session.
+
+        HOW RECURRENCE IS DECIDED, and this is the part that needed an architect
+        ruling. Two texts "saying the same thing" has no categorical answer —
+        similarity is genuinely a matter of degree, so it fails the percentage test,
+        which normally means stop. It is permitted here because it sits on the
+        MEMORY-PLUMBING side of the protected chain: it decides what counts as a
+        PATTERN, never how she feels, and appraisal is untouched. The cutoff is
+        therefore REUSED (`_REALITY_CONTRADICTION_SIM_CUTOFF`) rather than chosen —
+        a new number here would be an invented threshold doing semantic work.
+
+        `is_first_of_kind` was tested for this job and REJECTED: every
+        recent-learning node is written with the same Q2×Q3 profile
+        (`q2="neutral"`, `q3="self"`), so it reports "seen before" for every
+        observation after the very first and would write a self-narrative on day
+        two from nothing.
+
+        THE PREFIX IS STRIPPED BEFORE COMPARING, and this matters more than it
+        looks. Every one of these nodes begins with the literal
+        `"[recent-learning:self] "`, and the STORED embedding covers the whole
+        description — so comparing stored vectors would measure a shared 22-character
+        prefix as well as the content, inflating similarity between UNRELATED
+        observations and manufacturing false recurrences. So the stripped text is
+        embedded fresh here. Cost: one embed per candidate per idle pass, which is
+        a small number on an infrequent path, and correct rather than subtly wrong.
+
+        `exclude_similar_to` is how the caller avoids re-appending something the
+        narrative already says — compared with the same cutoff, so a reworded
+        restatement is caught too, not just an exact repeat.
+
+        Returns the NEWEST recurring observation's text (its current phrasing),
+        with the prefix removed. None when the embedding model is absent, so a
+        graph without one degrades to "no candidate" rather than failing.
+        """
+        self._require_ready()
+        if self._embedding_model is None:
+            return None
+
+        rows = self._conn.execute(
+            "SELECT node_id, session_id, description, timestamp FROM event_nodes "
+            "WHERE description LIKE ? ORDER BY timestamp ASC",
+            (SELF_LEARNING_PREFIX + "%",),
+        ).fetchall()
+        if len(rows) < 2:
+            return None   # nothing can have recurred yet
+
+        observations = []
+        for r in rows:
+            text = r["description"][len(SELF_LEARNING_PREFIX):].strip()
+            if not text:
+                continue
+            observations.append(
+                (r["session_id"] or "", text, list(self._embedding_model.embed(text)))
+            )
+
+        excluded = [
+            list(self._embedding_model.embed(t)) for t in exclude_similar_to if t.strip()
+        ]
+
+        # Newest first: her current phrasing of a pattern is the one to carry.
+        for i in range(len(observations) - 1, -1, -1):
+            session, text, vec = observations[i]
+            if any(_cosine(vec, ex) >= _REALITY_CONTRADICTION_SIM_CUTOFF
+                   for ex in excluded):
+                continue                      # the narrative already says this
+            for j in range(i):                # strictly earlier observations
+                prior_session, _prior_text, prior_vec = observations[j]
+                if prior_session == session:
+                    continue                  # same sitting is one conversation
+                if _cosine(vec, prior_vec) >= _REALITY_CONTRADICTION_SIM_CUTOFF:
+                    return text
+        return None
 
     # =======================================================================
     # Task 20 — is_first_of_kind + resolved_edge_exists (structural only)
