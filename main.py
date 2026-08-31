@@ -109,6 +109,13 @@ from adapters.transport_unconfigured import UnconfiguredTransport
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_RUNTIME_ROOT = Path.home() / ".local" / "aria"
 
+# v4's own local voice, quoted from v4 rather than chosen here: its build-state
+# table records Kokoro TTS working as "hexgrad/Kokoro-82M, af_bella", and its
+# Phase 0 roadmap row reads "Kokoro Bella locked as fallback voice". So this is a
+# CITED value, in the same category as the model tag v4 names for the local LLM —
+# not a preference, and not the kind of number Rule 4 is about.
+DEFAULT_KOKORO_VOICE = "af_bella"
+
 # WRITE CADENCE: every turn. Resolution Log item 4 calls StateManager's write
 # cadence a build-time tuning flag, so a value had to be chosen — and the honest
 # choice is the one that needs no defending. Saving after every turn writes two
@@ -329,12 +336,31 @@ class Wiring:
         "(Aria listens...)" aloud, 0.81 s of speech becoming 3.11 s — and
         adversarial bait produces a stage direction on 3/16 turns even after
         Field 1 was sharpened (Resolution Log item 22).
+
+        WHICH LOCAL RENDERER SPEAKS, AND WHY KOKORO NOW WINS WHEN PRESENT.
+        `--kokoro-voice` defaults to v4's own choice (`af_bella`, v4's build-state
+        row; "Kokoro Bella locked as fallback voice" in the Phase 0 roadmap row),
+        and `build_tts_pair` prefers Kokoro whenever a voice is named AND the
+        provider is installed. So on a machine with `kokoro` present she speaks in
+        v4's NAMED local voice rather than in the recorded `say` substitution.
+
+        That is a move TOWARD the spec rather than away from it, which is the only
+        reason it is a default: `adapters/audio_tts.py` records `SystemSayTTS` as a
+        substitution for v4's Kokoro slot, kept because it needs no installs. With
+        Kokoro installed the substitution has nothing left to buy. `say` remains
+        the automatic fallback where Kokoro is absent, and `--kokoro-voice ''`
+        forces it explicitly.
+
+        Neither renderer changes what PAD reaches the voice: both express
+        `length_scale` only, and both record `noise_scale` and `pitch_shift` as
+        unmapped. The startup report prints that probe, so the gap stays visible.
         """
         if not args.audio:
             return NoOpAudioPipeline()
         return audio_stack.build_output_only(
             pad_source=self.pad,
             voice=args.voice,
+            kokoro_voice=args.kokoro_voice,
             clip_dir=args.clip_dir,
             player=args.audio_player,
         )
@@ -672,6 +698,44 @@ def report_state(w: Wiring) -> None:
 # The REPL
 # ===========================================================================
 
+def advance_clocks(w: Wiring) -> None:
+    """Drive both soul clocks, and do not let an initiative turn kill the host.
+
+    WHY THIS IS GUARDED, which the bare call was not. `run_scheduler_step()` ->
+    `soul_tick()` -> `_maybe_initiate()` -> `_route_initiative()` reaches Soul
+    Filter and therefore the LLM. So a soul tick can raise `LLMUnavailableError` or
+    `LLMTransportError` — the SAME exceptions the turn path already catches two
+    dozen lines above — from a code path that has nothing to do with the user's
+    turn.
+
+    Found by measurement, not by reading: with a fresh graph every need reads
+    `neglected`, so the first tick after the first turn tries to initiate, and on
+    this machine the local model exceeded the adapter's 120 s ceiling. The
+    already-answered turn was printed, then the process died with a traceback from
+    inside `soul_tick` — which reads as "answering you broke her" when what
+    actually happened is that a reach-out she was composing on her own timed out.
+
+    Swallowing is correct HERE and only here. An initiative is v4's "single gentle
+    reach-out"; if it cannot be generated there is nothing to say and nothing to
+    recover — no PAD write is pending (PAD moves inside the Appraisal Chain, which
+    this path has already passed or not reached), no graph write is half-done (every
+    `MemoryGraph` write commits inside its own method), and the no-nag latch is not
+    set, so she will try again on a later tick rather than losing the impulse. The
+    cost of swallowing is one unspoken reach-out. The cost of not swallowing is the
+    session.
+
+    Reported rather than silent, for the reason item 21 and item 25 both give: a
+    failure nobody can see is indistinguishable from nothing having happened.
+    """
+    try:
+        w.daemon.run_scheduler_step()
+    except (LLMUnavailableError, LLMTransportError) as exc:
+        # Not the user's turn — this is her own initiative or a tick-driven
+        # generation. Say so precisely, so it cannot be misread as the reply failing.
+        print(f"  [a soul-tick generation failed — no backend for her own "
+              f"reach-out this tick] {exc}\n")
+
+
 def report_turn_outcome(w: Wiring, *, served: bool) -> None:
     """Relay "a backend answered / did not" to the Visual Layer.
 
@@ -781,8 +845,9 @@ def run_repl(w: Wiring) -> int:
         turns += 1
         # Advance both clocks. Without this PAD never decays and the DMN never
         # runs: the two clocks are driven by the caller, and in a REPL the
-        # caller is this loop.
-        w.daemon.run_scheduler_step()
+        # caller is this loop. Guarded — see `advance_clocks` on why a tick can
+        # raise the same LLM exceptions a turn can, and why it must not be fatal.
+        advance_clocks(w)
         # Third loop, and it is genuinely independent of the other two (v4: the
         # visual layer "runs locally, independently, in parallel with language
         # generation"). Module 10 owns no timer by design, so the host drives it.
@@ -893,6 +958,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--visual-preflight",
         action="store_true",
         help="report the visual providers and loop-file catalogue, then exit",
+    )
+    parser.add_argument(
+        "--kokoro-voice",
+        default=os.environ.get("ARIA_KOKORO_VOICE", DEFAULT_KOKORO_VOICE),
+        help=(
+            f"Kokoro voice — v4's NAMED local TTS. Default {DEFAULT_KOKORO_VOICE!r} "
+            f"is v4's own choice, not one invented here (its build-state row reads "
+            f"\"hexgrad/Kokoro-82M, af_bella\" and its Phase 0 row reads \"Kokoro "
+            f"Bella locked as fallback voice\"). Used when the provider is "
+            f"installed; otherwise macOS `say` takes the slot as the recorded "
+            f"substitution. Pass an empty string to force `say`."
+        ),
     )
     parser.add_argument(
         "--voice",

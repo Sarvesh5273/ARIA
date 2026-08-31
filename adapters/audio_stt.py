@@ -90,7 +90,7 @@ _CLI_INSTALL = "brew install whisper-cpp   (provides whisper-cli)"
 SPEC_MODEL_SIZE = "base"
 
 #: v4: default English (mirrors `AriaDaemon._language`). Pass None to autodetect.
-DEFAULT_LANGUAGE = "en"
+DEFAULT_LANGUAGE = None
 
 #: int8 on CPU is what makes `base` comfortably real-time on a laptop. Provider
 #: plumbing; the WEIGHTS are v4's, the execution precision is not a spec value.

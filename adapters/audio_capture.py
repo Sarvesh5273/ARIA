@@ -65,7 +65,7 @@ DEFAULT_QUEUE_SECONDS = 5.0        # TODO(build-time): capture queue depth
 #: PortAudio callback block size. Left to the library by default (0 = "you
 #: choose"), because a fixed block here would interact with the 512-sample VAD
 #: chunking for no stated reason.
-DEFAULT_BLOCKSIZE = 0
+DEFAULT_BLOCKSIZE = 512
 
 _SOUNDDEVICE = "sounddevice"
 _INSTALL = "pip install sounddevice   (needs PortAudio: brew install portaudio)"

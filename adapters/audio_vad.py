@@ -40,6 +40,55 @@ and a caller therefore has to know:
     start of each scoring pass. It was a flagged seam nobody owned; the ruling
     put it in Module 7, which is where the decision belonged.
 
+THE v5 EXPORT NEEDS A CONTEXT WINDOW, AND WITHOUT IT THIS BACKEND IS DEAF
+------------------------------------------------------------------------
+Silero changed the graph's input contract between exports, and the change is
+SILENT: the newer model accepts a bare 512-sample frame without complaint and
+returns a probability that is simply always near zero. Nothing raises. The
+backend reports "no speech" for speech.
+
+Measured on this machine, on one 2.10 s utterance of real synthesised speech
+(rms 0.127, peak 0.62), scored two ways against the SAME model file and the same
+cited 0.5 threshold:
+
+    512 samples, no context   ->    0 / 65 chunks over threshold   (max 0.4187)
+    512 samples + 64 context  ->   62 / 65 chunks over threshold   (max 1.0000)
+
+So the whole inbound chain fails closed: `_trim_to_speech` finds no qualifying
+chunk, returns None, and `capture_turn()` returns before Whisper — which reads
+from the outside as "she stopped listening", the same failure mode
+`audio_speaker.py` warns about for a missing voiceprint.
+
+What v5 wants is the previous 64 samples (at 16 kHz; 32 at 8 kHz) PREPENDED to
+each window, with the new context taken from the tail of the chunk just scored.
+The model is recurrent in two ways, then — the LSTM state, which `reset()`
+already handled, and this short acoustic lookback, which nothing did.
+
+WHY THIS IS PROVIDER PLUMBING AND NOT A NEW THRESHOLD. 64 is not a tuning value
+and carries no meaning: it is the input shape Silero's own wrapper computes from
+the sample rate, in the same class as the `h`/`c`-versus-`state` branch below
+that this adapter already handled by NAME rather than by version-guessing. The
+cited spec numbers are untouched — `VAD_CHUNK_SIZE = 512` and
+`VAD_THRESHOLD = 0.5` stay in `AudioPipeline`, which still owns both
+comparisons, and this file still defines neither.
+
+The context is tied to the `state` input variant because that is how Silero's
+own releases pair them: the older `h`/`c` export takes bare frames and the newer
+`state` export takes context. Tying the two together means a v4-era model file
+keeps working unchanged.
+
+WHY NO TEST CAUGHT IT, WHICH IS THE MORE USEFUL LESSON. Nothing ran real Silero
+inference. `tests/test_audio_pipeline.py` injects fakes throughout (correctly —
+Module 7's job is the chain, not the model), and `tests/test_audio_adapters.py`
+touched this file exactly twice: the imports-without-providers test and an AST
+scan asserting no adapter defines the thresholds. Neither can see a wrong input
+shape. The model file did not exist on the dev machine until inbound audio was
+wired, so there was nothing to run against — the same shape of finding as the
+boundary phase's three defects, "things no test could see because nothing
+downstream existed to reveal them". `tests/test_audio_vad_real_model.py` now
+runs the real graph when the file is present and skips when it is not, so
+`make check` stays hermetic.
+
 WHY ONNX RUNTIME AND NOT TORCH
 ------------------------------
 v4 says ONNX explicitly. It is also the cheaper half of the choice by a wide
@@ -70,6 +119,20 @@ _INSTALL = "pip install onnxruntime   (the Silero VAD model is ~2 MB, fetched se
 _STATE_LAYERS = 2
 _STATE_BATCH = 1
 _STATE_WIDTH = 128
+
+#: THE CONTEXT WINDOW — a property of the v5 exported graph, not a tunable and
+#: not a threshold. See "THE v5 EXPORT NEEDS A CONTEXT WINDOW" in the module
+#: docstring for the measurement that made this necessary.
+#:
+#: Silero's own wrapper derives it from the rate exactly this way (64 at 16 kHz,
+#: 32 at 8 kHz), so these are the provider's numbers rather than chosen ones.
+_CONTEXT_SAMPLES_16K = 64
+_CONTEXT_SAMPLES_8K = 32
+
+
+def _context_samples(sample_rate: int) -> int:
+    """How many samples of lookback the v5 graph expects, per Silero's rule."""
+    return _CONTEXT_SAMPLES_16K if sample_rate == 16_000 else _CONTEXT_SAMPLES_8K
 
 
 class SileroVAD:
@@ -118,13 +181,30 @@ class SileroVAD:
         self._chunk_size = chunk_size
         self._lock = threading.Lock()
         self._input_names = {i.name for i in self._session.get_inputs()}
+        # The v5 export ("state") wants an acoustic lookback prepended to every
+        # window; the older one ("h"/"c") does not. See the module docstring.
+        self._wants_context = "state" in self._input_names
+        self._context_size = (
+            _context_samples(sample_rate) if self._wants_context else 0
+        )
         self._state = None
+        self._context = None
         self.reset()
         self.chunks_scored = 0        # observability only
 
     @property
     def chunk_size(self) -> int:
         return self._chunk_size
+
+    @property
+    def context_size(self) -> int:
+        """Samples of lookback prepended per window — 0 for a pre-v5 export.
+
+        Exposed so a bring-up can SEE which graph it loaded. The two exports are
+        indistinguishable from their output (both return a plausible probability),
+        and the wrong one is silently deaf, so "which contract is in force" has to
+        be observable rather than inferred."""
+        return self._context_size
 
     # -- VADBackend ---------------------------------------------------------
 
@@ -149,7 +229,18 @@ class SileroVAD:
         frame = self._np.array([padded], dtype=self._np.float32)
 
         with self._lock:
-            inputs = {"input": frame}
+            # The v5 graph scores [previous 64 samples | this 512-sample window].
+            # Without the lookback it returns near-zero on real speech and raises
+            # nothing — the measurement is in the module docstring. A pre-v5
+            # export gets the bare frame, which is its own contract.
+            if self._wants_context:
+                model_input = self._np.concatenate(
+                    (self._context, frame), axis=1
+                )
+            else:
+                model_input = frame
+
+            inputs = {"input": model_input}
             # The exported graph has changed shape across Silero releases: older
             # exports take separate `h`/`c` tensors, newer ones a single `state`.
             # Both are supported by NAME rather than by version-guessing, because
@@ -157,14 +248,19 @@ class SileroVAD:
             # chunk of the first utterance.
             if "sr" in self._input_names:
                 inputs["sr"] = self._np.array(self._sample_rate, dtype=self._np.int64)
-            if "state" in self._input_names:
+            if self._wants_context:
                 inputs["state"] = self._state
             else:
                 inputs["h"], inputs["c"] = self._state
             outputs = self._session.run(None, inputs)
             probability = float(self._np.asarray(outputs[0]).reshape(-1)[0])
-            if "state" in self._input_names:
+            if self._wants_context:
                 self._state = outputs[1]
+                # Next window's lookback is the tail of THIS window. Taken from
+                # `frame` rather than from `model_input` so a short trailing chunk
+                # cannot carry stale context forward: both slice to the same bytes
+                # for a full window, and for a partial one this is the honest half.
+                self._context = frame[:, -self._context_size:]
             else:
                 self._state = (outputs[1], outputs[2])
 
@@ -188,15 +284,24 @@ class SileroVAD:
         Takes the same lock `speech_probability` does — cheap, non-reentrant (no
         nesting between the two), and it means a reset can never land halfway
         through a scored chunk now that a caller actually exists.
+
+        The ACOUSTIC LOOKBACK is cleared here too, for the same reason as the LSTM
+        state: it is 64 samples of the previous utterance's tail, and a new
+        utterance must not be read in its shadow. Zeroing it is what Silero's own
+        wrapper does on a fresh stream.
         """
         zeros = self._np.zeros(
             (_STATE_LAYERS, _STATE_BATCH, _STATE_WIDTH), dtype=self._np.float32
         )
         with self._lock:
-            if "state" in self._input_names:
+            if self._wants_context:
                 self._state = zeros
+                self._context = self._np.zeros(
+                    (_STATE_BATCH, self._context_size), dtype=self._np.float32
+                )
             else:
                 self._state = (zeros, zeros.copy())
+                self._context = None
 
 
 def available() -> bool:

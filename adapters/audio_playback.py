@@ -190,8 +190,8 @@ class CommandLinePlayback:
         finally:
             handle.close()
         path = Path(handle.name)
-        self._tempfiles.append(path)
         self._start([self._player, *self._flags, str(path)])
+        self._tempfiles.append(path)
         self.plays += 1
 
     def play_cached(self, key: str) -> None:

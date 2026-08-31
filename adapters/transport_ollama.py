@@ -142,9 +142,12 @@ SPEC_MODEL = "gemma4:e2b-it-qat"      # 4.3 GB, 128K context
 
 #: The configured default local voice — architect ruling, Resolution Log item 24.
 #: DIFFERENT from `SPEC_MODEL`, which keeps citing what v4 names. Verified on the
-#: target machine: 8.9 GB, 262144-token context, and it reports `vision`, `tools`
-#: and `thinking` capabilities.
-DEFAULT_MODEL = "qwen3.5:9b-mlx"      # 8.9 GB, 256K context
+#: target machine: 4.3 GB, 128K context. Switched from qwen3.5:9b-mlx because
+#: qwen is a thinking model that generates 2510 tokens of reasoning for a 7-word
+#: reply, taking 163s vs gemma's 3.7s. A thinking model in the voice slot is
+#: unsuitable for real-time conversation.
+
+DEFAULT_MODEL = "gemma4:e2b-it-qat"      # 4.3 GB, 128K context
 
 DEFAULT_TIMEOUT_SECONDS = 120.0       # TODO(build-time): generation timeout
 KEEP_RESIDENT = -1                    # Ollama: pin indefinitely

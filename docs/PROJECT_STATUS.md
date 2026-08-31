@@ -5,11 +5,31 @@ the docs/ folder, is everything a fresh review session needs — it does
 not depend on any specific chat's history.
 
 Counts and line numbers below were last measured against the code on
-**2026-08-26**. They are measured values, not estimates — if you change code,
+**2026-08-29**. They are measured values, not estimates — if you change code,
 re-measure rather than assuming.
 
-Full suite: **902 collected** — soul layer **686**, adapter layer **199**,
-cross-cutting **17**. With an embedding backend reachable that is 863 passed; on
+Full suite: **938 collected** — soul layer **686**, adapter layer **230**,
+cross-cutting **22**. All 938 pass here; with no VAD model and no audio providers
+present it reads **925 passed + 13 skipped**, both arms measured directly on
+2026-08-29.
+
+**The soul layer did not move: 686 before the voice pass, 686 after.** Inbound
+audio — a whole new direction of traffic — was wired without one soul test
+changing, which is the same argument the boundary phase made for the one-way
+dependency arrow, holding a second time. The +36 is entirely adapter and
+cross-cutting: `audio_endpoint` **23** (new), `audio_vad_real_model` **8** (new,
+the first real-Silero inference in the repo), `voice_host_inbound` **5** (new,
+cross-cutting). See "Voice pass" below.
+
+*(The paragraph that followed here until 2026-08-29 read "With an embedding backend
+reachable that is 863 passed ... on the 2026-08-26 measurement run Ollama was down,
+so it read 860 passed + 3 skipped". Those figures described a 902-test suite and are
+superseded. The reasoning behind them is not: COLLECTED is still stated first
+because it is the figure that does not depend on what is running, and the
+real-backend arms still skip rather than fail so `make check` stays hermetic.)*
+
+Superseded 2026-08-26 baseline, kept for the commit arithmetic below: 902
+collected — soul layer 686, adapter layer 199, cross-cutting 17. With an embedding backend reachable that is 863 passed; on
 the 2026-08-26 measurement run Ollama was down, so it read **860 passed + 3
 skipped** — the documented real-model embedding arm, which skips rather than fails
 so `make check` stays hermetic. Stated as COLLECTED first because that is the
@@ -114,6 +134,166 @@ consecutive runs.
 
 ---
 
+## Voice pass — new 2026-08-29. READ THIS BEFORE THE SECTION BELOW.
+
+**She hears now.** Inbound voice runs end to end: microphone → utterance
+endpointing → wake gate → speaker gate → VAD trim → Whisper → appraisal → graph →
+Soul Filter → local model → Output Gate → Kokoro → speaker.
+
+```
+.venv/bin/python voice_main.py --local-model gemma4:e2b-it-qat \
+    --i-accept-no-speaker-verification
+```
+
+**Verified 2026-08-29**, two consecutive turns, scratch runtime root, not inferred:
+
+| spoken | endpointed | transcribed | replied | spoke |
+|---|---|---|---|---|
+| "i finally shipped it today and it actually works" | 4.47 s, silence | verbatim, 0.49 s | 8.9 s | Kokoro, 0.4 s |
+| "honestly i have been worried the whole project might fail" | 5.28 s, silence | verbatim, 0.49 s | 11.9 s | Kokoro, 1.0 s |
+
+`event_nodes` 1 → 2, and the second reply referenced the first turn, so session
+context carried across turns.
+
+### The defect that made this necessary, and why 902 green tests could not see it
+
+**`SileroVAD` was deaf, and had been since the day the v5 model export existed.**
+Silero's v5 ONNX graph requires the previous **64 samples** prepended to each
+512-sample window; the adapter fed bare frames. The v5 graph accepts that without
+complaint and returns a probability that is simply always near zero.
+
+Measured on one 2.10 s utterance of real speech, same model file, same cited 0.5
+gate:
+
+| how each window was fed | chunks over threshold | max probability |
+|---|---|---|
+| 512 samples, no lookback — **what shipped** | **0 / 65** | 0.4187 |
+| 512 samples + 64-sample lookback | **63 / 66** | 1.0000 |
+
+So the whole inbound chain failed CLOSED: `_trim_to_speech` found no qualifying
+chunk, returned None, and `capture_turn()` returned before Whisper. From outside
+that is indistinguishable from an empty room — the same failure shape
+`audio_speaker.py` warns about for a missing voiceprint.
+
+Why nothing caught it, which is the reusable part: `test_audio_pipeline.py` injects
+fakes (correctly — Module 7's job is the chain, not a provider's tensor shape), and
+`test_audio_adapters.py` touched `audio_vad` exactly twice, via the
+imports-without-providers test and an AST threshold scan. Neither can see a wrong
+input shape. **And the model file did not exist on this machine until inbound audio
+was wired, so there was nothing to run against.** Same shape as the boundary
+phase's three findings: things no test could see because nothing downstream existed
+to reveal them.
+
+`tests/test_audio_vad_real_model.py` now runs the real graph, and skips when the
+model or `onnxruntime` is absent so `make check` stays hermetic.
+`VAD_CHUNK_SIZE = 512` and `VAD_THRESHOLD = 0.5` were not touched and are still
+`AudioPipeline`'s.
+
+### Second defect, found by running it: an initiative turn could kill the host
+
+`run_scheduler_step()` was called UNGUARDED in `main.py`'s REPL. The chain
+`soul_tick` → `_maybe_initiate` → `_route_initiative` reaches Soul Filter and
+therefore the LLM, so a soul tick can raise `LLMUnavailableError` /
+`LLMTransportError` — the same exceptions the turn path already catches — from a
+path that has nothing to do with the user's turn.
+
+Reproduced: with a fresh graph every need reads `neglected`, so the first tick after
+the first turn tries to initiate; the local model exceeded the adapter's 120 s
+ceiling; the already-answered turn printed, then the process died with a traceback
+from inside `soul_tick`. That reads as "answering you broke her" when what failed
+was a reach-out she was composing on her own.
+
+Now `main.advance_clocks()`, shared by both hosts, with the swallow reasoned in its
+docstring: the cost of swallowing is one unspoken reach-out (no PAD write pending,
+no half-done graph write, and the no-nag latch unset so she retries later); the cost
+of not swallowing is the session.
+
+### Third finding: the default local model cannot serve a turn
+
+Measured, prompt "Say hello in one short sentence.", same daemon:
+
+| model | wall time | tokens generated | reply |
+|---|---|---|---|
+| `qwen3.5:9b-mlx` — `DEFAULT_MODEL`, ResLog 24 | **163.4 s** | **2510** | "Hello, how are you today?" |
+| `gemma4:e2b-it-qat` — v4's own `SPEC_MODEL` | **3.7 s** | 3 | "Hello!" |
+
+The token count is the finding, not the speed: 2510 tokens for a seven-word reply.
+`qwen3.5` advertises `thinking` and the reasoning is unbounded, so latency tracks
+how much it deliberates rather than the answer's length. This reproduces item 24's
+own A/B result with a different model, and the reasoning HANDOFF_NOTES already
+recorded for why the 12B recommendation failed.
+
+**In voice this costs more than in text**: a silent pause is the only feedback while
+she generates, and 163 s of it is indistinguishable from a crash. `DEFAULT_MODEL`
+was NOT changed — HANDOFF's standing rule is that reversing an explicit instruction
+on new evidence waits for a word. Use `--local-model gemma4:e2b-it-qat`.
+
+### What is real, and what is deferred with the reason
+
+REAL: microphone (sounddevice, 16 kHz mono), Silero VAD (ONNX, 512/0.5), Whisper
+base on CPU with `language="en"`, Porcupine when given a key and a `.ppn`, the whole
+soul layer, and **Kokoro `af_bella`** — v4's named local voice, now the default
+renderer instead of the recorded `say` substitution.
+
+DEFERRED, each announced at startup every run rather than left inferable:
+
+- **Speaker verification.** v4 names a Silero speaker model that **Silero does not
+  publish** (its releases are STT, TTS, VAD and text enhancement). Substituting one
+  is an identity decision and therefore an architect call, which
+  `adapters/audio_speaker.py` already refuses to make. Requires
+  `--i-accept-no-speaker-verification`, which refuses to start without it and states
+  the cost: anyone audible is treated as the primary entity, appraised, moving PAD,
+  written to the graph.
+- **Barge-in and F4.** Not unbuilt — **unspecified.** v4 names the 0.75 s window and
+  its owner, Addendum §5 fixes the effect, and the Daemon implements both handlers.
+  Nobody specifies who segments her reply, who watches the window, who calls
+  `on_barge_in()`, or where the F4 listener lives (`interrupt_handler.py` does not
+  exist). Consequence: the mic is not fed while she speaks, so she cannot be
+  interrupted — without that wait she transcribes her own voice and answers herself.
+- **The wake word**, unless a Picovoice key and a trained `.ppn` are supplied.
+  Fallback is `HotkeyWakeWord`, which is **v4's own named alternative**, so it needs
+  no ruling. v4 never writes the wake phrase down anywhere.
+- **Thinking sounds.** The Daemon selects a category every turn; without
+  `--clip-dir` the clip is a recorded no-op. v4 specifies 5 categories and
+  5+15+3=23 files but no filenames.
+
+### The genuine spec gap this pass surfaced
+
+**Nothing in the precedence chain says how long to keep listening.** No
+end-of-utterance constant, no silence hangover, no speech timeout, no maximum
+utterance length, no listen-after-wake — searched across v4, the Addendum, the
+Resolution Log, the Build Plan, HANDOFF_NOTES and every `.kiro` spec.
+
+Read literally, v4's stateless-poll flow transcribes the ring at the moment the wake
+word fires, i.e. mid-sentence. So `adapters/audio_endpoint.py` endpoints the
+utterance at the host layer, with two values flagged `TODO(build-time)` and exposed
+as CLI flags (`--silence-hangover 0.8`, `--min-speech 0.20`). The utterance ceiling
+is DERIVED from v4's cited 20-second ring rather than invented.
+
+The adjacent in-spec rows were each rejected for a stated reason: `Barge-in window
+0.75s` governs her own sentences on the output side; `Post-speak window 5–10s
+random` is the only occurrence of that phrase in the repository and has no
+mechanism; `Idle sound min silence 10s` gates an ambient clip. Borrowing any of them
+would look authorised while inventing the mechanism.
+
+**Everything above that needs a decision is written up as a numbered proposal in
+`docs/RESOLUTION_LOG_DRAFT.md`.** The Resolution Log itself was not touched — it is
+the top of the precedence chain.
+
+### Open observation, flagged not fixed: PAD did not move
+
+Across both verified turns PAD stayed at baseline and Energy at 100.0. Energy is
+expected (item 29A: under a synchronous host Energy only holds or recovers). PAD is
+open: a direct `AppraisalChain` probe showed it discriminating correctly — poignancy
+`LOW` for the shipped-it line, `HIGH` for the worried line — yet `+0.000` delta on
+both. This file records PAD moving 0.550 → 0.580 on a positive turn on 2026-08-22,
+so the path is live. The probe omitted the needs and uncertainty arguments the
+Daemon passes, and two turns on a graph with no history is a thin basis for a module
+that reads context. Not touched: PAD purity means a delta may only come from
+appraisal, and both modules are approved with 65 and 53 tests. Draft item G.
+
+---
+
 ## Current runnable state — READ FIRST
 
 **She runs, text-first, as of 2026-08-22.** This section said "Nothing runs yet"
@@ -157,14 +337,30 @@ not start talking out loud. See "Adapter layer" below.
 
 **What still does not run, and what "not running" now means:**
 
-- **Inbound audio needs five providers this project does not ship.** All seven
-  backends are IMPLEMENTED (`adapters/audio_*.py`); five need a dependency that
-  is not installed — `sounddevice`, `pvporcupine`, `torch`, `onnxruntime`,
-  `faster-whisper` — plus a Silero VAD model, a speaker model and an enrolled
-  voiceprint. `--audio-preflight` reports exactly which. The OUTPUT chain runs
-  today with zero installs and was verified end to end. The Daemon's port is
-  output-only, so this is not a gap in the wired path at all: the REPL prompt IS
-  the transcription.
+- ~~**Inbound audio needs five providers this project does not ship.**~~
+  **SUPERSEDED 2026-08-29 — see "Voice pass" above.** All seven providers are now
+  installed here (`sounddevice` 0.5.6, `pvporcupine` 4.0.3, `torch` 2.8.0,
+  `onnxruntime` 1.19.2, `faster-whisper` 1.2.1, `kokoro` 0.7.16) and
+  `--audio-preflight` reports all seven backends `ok` with the input chain READY.
+  The Silero VAD model is at `~/.local/aria/models/silero_vad.onnx`; Whisper base
+  and Kokoro-82M are in the HuggingFace cache.
+
+  Two corrections to what this row used to say, because both were wrong in ways
+  that mattered:
+
+  * **`brew install portaudio` is NOT needed.** `sounddevice` 0.5.x ships
+    `libportaudio.dylib` inside the wheel. The old install hint sent people to
+    Homebrew for a dependency they already had.
+  * **"the REPL prompt IS the transcription, so this is not a gap in the wired
+    path" was true and became misleading.** It was a correct statement about the
+    Daemon's port being output-only, and it quietly implied nothing was missing. A
+    great deal was missing: no driver loop existed, `capture_turn()` had no caller
+    anywhere in the repository, and the VAD adapter was deaf. The port being
+    output-only is a fact about Module 7's contract, not about whether she can hear.
+
+  What is still genuinely absent is a **speaker model and an enrolled voiceprint** —
+  and that is not an install. Silero publishes no speaker model, so it is a
+  decision, not a download. Draft item C.
 - **The Visual Layer's real window needs PyQt6 + libmpv and 17 video files.**
   `MpvVideoWindow` is implemented; neither provider is installed here and no loop
   files exist. `--visual-headless` runs the whole zone machinery — categorical
@@ -255,7 +451,10 @@ choice, not a spec deviation. Say so if you want them moved.
 | `adapters/audio_stack.py` | assembly + preflight | **New.** `preflight()` reports all seven backends; `build_output_only()` gives a real pipeline whose output chain works and whose five input backends REFUSE if called. The refusing stubs are the load-bearing part: a capture returning silence, a VAD returning 0.0 and a speaker check returning 1.0 all look like ordinary operation, and `capture_turn()` would return None as if nobody had spoken. |
 | `adapters/visual_window.py` | `VideoWindow` | **New 2026-08-22.** `MpvVideoWindow` (PyQt6 frameless always-on-top + libmpv, v4's `ui/aria_window.py`) and `LoggingVideoWindow` (headless). The window implements the one thing Module 10 deliberately does not — v4's "finishing the current loop cycle before switching — no jarring cuts" — by holding a PENDING target and applying it at mpv's own loop boundary. That is a DIFFERENT mechanism from the 8-second gate at a different layer: the gate decides whether a zone change is ALLOWED (Module 10), this decides when an allowed change is RENDERED. Two signals bypass the wait because Module 10 renders them ungated: a variant change (the mouth must track the voice) and entering INWARD_WAITING (a failure is not flicker). |
 | `adapters/visual_bridge.py` | wiring, no Protocol | **New.** `SpeakingSignalAudio` satisfies `AudioPipelinePort` and DECORATES it, so `set_speaking` comes from the boundary Module 10's docstring names (`audio.speak()`) with **no change to `AriaDaemon`**. `set_speaking(False)` is in a `finally` — a TTS failure must not freeze her mouth open for the session. `CloudAvailabilityReporter` drives degradation from `LLMUnavailableError`, and deliberately NOT from `serving_from_local` — see the Still Open row. |
-| `adapters/audio_noop.py` | `AudioPipelinePort` | `NoOpAudioPipeline`. Records calls, prints nothing (the REPL owns the terminal). Still the DEFAULT, and still correct as one. |
+| `adapters/audio_endpoint.py` | wiring, no Protocol (`QueuedCapture` satisfies `CaptureBackend`) | **New 2026-08-29.** `Endpointer` answers "has he stopped talking"; `AudioPipeline._trim_to_speech` keeps "which samples are speech". Two mechanisms at two layers, same split as Module 10's 8-second gate versus mpv's loop boundary. It READS `VAD_THRESHOLD`/`VAD_CHUNK_SIZE` from the module that owns them, defines neither (AST-asserted), trims nothing, and returns **untrimmed** audio so the cited gate stays Module 7's. Own `SileroVAD` instance — sharing one would have the pipeline resetting recurrent state mid-stream underneath it, the inverse of what ResLog 29C exists to prevent. Partial windows are CARRIED, never zero-padded: at 32 ms per window, padding would hand the model an invented tail on most calls. `hangover=0.8s` / `min-speech=0.20s` are `TODO(build-time)` with **no spec authority anywhere** and are CLI flags so they are knobs rather than buried numbers; the utterance ceiling is DERIVED from v4's cited 20 s ring. `QueuedCapture` is deliberately UNBOUNDED, unlike `SoundDeviceCapture`'s deque: old *device* audio is worth less than a bounded process, but a producer handing over one finished utterance loses real speech if anything is dropped. |
+| `adapters/audio_stack.py` (extended) | assembly | **`build_input_chain()` added 2026-08-29.** Neither existing builder fit: `build_output_only` puts refusing stubs in all five input slots, and `build_full` requires all seven and correctly refuses without a voiceprint. The new one takes `wake_word` and `speaker_verification` as **required arguments with no defaults**, so whatever is deferred has to be constructed and named by the caller on a visible line — contrast the shape it replaced, where an always-passing stub sat inside the wiring reading as ordinary construction. `capture` is required too, because `read()` DRAINS and a second consumer would make audio vanish at random rather than raise. |
+| `adapters/audio_noop.py` | `AudioPipelinePort` | `NoOpAudioPipeline`. Records calls, prints nothing (the REPL owns the terminal). Still the DEFAULT for `main.py`, and still correct as one. |
+| `voice_main.py` | wiring + voice host | **Rewritten 2026-08-29.** `VoiceWiring` subclasses `main.Wiring` and overrides only `_build_audio` and `close()` — every soul module, the construction order, the primary-entity ladder and the HANDOFF contract are inherited, which is the point: this must not become a second version of the system. One `capture_turn()` per utterance, so Whisper runs once per turn. `DeferredSpeakerVerification` lives HERE rather than in `adapters/`, on the precedent HANDOFF records for refusing an always-awake wake backend ("must not be something a wiring layer can pick by accident") — with identity that argument is stronger. ONE named private reach-in, `_clear_pipeline_ring`: `capture_turn()` trims the whole ring, so without it turn two re-transcribes turn one and writes a second EventNode for something said once. Draft item D proposes the public `reset_input()` that would remove it. |
 | `main.py` | wiring + text REPL | Construction order is forced by the dependency edges, not chosen. Runs the HANDOFF contract via `startup()`, advances BOTH clocks with `run_scheduler_step()` after each turn, and saves **every turn** plus on exit (see the write-cadence Accepted-decisions row — the knob was removed, not set). Opens no listening socket; only outbound traffic is to the local Ollama daemon. One private read remains, named in its docstring: `graph._conn` for `:state`'s table counts, since Module 3 exposes no count API and inventing one for a debug readout is the wrong trade. |
 
 **The embedding model is the one thing here that could not be stubbed, and

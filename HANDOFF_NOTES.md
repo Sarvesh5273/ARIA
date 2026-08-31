@@ -1702,3 +1702,249 @@ copying it from the tracker into four new docstrings.
   instead of two. That is accurate rather than lossy — only one comparison
   happened — but a consumer counting gate runs to infer retries (like
   `tools/compare_local_models.py`) should count `retried` instead.
+
+---
+
+## Voice pass (2026-08-29) — she hears now, and what running it found
+
+Inbound audio wired end to end. Suite **902 → 938**, and **the soul layer did not
+move: 686 before, 686 after.** A whole new direction of traffic without one soul
+test changing — the one-way dependency arrow holding a second time, same argument
+the boundary phase made.
+
+`PROJECT_STATUS.md` carries the measurements and the re-checkable claims. Proposals
+needing a word are in `docs/RESOLUTION_LOG_DRAFT.md`; the Resolution Log itself was
+not touched. This records only what a future implementer needs and the tracker does
+not say.
+
+**The headline is the same shape as the boundary phase's, and that should be
+uncomfortable: wiring a chain that had never been connected found that one of its
+seven backends had never worked.** Not a regression — it was never right. 902 green
+tests could not see it, and the reason is worth internalising before trusting any
+other adapter in this repo.
+
+### 1. `SileroVAD` was deaf, silently, and the failure mode is the dangerous one
+
+Silero's v5 ONNX export wants the previous **64 samples** prepended to every
+512-sample window (32 at 8 kHz — the number is derived from the rate by Silero's own
+wrapper). The adapter fed bare frames.
+
+The v5 graph accepts a bare frame **without raising** and returns a probability that
+is always near zero. Measured, one 2.10 s utterance, same file, same cited gate:
+
+    512, no lookback   ->    0/65 chunks over 0.5   (max 0.4187)
+    512 + 64 lookback  ->   63/66 chunks over 0.5   (max 1.0000)
+
+So the chain failed CLOSED. `_trim_to_speech` found nothing, returned None,
+`capture_turn()` returned before Whisper — indistinguishable from an empty room.
+Exactly the failure shape `audio_speaker.py` warns about for a missing voiceprint
+("she would appear to have stopped listening rather than to be misconfigured").
+
+**Why no test could see it, which is the reusable part.** Three things had to be
+true at once:
+
+* `test_audio_pipeline.py` injects fakes for every backend — and that is CORRECT,
+  Module 7's job is the chain and the cited gates, not a provider's tensor shape;
+* `test_audio_adapters.py` touched `audio_vad` exactly twice, via the
+  imports-with-no-providers test and the AST threshold scan. Neither can detect a
+  wrong input shape;
+* **the model file did not exist on this machine until inbound audio was wired.**
+  There was nothing to run real inference against.
+
+`tests/test_audio_vad_real_model.py` closes it: real graph, real speech, skipping
+when the model or `onnxruntime` is absent so `make check` stays hermetic. The test
+that would have caught the defect asserts a THIRD of chunks clear the gate rather
+than the measured 63/66 — `say` is not byte-deterministic, voices differ per
+machine, and the test exists to catch "deaf", not to pin a rendering.
+
+**A trap I walked straight into, recorded because the next person will too.** I
+wrote a grep test asserting `"VAD_THRESHOLD =" not in source`. It failed instantly:
+the adapter's docstring now discusses `VAD_THRESHOLD = 0.5` at length precisely in
+order to explain that it does not apply it. That is the identical trap HANDOFF
+already records as having caught two earlier versions of the same assertion, and the
+existing AST scan already covers this file properly. Deleted the duplicate, left a
+comment.
+
+`VAD_CHUNK_SIZE` and `VAD_THRESHOLD` were not touched. `context_size` is exposed as
+a public property because the two exports are **indistinguishable from their
+output** — both return a plausible probability — so "which contract is in force" has
+to be observable rather than inferred. The startup report prints it.
+
+### 2. An initiative turn could kill the host, in `main.py` too
+
+`run_scheduler_step()` was unguarded. `soul_tick` → `_maybe_initiate` →
+`_route_initiative` reaches Soul Filter and therefore the LLM, so a **tick** can
+raise `LLMUnavailableError` / `LLMTransportError` — the same exceptions the turn path
+catches twenty lines earlier — from a path unrelated to the user's turn.
+
+Reproduced by accident: fresh graph → every need reads `neglected` → the first tick
+after the first turn tries to initiate → the local model blew the 120 s ceiling →
+the already-answered turn printed, then a traceback out of `soul_tick`. Reads as
+"answering you broke her".
+
+Now `main.advance_clocks()`, shared by both hosts. The swallow is justified and
+scoped: one unspoken reach-out costs nothing recoverable — no PAD write is pending
+(PAD moves inside the Appraisal Chain, already passed or not reached), no graph write
+is half-done (every `MemoryGraph` write commits in its own method), and the no-nag
+latch is unset so she retries on a later tick. Not swallowing costs the session. It
+prints, for the reason items 21 and 25 both give: a failure nobody can see is
+indistinguishable from nothing having happened.
+
+**This was latent in `main.py` before voice existed.** It surfaced here only because
+voice made a slow initiative likely.
+
+### 3. `qwen3.5:9b-mlx` cannot serve a turn — and the reason is the token count
+
+    qwen3.5:9b-mlx      163.4 s   2510 tokens   -> "Hello, how are you today?"
+    gemma4:e2b-it-qat     3.7 s      3 tokens   -> "Hello!"
+
+Same prompt, "Say hello in one short sentence." **2510 tokens for a seven-word
+reply.** `qwen3.5` advertises `thinking` and the reasoning is unbounded, so latency
+tracks how much it deliberates, not how long the answer is. Raw speed was fine at
+15.4 tok/s.
+
+This is item 24's own A/B result reproduced with a different model, and it confirms
+the reasoning already recorded for why the 12B recommendation failed: the five-field
+boundary makes the local task short and narrow, so extra capacity goes into
+reasoning depth the architecture deliberately routes to cloud.
+
+`DEFAULT_MODEL` was NOT changed, on the standing rule this file already states —
+reversing an explicit instruction on new evidence waits for a word. Use
+`--local-model gemma4:e2b-it-qat`. Draft item F.
+
+**One thing worth settling beyond latency:** whether a thinking model is admissible
+in the local-voice slot at all. Item 15 keeps transports verbatim and item 25 strips
+format markers only at the speech boundary, so a `<think>` block reaching the Output
+Gate is judged on content — and could be spoken. `--local-model` is currently the
+only thing between that and a speaker.
+
+### 4. v4 genuinely does not say when to stop listening
+
+Not a gap in the implementation — a gap in the spec, and I looked hard before
+concluding it. No end-of-utterance constant, no silence hangover, no speech timeout,
+no maximum utterance length, no listen-after-wake, across v4, the Addendum, the
+Resolution Log, the Build Plan, this file and every `.kiro` spec.
+
+Read literally, v4's stateless poll transcribes the ring at the instant the wake word
+fires — mid-sentence, before the question exists. So the boundary is the host's, in
+`adapters/audio_endpoint.py`.
+
+**Four in-spec rows look adjacent and all four are something else.** Recorded so
+nobody reaches for one thinking it is cited:
+
+| row | what it governs |
+|---|---|
+| `Barge-in window 0.75s` | the window she opens between HER OWN sentences — output chain |
+| `Post-speak window 5–10s random` | closest in spirit; **the only occurrence of the phrase in the repo**, no prose, no trigger, no mechanism |
+| `Idle sound min silence 10s` | a precondition on an ambient clip |
+| `VAD threshold 0.5` / `chunk 512` | which SAMPLES are speech — a filter, not a timer |
+
+Using `Post-speak window` would mean inventing a mechanism around an in-spec number,
+which reads worse than an honest `TODO(build-time)` because it looks authorised. So
+`--silence-hangover 0.8` and `--min-speech 0.20` are flagged and are CLI flags. The
+utterance ceiling is DERIVED from v4's cited 20 s ring, on the reasoning that an
+utterance longer than the ring cannot be represented downstream.
+
+### 5. Design decisions in the voice host worth not re-litigating
+
+- **The endpointer is not a second gate, and the layering has precedent.**
+  `_trim_to_speech` decides which samples are speech (cited 0.5); the endpointer
+  decides when to hand over an utterance (timing). Same split as Module 10's
+  8-second gate deciding whether a zone change is ALLOWED versus mpv's loop boundary
+  deciding when it is RENDERED. The endpointer reads both cited constants from the
+  module that owns them, defines neither, and returns **untrimmed** audio so the
+  gate cannot drift out of Module 7.
+- **Two `SileroVAD` instances, on purpose.** Sharing one would have
+  `AudioPipeline._reset_vad` clearing recurrent state mid-stream underneath the
+  endpointer — the inverse of what ResLog 29C exists to prevent. Two copies of a
+  2.8 MB model answering different questions is the cheap correct arrangement.
+- **`QueuedCapture` exists because `read()` DRAINS.** Exactly one consumer may hold
+  a capture backend; the endpointer needs frames, so the pipeline gets a push-fed
+  shim. Two consumers would not raise — they would each get a random half of the
+  audio, and words would vanish. Same composition move as
+  `visual_bridge.SpeakingSignalAudio`: satisfy the Protocol, decorate, change no
+  approved module.
+- **`QueuedCapture` is unbounded while `SoundDeviceCapture` is a ring.** Not an
+  inconsistency. Old DEVICE audio is worth less than a bounded process; a producer
+  handing over one finished utterance loses real speech if anything is dropped.
+- **Partial windows are CARRIED, not zero-padded.** At 32 ms per window a partial
+  one occurs on most calls, so padding would feed the model an invented tail
+  continuously rather than occasionally.
+- **`DeferredSpeakerVerification` is in `voice_main.py`, not `adapters/`.** Direct
+  precedent: this file already records that no always-awake wake backend is offered
+  because it "must not be something a wiring layer can pick by accident", with a test
+  asserting the module's exports. With identity that argument is stronger. It also
+  requires `--i-accept-no-speaker-verification` and refuses to construct otherwise.
+- **`playback.wait()` before listening again, and it forecloses barge-in.** Without
+  it she captures her own voice, transcribes it, and answers herself — appraising her
+  own words as the user's. `audio_playback.py` anticipated exactly this trade in
+  `wait()`'s docstring. Being uninterruptible is a consequence of barge-in's
+  mechanism being unspecified, not a preference. Draft item E.
+- **`--audio` is forced on rather than required.** Nobody should have to ask a voice
+  interface for a voice.
+
+### 6. The one private reach-in, and why it is worse than the existing one
+
+`voice_main._clear_pipeline_ring` calls `w.audio._ring.clear()`.
+
+Necessary because `capture_turn()` appends to the ring and then trims **the whole
+ring**. A host handing over one utterance per turn must clear between turns or turn
+two re-transcribes turn one — she hears the previous sentence again, appraises it
+again, and writes a second EventNode for something said once. Pinned by
+`test_two_utterances_in_a_row_do_not_bleed_into_each_other`.
+
+Named rather than hidden, on `main.py`'s `graph._conn` precedent. **But be honest
+about the difference: that one is a private READ in a debug readout; this is a
+private WRITE on the wired path.** Weaker position. Draft item D proposes the
+additive `AudioPipeline.reset_input()` that removes it — which needs a ruling
+because Module 7 is approved, not an edit.
+
+Two alternatives rejected: pushing 20 s of silence to evict the ring (public API,
+but fabricating audio through a real VAD to get a side effect), and building a fresh
+pipeline per utterance (reloads Whisper every turn).
+
+### 7. Traps met in this pass
+
+- **`brew install portaudio` is not needed.** `sounddevice` 0.5.x ships
+  `libportaudio.dylib` in the wheel. The old install hint in `audio_capture.py` sends
+  people to Homebrew for something they already have. Left alone as the general Linux
+  advice, but worth knowing on macOS.
+- **Driving a wiring by hand skips `resolve_local_model()`.** `args.local_model`
+  defaults to `None`, and `OllamaLocalTransport` then posts `model: ""`, which comes
+  back as `HTTP 404: model '' not found` from `startup()` — several frames from the
+  cause. `main()` does this step; a script constructing `Wiring` directly must too.
+- **A test asserting "the trim removed something" from a bare `say` rendering is
+  flaky.** How much silence a synthesiser emits is not a property of the pipeline,
+  and a render that is speech end-to-end has nothing to trim. Mine passed, then
+  failed on the next run. Fixed by padding with explicit silence, which makes both
+  directions of the assertion mean something. Same underlying non-determinism the
+  08-24 pass already hit with rendered-audio comparisons.
+- **`say`'s synthetic voice is not what Whisper was trained on.** "hey aria" came
+  back as "Here RIO". Fine for asserting that speech becomes words; do not assert
+  exact transcripts against it, and do not read a poor synthetic transcription as a
+  pipeline fault. Real human speech transcribed verbatim in the verified turns.
+- **Python 3.9.6 pins several providers** to their last cp39 wheels: `onnxruntime`
+  1.19.2 (1.29 needs ≥3.11), `numpy` ≤2.0.2, `torch` ≤2.8.0. All work. Rebuilding on
+  3.12 would drop the pins and means re-verifying 938 tests.
+
+### 8. Open, and honestly unresolved: PAD did not move
+
+Across both verified voice turns PAD stayed at baseline and Energy at 100.0.
+
+Energy is EXPECTED and already explained by item 29A — under a synchronous host
+Energy only holds or recovers, and at baseline recovery is a no-op.
+
+PAD is not explained. A direct `AppraisalChain.appraise()` probe showed the chain
+DISCRIMINATING correctly — poignancy `LOW` for "I finally shipped it today and it
+actually works", `HIGH` for "Honestly I have been worried the whole project might
+fail" — and a `+0.000` PAD delta on both. `PROJECT_STATUS.md` records PAD moving
+0.550 → 0.580 on a positive turn on 2026-08-22, so the path is live.
+
+Two reasons the probe is suggestive rather than conclusive: it omitted the needs
+states and uncertainty refs the Daemon passes, and two turns on a graph with no
+history is thin for a module whose Stage 1 reads context.
+
+Not touched, and that is a rule rather than caution: PAD moves only through an
+appraisal delta or EMA decay, and making it move any other way is the invented
+coefficient the protected chain exists to forbid. Draft item G. **Worth checking
+against a graph with real history before anyone calls it a defect.**

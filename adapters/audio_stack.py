@@ -254,6 +254,100 @@ def build_output_only(
     )
 
 
+def build_input_chain(
+    *,
+    pad_source,
+    capture,
+    wake_word,
+    speaker_verification,
+    vad_model_path: str,
+    whisper_model_size: str = audio_stt.SPEC_MODEL_SIZE,
+    whisper_language: Optional[str] = audio_stt.DEFAULT_LANGUAGE,
+    env: Optional[Dict[str, str]] = None,
+    voice: Optional[str] = None,
+    kokoro_voice: Optional[str] = None,
+    clip_dir: Optional[str] = None,
+    player: Optional[str] = None,
+    playback=None,
+) -> AudioPipeline:
+    """A pipeline with a REAL VAD and STT, and every deferred part named OUT LOUD.
+
+    WHY A THIRD BUILDER RATHER THAN A FLAG ON ONE OF THE OTHER TWO
+    --------------------------------------------------------------
+    Neither existing builder fits a bring-up that can hear:
+
+      * `build_output_only` puts `_Absent` in all five input slots, and `_Absent`
+        raises from every method by design. Nothing to loosen there.
+      * `build_full` needs all seven backends and REFUSES without a speaker model
+        and an enrolled voiceprint — correctly, for the reason its own docstring
+        gives: without a voiceprint the real backend answers -1.0 for everyone, so
+        she looks like she stopped listening rather than like she is misconfigured.
+
+    v4's speaker model is also not obtainable as named. v4 says "Silero Speaker
+    Verification (voiceprint.pt)", and Silero publishes STT, TTS, VAD and text
+    enhancement — no speaker-embedding model. Substituting a different one is a
+    decision about IDENTITY, which `audio_speaker.py` already refuses to make on
+    the operator's behalf ("an architect call, not an adapter's").
+
+    So the honest shape is a builder that takes `wake_word` and
+    `speaker_verification` as REQUIRED arguments with no defaults. Whatever is
+    deferred has to be constructed and named by the caller, on a visible line, in
+    a file someone reviews. This builder invents no stand-in and silently tolerates
+    nothing — contrast the shape it replaces, where a hardcoded always-passing
+    stub sat inside the wiring and read as ordinary construction.
+
+    WHAT IS REAL HERE, AND WHAT IS CITED
+    ------------------------------------
+    Real: `SileroVAD` (v4's named ONNX tool) and `FasterWhisperSTT` (v4's "Whisper
+    base, CPU"). Both take v4's values as defaults — 512-sample windows at 16 kHz,
+    `base`, `language="en"` per v4's "Aria defaults to English … No automatic
+    detection that overrides the user's intent".
+
+    The two cited GATES stay in `AudioPipeline`, untouched: the 0.75 cosine
+    comparison and the 0.5 VAD comparison are applied there, over whatever
+    backends occupy these slots. That is what makes a deferred speaker backend a
+    visible substitution rather than a moved threshold.
+
+    `capture` IS REQUIRED, DELIBERATELY. `CaptureBackend.read()` DRAINS — it
+    returns the audio arrived since the last call — so exactly one consumer may
+    hold the microphone. A builder that quietly constructed its own
+    `SoundDeviceCapture` would produce a second consumer the moment a driver also
+    wanted frames, and the symptom would be audio vanishing at random rather than
+    an error. The caller says where audio comes from.
+
+    `playback` is OPTIONAL and built here when omitted. A caller passes its own
+    when it needs to wait for a reply to finish — a voice host must not listen
+    while she is still talking, or it transcribes her and answers itself. That is
+    the `wait()` method `audio_playback.py` documents as existing for a bring-up
+    rather than for the wired path.
+    """
+    if not vad_model_path:
+        raise AudioBackendUnavailable(
+            "inbound audio needs a Silero VAD model path (v4: ONNX, ~2 MB). "
+            "Nothing is downloaded here."
+        )
+    primary, fallback = build_tts_pair(
+        env=env, voice=voice, kokoro_voice=kokoro_voice
+    )
+    return AudioPipeline(
+        pad_source=pad_source,
+        capture=capture,
+        wake_word=wake_word,
+        speaker_verification=speaker_verification,
+        vad=audio_vad.SileroVAD(model_path=vad_model_path),
+        stt=audio_stt.FasterWhisperSTT(
+            model_size=whisper_model_size, language=whisper_language
+        ),
+        tts_primary=primary,
+        tts_fallback=fallback,
+        playback=(
+            playback
+            if playback is not None
+            else CommandLinePlayback(player=player, clip_dir=clip_dir)
+        ),
+    )
+
+
 def build_full(
     *,
     pad_source,
